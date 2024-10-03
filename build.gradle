@@ -2288,6 +2288,7 @@ project(':storage') {
     testImplementation project(':core')
     testImplementation project(':core').sourceSets.test.output
     testImplementation project(':test-common:test-common-api')
+    testImplementation project(':group-coordinator')
     testImplementation project(':server')
     testImplementation project(':server-common')
     testImplementation project(':server-common').sourceSets.test.output
