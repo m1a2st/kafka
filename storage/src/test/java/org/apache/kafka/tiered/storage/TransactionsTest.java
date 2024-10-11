@@ -31,7 +31,6 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
-import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterTest;
@@ -44,6 +43,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -70,16 +70,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ClusterTestDefaults(
         brokers = 3,
         serverProperties = {
-                @ClusterConfigProperty(key = AUTO_CREATE_TOPICS_ENABLE_CONFIG, value = "false"),
-                @ClusterConfigProperty(key = OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
-                @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_PARTITIONS_CONFIG, value = "3"),
-                @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "2"),
-                @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_MIN_ISR_CONFIG, value = "2"),
-                @ClusterConfigProperty(key = CONTROLLED_SHUTDOWN_ENABLE_CONFIG, value = "true"),
-                @ClusterConfigProperty(key = "unclean.leader.election.enable", value = "false"),
-                @ClusterConfigProperty(key = AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false"),
-                @ClusterConfigProperty(key = GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0"),
-                @ClusterConfigProperty(key = TRANSACTIONS_ABORT_TIMED_OUT_TRANSACTION_CLEANUP_INTERVAL_MS_CONFIG, value = "200"),
+            @ClusterConfigProperty(key = AUTO_CREATE_TOPICS_ENABLE_CONFIG, value = "false"),
+            @ClusterConfigProperty(key = OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
+            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_PARTITIONS_CONFIG, value = "3"),
+            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "2"),
+            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_MIN_ISR_CONFIG, value = "2"),
+            @ClusterConfigProperty(key = CONTROLLED_SHUTDOWN_ENABLE_CONFIG, value = "true"),
+            @ClusterConfigProperty(key = "unclean.leader.election.enable", value = "false"),
+            @ClusterConfigProperty(key = AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false"),
+            @ClusterConfigProperty(key = GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0"),
+            @ClusterConfigProperty(key = TRANSACTIONS_ABORT_TIMED_OUT_TRANSACTION_CLEANUP_INTERVAL_MS_CONFIG, value = "200"),
         }
 )
 @ExtendWith(ClusterTestExtensions.class)
@@ -99,10 +99,8 @@ public class TransactionsTest {
 
     private final String transactionStatusKey = "transactionStatus";
     private final String committedKey = "committed";
+    private final String noTransactionGroup = "non-transactional-group";
     
-    private final Serializer<byte[]> keySerializer = new ByteArraySerializer();
-    private final Serializer<byte[]> valueSerializer = new ByteArraySerializer();
-
     private final ClusterInstance cluster;
 
     public TransactionsTest(ClusterInstance clusterInstance) {
@@ -124,48 +122,20 @@ public class TransactionsTest {
     }
 
     @ClusterTest
-    public void testBasicTransactions(ClusterInstance cluster) throws Exception {
-        try (Admin adminClient = cluster.createAdminClient()) {
-            List<NewTopic> newTopics = new ArrayList<>();
-            newTopics.add(new NewTopic(topic1, numPartitions, (short) 2));
-            newTopics.add(new NewTopic(topic2, numPartitions, (short) 2));
-            adminClient.createTopics(newTopics);
-        }
-        for (int i = 0; i < transactionalProducerCount; i++) {
-            transactionalProducers.add(
-                    createTransactionalProducer(
-                            "transactional-producer",
-                            cluster.bootstrapServers(),
-                            2000,
-                            2000,
-                            4000,
-                            1000)
-            );
-        }
-        for (int i = 0; i < transactionalConsumerCount; i++) {
-            transactionalConsumers.add(createReadCommittedConsumer(
-                    "transactional-group",
-                    cluster.bootstrapServers(),
-                    100,
-                    new Properties())
-            );
-        }
-        for (int i = 0; i < nonTransactionalConsumerCount; i++) {
-            nonTransactionalConsumers.add(createReadUncommittedConsumer(
-                    "non-transactional-group",
-                    cluster.bootstrapServers())
-            );
-        }
+    public void testBasicTransactions() throws Exception {
+        createTopics();
+        createTransactionProducers();
+        createTransactionConsumers();
+        createNonTransactionConsumers();
+        
         KafkaProducer<byte[], byte[]> producer = transactionalProducers.get(0);
         Consumer<byte[], byte[]> consumer = transactionalConsumers.get(0);
         Consumer<byte[], byte[]> unCommittedConsumer = nonTransactionalConsumers.get(0);
         TopicPartition tp11 = new TopicPartition(topic1, 1);
         TopicPartition tp22 = new TopicPartition(topic2, 2);
-        List<KafkaBroker> brokers = new ArrayList<>(cluster.brokers().values());
 
         producer.initTransactions();
         producer.beginTransaction();
-
         producer.send(producerRecordWithExpectedTransactionStatus(topic2, 2, "2", "2", false));
         producer.send(producerRecordWithExpectedTransactionStatus(topic1, 1, "4", "4", false));
         producer.flush();
@@ -175,27 +145,27 @@ public class TransactionsTest {
         Map<TopicPartition, Integer> topicPartition = new HashMap<>();
         topicPartition.put(tp11, 0);
         topicPartition.put(tp22, 0);
-        verifyLogStartOffsets(topicPartition, brokers);
+        verifyLogStartOffsets(topicPartition);
         producer.abortTransaction();
 
         // We've sent 1 record + 1 abort mark = 2 (segments) to each topic partition,
         // so 1 segment should be offloaded, the local log start offset should be 1
         // And log start offset is still 0
-        verifyLogStartOffsets(topicPartition, brokers);
+        verifyLogStartOffsets(topicPartition);
 
         producer.beginTransaction();
         producer.send(producerRecordWithExpectedTransactionStatus(topic1, 1, "1", "1", true));
         producer.send(producerRecordWithExpectedTransactionStatus(topic2, 2, "3", "3", true));
 
         // Before records are committed, these records won't be offloaded.
-        verifyLogStartOffsets(topicPartition, brokers);
+        verifyLogStartOffsets(topicPartition);
 
         producer.commitTransaction();
 
         // We've sent 2 records + 1 abort mark + 1 commit mark = 4 (segments) to each topic partition,
         // so 3 segments should be offloaded, the local log start offset should be 3
         // And log start offset is still 0
-        verifyLogStartOffsets(topicPartition, brokers);
+        verifyLogStartOffsets(topicPartition);
 
         List<String> partitions = new ArrayList<>();
         partitions.add(tp11.topic());
@@ -204,7 +174,7 @@ public class TransactionsTest {
         unCommittedConsumer.subscribe(partitions);
 
         List<ConsumerRecord<byte[], byte[]>> records = consumeRecords(consumer, 2);
-        records.forEach(record -> assertCommittedAndGetValue(record));
+        records.forEach(this::assertCommittedAndGetValue);
         List<ConsumerRecord<byte[], byte[]>> allRecords = consumeRecords(unCommittedConsumer, 4);
         Set<String> expectedValues = new HashSet<>();
         expectedValues.add("1");
@@ -214,16 +184,53 @@ public class TransactionsTest {
         allRecords.forEach(record -> assertTrue(expectedValues.contains(recordValueAsString(record))));
     }
 
+    private void createNonTransactionConsumers() {
+        for (int i = 0; i < nonTransactionalConsumerCount; i++) {
+            nonTransactionalConsumers.add(createReadUncommittedConsumer(noTransactionGroup));
+        }
+    }
+
+    private void createTransactionConsumers() {
+        for (int i = 0; i < transactionalConsumerCount; i++) {
+            transactionalConsumers.add(createReadCommittedConsumer(
+                    "transactional-group", 
+                    100, 
+                    new Properties())
+            );
+        }
+    }
+
+    private void createTransactionProducers() {
+        for (int i = 0; i < transactionalProducerCount; i++) {
+            transactionalProducers.add(
+                    createTransactionalProducer(
+                            "transactional-producer",
+                            2000,
+                            2000,
+                            4000,
+                            1000)
+            );
+        }
+    }
+
+    private void createTopics() {
+        try (Admin adminClient = cluster.createAdminClient()) {
+            List<NewTopic> newTopics = new ArrayList<>();
+            newTopics.add(new NewTopic(topic1, numPartitions, (short) 2));
+            newTopics.add(new NewTopic(topic2, numPartitions, (short) 2));
+            adminClient.createTopics(newTopics);
+        }
+    }
+
     private KafkaProducer<byte[], byte[]> createTransactionalProducer(String transactionalId,
-                                                                      String brokers,
                                                                       int transactionTimeoutMs,
                                                                       int maxBlockMs,
                                                                       int deliveryTimeoutMs,
                                                                       int requestTimeoutMs) {
         Properties props = new Properties();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, keySerializer.getClass().getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, valueSerializer.getClass().getName());
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
         props.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionalId);
@@ -238,12 +245,11 @@ public class TransactionsTest {
 
     private KafkaConsumer<byte[], byte[]> createReadCommittedConsumer(
             String group,
-            String brokers,
             int maxPollRecords,
             Properties props
     ) {
         Properties consumerProps = new Properties();
-        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
+        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         consumerProps.put(ConsumerConfig.GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name);
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, group);
@@ -254,30 +260,35 @@ public class TransactionsTest {
         return new KafkaConsumer<>(consumerProps, new ByteArrayDeserializer(), new ByteArrayDeserializer());
     }
 
-    private KafkaConsumer<byte[], byte[]> createReadUncommittedConsumer(String group, String brokers) {
+    private KafkaConsumer<byte[], byte[]> createReadUncommittedConsumer(String group) {
         Properties consumerProps = new Properties();
-        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
+        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         consumerProps.put(ConsumerConfig.GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name);
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, group);
         consumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, true);
         consumerProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500);
         consumerProps.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_uncommitted");
-        return new KafkaConsumer<>(consumerProps, new ByteArrayDeserializer(), new ByteArrayDeserializer());
+        return new KafkaConsumer<>(consumerProps);
     }
 
-    private void verifyLogStartOffsets(Map<TopicPartition, Integer> partitionStartOffsets, List<KafkaBroker> brokers) throws InterruptedException {
+    private void verifyLogStartOffsets(Map<TopicPartition, Integer> partitionStartOffsets) throws InterruptedException {
+        Collection<KafkaBroker> brokers = cluster.brokers().values();
         Map<Integer, Long> offsets = new HashMap<>();
-        TestUtils.waitForCondition(() -> brokers.stream().allMatch(broker ->
-                partitionStartOffsets.entrySet().stream().allMatch(entry -> {
-                    TopicPartition partition = entry.getKey();
-                    int offset = entry.getValue();
-                    long lso = broker.replicaManager().localLog(partition).get().logStartOffset();
-                    offsets.put(broker.config().brokerId(), lso);
-                    System.out.println("offset: " + offset + ", lso: " + lso);
-                    return offset == lso;
-                })
-        ), "log start offset doesn't change to the expected position: " + partitionStartOffsets + ", current position: " + offsets);
+        TestUtils.waitForCondition(() -> {
+            for (KafkaBroker broker : brokers) {
+                for (Map.Entry<TopicPartition, Integer> entry : partitionStartOffsets.entrySet()) {
+                    long offset = broker.replicaManager().localLog(entry.getKey()).get().localLogStartOffset();
+                    offsets.put(broker.config().brokerId(), offset);
+                    if (entry.getValue() == offset) {
+                        return true;
+                    }
+                }
+            }
+            return true;
+        }, "log start offset doesn't change to the expected position: " + partitionStartOffsets + ", current position: " + offsets);
     }
 
     private ProducerRecord<byte[], byte[]> producerRecordWithExpectedTransactionStatus(
