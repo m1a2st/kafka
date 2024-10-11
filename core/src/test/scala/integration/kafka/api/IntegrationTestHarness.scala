@@ -83,9 +83,6 @@ abstract class IntegrationTestHarness extends KafkaServerTestHarness {
     }
 
     insertControllerListenersIfNeeded(cfgs)
-    for (elem <- cfgs.+:()) {
-      print("KafkaConfig: " + elem)
-    }
     cfgs.map(KafkaConfig.fromProps)
   }
 
