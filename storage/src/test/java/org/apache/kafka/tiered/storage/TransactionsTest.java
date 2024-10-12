@@ -44,6 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -107,10 +108,8 @@ public class TransactionsTest {
         this.cluster = clusterInstance;
     }
 
-    private Properties topicConfig() {
-        Properties topicConfig = new Properties();
-        topicConfig.put(ServerLogConfigs.MIN_IN_SYNC_REPLICAS_CONFIG, 2);
-        return topicConfig;
+    private Map<String, String> topicConfig() {
+        return Collections.singletonMap(ServerLogConfigs.MIN_IN_SYNC_REPLICAS_CONFIG, "2");
     }
 
     @AfterEach
@@ -118,7 +117,6 @@ public class TransactionsTest {
         transactionalProducers.forEach(KafkaProducer::close);
         transactionalConsumers.forEach(Consumer::close);
         nonTransactionalConsumers.forEach(Consumer::close);
-
     }
 
     @ClusterTest
@@ -216,8 +214,8 @@ public class TransactionsTest {
     private void createTopics() {
         try (Admin adminClient = cluster.createAdminClient()) {
             List<NewTopic> newTopics = new ArrayList<>();
-            newTopics.add(new NewTopic(topic1, numPartitions, (short) 2));
-            newTopics.add(new NewTopic(topic2, numPartitions, (short) 2));
+            newTopics.add(new NewTopic(topic1, numPartitions, (short) 3).configs(topicConfig()));
+            newTopics.add(new NewTopic(topic2, numPartitions, (short) 3).configs(topicConfig()));
             adminClient.createTopics(newTopics);
         }
     }
@@ -282,8 +280,8 @@ public class TransactionsTest {
                 for (Map.Entry<TopicPartition, Integer> entry : partitionStartOffsets.entrySet()) {
                     long offset = broker.replicaManager().localLog(entry.getKey()).get().localLogStartOffset();
                     offsets.put(broker.config().brokerId(), offset);
-                    if (entry.getValue() == offset) {
-                        return true;
+                    if (entry.getValue() != offset) {
+                        return false;
                     }
                 }
             }
@@ -322,14 +320,19 @@ public class TransactionsTest {
         return recordValueAsString(record);
     }
 
-    private <K, V> List<ConsumerRecord<K, V>> consumeRecords(Consumer<K, V> consumer, int numRecords) throws InterruptedException {
+    private <K, V> List<ConsumerRecord<K, V>> consumeRecords(
+            Consumer<K, V> consumer, 
+            int numRecords
+    ) throws InterruptedException {
         List<ConsumerRecord<K, V>> records = pollUntilAtLeastNumRecords(consumer, numRecords);
         assertEquals(numRecords, records.size(), "Consumed more records than expected");
         return records;
     }
 
     public static <K, V> List<ConsumerRecord<K, V>> pollUntilAtLeastNumRecords(
-            Consumer<K, V> consumer, int numRecords) throws InterruptedException {
+            Consumer<K, V> consumer, 
+            int numRecords
+    ) throws InterruptedException {
         List<ConsumerRecord<K, V>> records = new ArrayList<>();
         TestUtils.waitForCondition(() -> {
             consumer.poll(Duration.ofMillis(100)).forEach(records::add);
