@@ -17,6 +17,7 @@
 package org.apache.kafka.tiered.storage;
 
 import kafka.server.KafkaBroker;
+
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -38,6 +39,7 @@ import org.apache.kafka.common.test.api.ClusterTestDefaults;
 import org.apache.kafka.common.test.api.ClusterTestExtensions;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.test.TestUtils;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -253,7 +255,7 @@ public class TransactionsTest {
         consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, group);
         consumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         consumerProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
-        consumerProps.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_uncommitted");
+        consumerProps.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
         consumerProps.putAll(props);
         return new KafkaConsumer<>(consumerProps, new ByteArrayDeserializer(), new ByteArrayDeserializer());
     }
@@ -338,7 +340,6 @@ public class TransactionsTest {
             consumer.poll(Duration.ofMillis(100)).forEach(records::add);
             return records.size() >= numRecords;
         }, DEFAULT_MAX_WAIT_MS, format("Consumed %d records before timeout instead of the expected %d records", records.size(), numRecords));
-
         return records;
     }
 
