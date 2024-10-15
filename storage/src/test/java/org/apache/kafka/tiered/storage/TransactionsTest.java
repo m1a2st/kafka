@@ -43,6 +43,7 @@ import org.apache.kafka.test.TestUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -182,6 +183,45 @@ public class TransactionsTest {
         expectedValues.add("3");
         expectedValues.add("4");
         allRecords.forEach(record -> assertTrue(expectedValues.contains(recordValueAsString(record))));
+    }
+
+    @ClusterTest
+    public void testReadCommittedConsumerShouldNotSeeUndecidedData() throws Exception {
+        createTopics();
+        createTransactionProducers();
+        createTransactionConsumers();
+        createNonTransactionConsumers();
+
+        KafkaProducer<byte[], byte[]> producer1 = transactionalProducers.get(0);
+        KafkaProducer<byte[], byte[]> producer2 = createTransactionalProducer("other", 
+                2000, 2000, 4000, 1000);
+        Consumer<byte[], byte[]> readCommittedConsumer = transactionalConsumers.get(0);
+        Consumer<byte[], byte[]> readUncommittedConsumer = nonTransactionalConsumers.get(0);
+
+        producer1.initTransactions();
+        producer2.initTransactions();
+        producer1.beginTransaction();
+        producer2.beginTransaction();
+
+        long latestVisibleTimestamp = System.currentTimeMillis();
+        producer2.send(new ProducerRecord(topic1, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord(topic2, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer2.flush();
+
+        long latestWrittenTimestamp = latestVisibleTimestamp + 1;
+        producer1.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "a".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "b".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "c".getBytes(UTF_8), "3".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "d".getBytes(UTF_8), "4".getBytes(UTF_8)));
+        producer1.flush();
+
+        producer2.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer2.commitTransaction();
+
+        TopicPartition tp1 = new TopicPartition(topic1, 0);
+        TopicPartition tp2 = new TopicPartition(topic2, 0);
+        
     }
 
     private void createNonTransactionConsumers() {
