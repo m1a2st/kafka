@@ -459,20 +459,22 @@ public class Selector implements Selectable, AutoCloseable {
      */
     @Override
     public void poll(long timeout) throws IOException {
+        log.error("{} Selector.poll() is called with timeout = {}", Thread.currentThread().getName(), timeout);
         if (timeout < 0)
             throw new IllegalArgumentException("timeout should be >= 0");
 
         boolean madeReadProgressLastCall = madeReadProgressLastPoll;
+        log.error("{} Selector.poll() madeReadProgressLastCall = {}", Thread.currentThread().getName(), madeReadProgressLastCall);
         clear();
-
+        log.error("{} Selector.poll() clear() completed", Thread.currentThread().getName());
         boolean dataInBuffers = !keysWithBufferedRead.isEmpty();
-
+        log.error("{} Selector.poll() dataInBuffers = {}", Thread.currentThread().getName(), dataInBuffers);
         if (!immediatelyConnectedKeys.isEmpty() || (madeReadProgressLastCall && dataInBuffers))
             timeout = 0;
-
+        log.error("{} Selector.poll() timeout = {}", Thread.currentThread().getName(), timeout);
         if (!memoryPool.isOutOfMemory() && outOfMemory) {
             //we have recovered from memory pressure. unmute any channel not explicitly muted for other reasons
-            log.trace("Broker no longer low on memory - unmuting incoming sockets");
+            log.error("Broker no longer low on memory - unmuting incoming sockets");
             for (KafkaChannel channel : channels.values()) {
                 if (channel.isInMutableState() && !explicitlyMutedChannels.contains(channel)) {
                     channel.maybeUnmute();
