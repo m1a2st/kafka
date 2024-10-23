@@ -14,10 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.tiered.storage;
+package org.apache.kafka.tiered.storage.integration;
 
 import kafka.server.KafkaBroker;
-
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -25,6 +24,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.GroupProtocol;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -39,11 +39,9 @@ import org.apache.kafka.common.test.api.ClusterTestDefaults;
 import org.apache.kafka.common.test.api.ClusterTestExtensions;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.test.TestUtils;
-
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -60,30 +58,25 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.singleton;
 import static org.apache.kafka.coordinator.group.GroupCoordinatorConfig.GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG;
 import static org.apache.kafka.coordinator.group.GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG;
-import static org.apache.kafka.coordinator.transaction.TransactionLogConfig.TRANSACTIONS_TOPIC_MIN_ISR_CONFIG;
 import static org.apache.kafka.coordinator.transaction.TransactionLogConfig.TRANSACTIONS_TOPIC_PARTITIONS_CONFIG;
 import static org.apache.kafka.coordinator.transaction.TransactionLogConfig.TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG;
-import static org.apache.kafka.coordinator.transaction.TransactionStateManagerConfig.TRANSACTIONS_ABORT_TIMED_OUT_TRANSACTION_CLEANUP_INTERVAL_MS_CONFIG;
 import static org.apache.kafka.server.config.ReplicationConfigs.AUTO_LEADER_REBALANCE_ENABLE_CONFIG;
-import static org.apache.kafka.server.config.ServerConfigs.CONTROLLED_SHUTDOWN_ENABLE_CONFIG;
 import static org.apache.kafka.server.config.ServerLogConfigs.AUTO_CREATE_TOPICS_ENABLE_CONFIG;
 import static org.apache.kafka.test.TestUtils.DEFAULT_MAX_WAIT_MS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClusterTestDefaults(
         brokers = 3,
         serverProperties = {
-            @ClusterConfigProperty(key = AUTO_CREATE_TOPICS_ENABLE_CONFIG, value = "false"),
-            @ClusterConfigProperty(key = OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
-            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_PARTITIONS_CONFIG, value = "3"),
-            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "2"),
-            @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_MIN_ISR_CONFIG, value = "2"),
-            @ClusterConfigProperty(key = CONTROLLED_SHUTDOWN_ENABLE_CONFIG, value = "true"),
-            @ClusterConfigProperty(key = "unclean.leader.election.enable", value = "false"),
-            @ClusterConfigProperty(key = AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false"),
-            @ClusterConfigProperty(key = GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0"),
-            @ClusterConfigProperty(key = TRANSACTIONS_ABORT_TIMED_OUT_TRANSACTION_CLEANUP_INTERVAL_MS_CONFIG, value = "200"),
+                @ClusterConfigProperty(key = AUTO_CREATE_TOPICS_ENABLE_CONFIG, value = "false"),
+                @ClusterConfigProperty(key = OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
+                @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_PARTITIONS_CONFIG, value = "3"),
+                @ClusterConfigProperty(key = TRANSACTIONS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "2"),
+                @ClusterConfigProperty(key = "unclean.leader.election.enable", value = "false"),
+                @ClusterConfigProperty(key = AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false"),
+                @ClusterConfigProperty(key = GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0"),
         }
 )
 @ExtendWith(ClusterTestExtensions.class)
@@ -104,7 +97,7 @@ public class TransactionsTest {
     private final String transactionStatusKey = "transactionStatus";
     private final String committedKey = "committed";
     private final String noTransactionGroup = "non-transactional-group";
-    
+
     private final ClusterInstance cluster;
 
     public TransactionsTest(ClusterInstance clusterInstance) {
@@ -128,7 +121,7 @@ public class TransactionsTest {
         createTransactionProducers();
         createTransactionConsumers();
         createNonTransactionConsumers();
-        
+
         KafkaProducer<byte[], byte[]> producer = transactionalProducers.get(0);
         Consumer<byte[], byte[]> consumer = transactionalConsumers.get(0);
         Consumer<byte[], byte[]> unCommittedConsumer = nonTransactionalConsumers.get(0);
@@ -193,7 +186,7 @@ public class TransactionsTest {
         createNonTransactionConsumers();
 
         KafkaProducer<byte[], byte[]> producer1 = transactionalProducers.get(0);
-        KafkaProducer<byte[], byte[]> producer2 = createTransactionalProducer("other", 
+        KafkaProducer<byte[], byte[]> producer2 = createTransactionalProducer("other",
                 2000, 2000, 4000, 1000);
         Consumer<byte[], byte[]> readCommittedConsumer = transactionalConsumers.get(0);
         Consumer<byte[], byte[]> readUncommittedConsumer = nonTransactionalConsumers.get(0);
@@ -204,24 +197,55 @@ public class TransactionsTest {
         producer2.beginTransaction();
 
         long latestVisibleTimestamp = System.currentTimeMillis();
-        producer2.send(new ProducerRecord(topic1, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
-        producer2.send(new ProducerRecord(topic2, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord<>(topic1, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord<>(topic2, 0, latestVisibleTimestamp, "x".getBytes(UTF_8), "1".getBytes(UTF_8)));
         producer2.flush();
 
         long latestWrittenTimestamp = latestVisibleTimestamp + 1;
-        producer1.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "a".getBytes(UTF_8), "1".getBytes(UTF_8)));
-        producer1.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "b".getBytes(UTF_8), "2".getBytes(UTF_8)));
-        producer1.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "c".getBytes(UTF_8), "3".getBytes(UTF_8)));
-        producer1.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "d".getBytes(UTF_8), "4".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord<>(topic1, 0, latestWrittenTimestamp, "a".getBytes(UTF_8), "1".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord<>(topic1, 0, latestWrittenTimestamp, "b".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord<>(topic2, 0, latestWrittenTimestamp, "c".getBytes(UTF_8), "3".getBytes(UTF_8)));
+        producer1.send(new ProducerRecord<>(topic2, 0, latestWrittenTimestamp, "d".getBytes(UTF_8), "4".getBytes(UTF_8)));
         producer1.flush();
 
-        producer2.send(new ProducerRecord(topic1, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
-        producer2.send(new ProducerRecord(topic2, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord<>(topic1, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
+        producer2.send(new ProducerRecord<>(topic2, 0, latestWrittenTimestamp, "x".getBytes(UTF_8), "2".getBytes(UTF_8)));
         producer2.commitTransaction();
 
         TopicPartition tp1 = new TopicPartition(topic1, 0);
         TopicPartition tp2 = new TopicPartition(topic2, 0);
+        HashSet<TopicPartition> tps = new HashSet<>();
+        tps.add(tp1);
+        tps.add(tp2);
+        readUncommittedConsumer.assign(tps);
+        consumeRecords(readUncommittedConsumer, 8);
+
+        Map<TopicPartition, Long> offsets = new HashMap<>();
+        offsets.put(tp1, latestWrittenTimestamp);
+        offsets.put(tp2, latestWrittenTimestamp);
+        Map<TopicPartition, OffsetAndTimestamp> readUncommittedOffsetsForTimes = readUncommittedConsumer.offsetsForTimes(offsets);
+        assertEquals(2, readUncommittedOffsetsForTimes.size());
+        assertEquals(latestWrittenTimestamp, readUncommittedOffsetsForTimes.get(tp1).timestamp());
+        assertEquals(latestWrittenTimestamp, readUncommittedOffsetsForTimes.get(tp2).timestamp());
+        readUncommittedConsumer.unsubscribe();
+
+        // we should only see the first two records which come before the undecided second transaction
+        readCommittedConsumer.assign(tps);
+        List<ConsumerRecord<byte[], byte[]>> records = consumeRecords(readCommittedConsumer, 2);
+        records.forEach(record -> {
+            assertEquals("a", new String(record.key()));
+            assertEquals("1", new String(record.value()));
+        });
+
+        // even if we seek to the end, we should not be able to see the undecided data
+        assertEquals(2, readCommittedConsumer.assignment().size());
+        readCommittedConsumer.seekToEnd(readCommittedConsumer.assignment());
+        readCommittedConsumer.assignment().forEach(tp -> assertEquals(1L, readCommittedConsumer.position(tp))); 
         
+        // undecided timestamps should not be searchable either
+        Map<TopicPartition, OffsetAndTimestamp> readCommittedOffsetsForTimes = readCommittedConsumer.offsetsForTimes(offsets);
+        assertNull(readCommittedOffsetsForTimes.get(tp1));
+        assertNull(readCommittedOffsetsForTimes.get(tp2));
     }
 
     private void createNonTransactionConsumers() {
@@ -233,9 +257,9 @@ public class TransactionsTest {
     private void createTransactionConsumers() {
         for (int i = 0; i < transactionalConsumerCount; i++) {
             transactionalConsumers.add(createReadCommittedConsumer(
-                    "transactional-group", 
-                    100, 
-                    new Properties())
+                "transactional-group",
+                100,
+                new Properties())
             );
         }
     }
@@ -363,7 +387,7 @@ public class TransactionsTest {
     }
 
     private <K, V> List<ConsumerRecord<K, V>> consumeRecords(
-            Consumer<K, V> consumer, 
+            Consumer<K, V> consumer,
             int numRecords
     ) throws InterruptedException {
         List<ConsumerRecord<K, V>> records = pollUntilAtLeastNumRecords(consumer, numRecords);
@@ -372,7 +396,7 @@ public class TransactionsTest {
     }
 
     public static <K, V> List<ConsumerRecord<K, V>> pollUntilAtLeastNumRecords(
-            Consumer<K, V> consumer, 
+            Consumer<K, V> consumer,
             int numRecords
     ) throws InterruptedException {
         List<ConsumerRecord<K, V>> records = new ArrayList<>();
