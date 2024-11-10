@@ -210,7 +210,6 @@ public class TransactionsTest {
         TransactionTestUtils.testBumpTransactionalEpochWithTV2Enabled(cluster, GroupProtocol.CONSUMER, topicConfig());
     }
 
-    // FIXME
     @ClusterTemplate("generator")
     public void testFencingOnTransactionExpirationWithClassicGroupProtocol(ClusterInstance cluster) throws Exception {
         TransactionTestUtils.testFencingOnTransactionExpiration(cluster, GroupProtocol.CLASSIC, topicConfig());
