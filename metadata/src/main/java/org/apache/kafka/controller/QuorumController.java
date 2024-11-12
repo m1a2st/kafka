@@ -555,7 +555,7 @@ public final class QuorumController implements Controller {
         if (info.isFault()) {
             nonFatalFaultHandler.handleFault(name + ": " + failureMessage, exception);
         } else {
-            log.info("{}: {}", name, failureMessage);
+            log.error("{}: {}", name, failureMessage);
         }
         if (info.causesFailover() && isActiveController()) {
             renounce();
@@ -1072,11 +1072,11 @@ public final class QuorumController implements Controller {
                     }
                 } else if (newLeader.isLeader(nodeId)) {
                     long newNextWriteOffset = raftClient.logEndOffset();
-                    log.info("Becoming the active controller at epoch {}, next write offset {}.",
+                    log.error("Becoming the active controller at epoch {}, next write offset {}.",
                         newLeader.epoch(), newNextWriteOffset);
                     claim(newLeader.epoch(), newNextWriteOffset);
                 } else {
-                    log.info("In the new epoch {}, the leader is {}.",
+                    log.error("In the new epoch {}, the leader is {}.",
                         newLeader.epoch(), newLeaderName);
                 }
             });
@@ -1619,7 +1619,7 @@ public final class QuorumController implements Controller {
         registerElectUnclean(TimeUnit.MILLISECONDS.toNanos(uncleanLeaderElectionCheckIntervalMs));
         registerExpireDelegationTokens(MILLISECONDS.toNanos(delegationTokenExpiryCheckIntervalMs));
 
-        log.info("Creating new QuorumController with clusterId {}.{}",
+        log.error("Creating new QuorumController with clusterId {}.{}",
             clusterId,
             eligibleLeaderReplicasEnabled ? " Eligible leader replicas enabled." : "");
 

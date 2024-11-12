@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.TreeMap;
@@ -131,11 +132,18 @@ public class ReconfigurableQuorumIntegrationTest {
 
     @Test
     public void testRemoveAndAddSameController() throws Exception {
+        Map<Integer, Map<String, String>> overrides = new HashMap<>();
+        overrides.put(3000, Map.of("controller.quorum.fetch.timeout.ms", "3000"));
+        overrides.put(3001, Map.of("controller.quorum.fetch.timeout.ms", "3000"));
+        overrides.put(3002, Map.of("controller.quorum.fetch.timeout.ms", "3000"));
+        overrides.put(3003, Map.of("controller.quorum.fetch.timeout.ms", "3000"));
+        
         try (KafkaClusterTestKit cluster = new KafkaClusterTestKit.Builder(
             new TestKitNodes.Builder().
                 setNumBrokerNodes(1).
                 setNumControllerNodes(4).
                 setFeature(KRaftVersion.FEATURE_NAME, (short) 1).
+                setPerServerProperties(overrides).
                 build()).build()
         ) {
             cluster.format();
@@ -150,7 +158,6 @@ public class ReconfigurableQuorumIntegrationTest {
                 });
                 Uuid dirId = cluster.nodes().controllerNodes().get(3000).metadataDirectoryId();
                 admin.removeRaftVoter(3000, dirId).all().get();
-                cluster.waitForActiveController();
                 admin.addRaftVoter(
                     3000,
                     dirId,
