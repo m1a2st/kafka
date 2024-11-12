@@ -150,6 +150,7 @@ public class ReconfigurableQuorumIntegrationTest {
                 });
                 Uuid dirId = cluster.nodes().controllerNodes().get(3000).metadataDirectoryId();
                 admin.removeRaftVoter(3000, dirId).all().get();
+                cluster.waitForActiveController();
                 admin.addRaftVoter(
                     3000,
                     dirId,
