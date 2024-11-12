@@ -707,8 +707,14 @@ public class SslTransportLayerTest {
         TestUtils.waitForCondition(() ->
             server.numSent() >= 2, "Timed out waiting for echo server to send message");
 
-        // Read the message from socket with only one poll()
-        selector.poll(1000L);
+        TestUtils.waitForCondition(() -> {
+            try {
+                selector.poll(100L);
+            } catch (IOException e) {
+                return false;
+            }
+            return !selector.completedReceives().isEmpty();
+        }, "Timed out waiting for message to be received");
 
         Collection<NetworkReceive> receiveList = selector.completedReceives();
         assertEquals(1, receiveList.size());
