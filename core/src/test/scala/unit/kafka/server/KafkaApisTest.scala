@@ -171,16 +171,12 @@ class KafkaApisTest extends Logging {
                       raftSupport: Boolean = false,
                       overrideProperties: Map[String, String] = Map.empty,
                       featureVersions: Seq[FeatureVersion] = Seq.empty): KafkaApis = {
-    val properties = if (raftSupport) {
-      val properties = TestUtils.createBrokerConfig(brokerId)
-      properties.put(KRaftConfigs.NODE_ID_CONFIG, brokerId.toString)
-      properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker")
-      val voterId = brokerId + 1
-      properties.put(QuorumConfig.QUORUM_VOTERS_CONFIG, s"$voterId@localhost:9093")
-      properties
-    } else {
-      TestUtils.createBrokerConfig(brokerId)
-    }
+    val properties = TestUtils.createBrokerConfig(brokerId)
+    properties.put(KRaftConfigs.NODE_ID_CONFIG, brokerId.toString)
+    properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker")
+    val voterId = brokerId + 1
+    properties.put(QuorumConfig.QUORUM_VOTERS_CONFIG, s"$voterId@localhost:9093")
+
     overrideProperties.foreach( p => properties.put(p._1, p._2))
     TestUtils.setIbpVersion(properties, interBrokerProtocolVersion)
     val config = new KafkaConfig(properties)
@@ -11490,7 +11486,7 @@ class KafkaApisTest extends Logging {
 
   @Test
   def testReadShareGroupStateSuccess(): Unit = {
-    val topicId = Uuid.randomUuid();
+    val topicId = Uuid.randomUuid()
     val readRequestData = new ReadShareGroupStateRequestData()
       .setGroupId("group1")
       .setTopics(List(
@@ -11541,7 +11537,7 @@ class KafkaApisTest extends Logging {
 
   @Test
   def testReadShareGroupStateAuthorizationFailed(): Unit = {
-    val topicId = Uuid.randomUuid();
+    val topicId = Uuid.randomUuid()
     val readRequestData = new ReadShareGroupStateRequestData()
       .setGroupId("group1")
       .setTopics(List(
@@ -11600,7 +11596,7 @@ class KafkaApisTest extends Logging {
 
   @Test
   def testWriteShareGroupStateSuccess(): Unit = {
-    val topicId = Uuid.randomUuid();
+    val topicId = Uuid.randomUuid()
     val writeRequestData = new WriteShareGroupStateRequestData()
       .setGroupId("group1")
       .setTopics(List(
@@ -11651,7 +11647,7 @@ class KafkaApisTest extends Logging {
 
   @Test
   def testWriteShareGroupStateAuthorizationFailed(): Unit = {
-    val topicId = Uuid.randomUuid();
+    val topicId = Uuid.randomUuid()
     val writeRequestData = new WriteShareGroupStateRequestData()
       .setGroupId("group1")
       .setTopics(List(
