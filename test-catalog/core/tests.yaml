@@ -260,8 +260,6 @@ kafka.api.GroupEndToEndAuthorizationTest:
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
 - testTwoConsumersWithDifferentSaslCredentials
-kafka.api.LogAppendTimeTest:
-- testProduceConsume
 kafka.api.MetricsTest:
 - testMetrics
 kafka.api.PlaintextAdminIntegrationTest:
@@ -2800,6 +2798,7 @@ kafka.server.ReplicaManagerQuotasTest:
 kafka.server.ReplicaManagerTest:
 - checkRemoveMetricsCountMatchRegisterCount
 - testActiveProducerState
+- testAppendRecordsToLeader
 - testApplyDeltaShouldHandleReplicaAssignedToLostDirectory
 - testApplyDeltaShouldHandleReplicaAssignedToOnlineDirectory
 - testApplyDeltaShouldHandleReplicaAssignedToUnassignedDirectory
