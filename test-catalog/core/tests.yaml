@@ -646,9 +646,6 @@ kafka.api.SslProducerSendTest:
 - testSendToPartitionWithFollowerShutdownShouldNotTimeout
 kafka.api.TransactionsBounceTest:
 - testWithGroupMetadata
-kafka.api.TransactionsExpirationTest:
-- testFatalErrorAfterInvalidProducerIdMapping
-- testTransactionAfterProducerIdExpires
 kafka.api.TransactionsTest:
 - testAbortTransactionTimeout
 - testBasicTransactions
@@ -2024,11 +2021,6 @@ kafka.server.DelayedRemoteFetchTest:
 - testFollowerFetch
 - testNotLeaderOrFollower
 - testRequestExpiry
-kafka.server.DelayedRemoteListOffsetsTest:
-- testPartialResponseWhenNotLeaderOrFollowerExceptionOnOnePartition
-- testResponseOnPartialError
-- testResponseOnRequestExpiration
-- testResponseOnSuccess
 kafka.server.DelegationTokenRequestsOnPlainTextTest:
 - testDelegationTokenRequests
 kafka.server.DelegationTokenRequestsTest:
