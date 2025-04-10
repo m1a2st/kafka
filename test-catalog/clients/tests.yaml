@@ -259,6 +259,12 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDeleteRecords
 - testDeleteRecordsMultipleSends
 - testDeleteRecordsTopicAuthorizationError
+- testDeleteShareGroupOffsets
+- testDeleteShareGroupOffsetsEmpty
+- testDeleteShareGroupOffsetsOptionsWithBatchedApi
+- testDeleteShareGroupOffsetsWithErrorInGroup
+- testDeleteShareGroupOffsetsWithErrorInOnePartition
+- testDeleteShareGroupOffsetsWithPartitionNotPresentInResult
 - testDeleteStreamsGroupOffsets
 - testDeleteStreamsGroupOffsetsFindCoordinatorNonRetriableErrors
 - testDeleteStreamsGroupOffsetsFindCoordinatorRetriableErrors
@@ -885,6 +891,7 @@ org.apache.kafka.clients.consumer.KafkaShareConsumerTest:
 org.apache.kafka.clients.consumer.MockConsumerTest:
 - endOffsetsShouldBeIdempotent
 - shouldNotClearRecordsForPausedPartitions
+- shouldReturnMaxPollRecords
 - testConsumerRecordsIsEmptyWhenReturningNoRecords
 - testDurationBasedOffsetReset
 - testRe2JPatternSubscription

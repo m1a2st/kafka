@@ -7,8 +7,6 @@ integration.kafka.api.PlaintextConsumerCallbackTest:
 - testConsumerRebalanceListenerBeginningOffsetsOnPartitionsRevoked
 - testGetPositionOfNewlyAssignedPartitionOnPartitionsAssignedCallback
 - testSeekPositionAndPauseNewlyAssignedPartitionOnPartitionsAssignedCallback
-integration.kafka.server.DelayedFutureTest:
-- testDelayedFuture
 kafka.KafkaConfigTest:
 - testBrokerRequiredProperties
 - testBrokerRoleNodeIdValidation
@@ -2273,6 +2271,13 @@ kafka.server.KafkaApisTest:
 - testConsumerGroupHeartbeatRequestGroupAuthorizationFailed
 - testConsumerGroupHeartbeatRequestTopicAuthorizationFailed
 - testConsumerGroupHeartbeatReturnsUnsupportedVersion
+- testDeleteShareGroupOffsetsRequestEmptyTopicsSuccess
+- testDeleteShareGroupOffsetsRequestGroupCoordinatorErrorResponse
+- testDeleteShareGroupOffsetsRequestGroupCoordinatorThrowsError
+- testDeleteShareGroupOffsetsRequestSuccess
+- testDeleteShareGroupOffsetsRequestsGroupAuthorizationFailed
+- testDeleteShareGroupOffsetsRequestsTopicAuthorizationFailed
+- testDeleteShareGroupOffsetsReturnsUnsupportedVersion
 - testDeleteShareGroupStateAuthorizationFailed
 - testDeleteShareGroupStateSuccess
 - testDescribeClusterRequest
@@ -3180,6 +3185,7 @@ kafka.server.share.SharePartitionTest:
 - testAcquireWithEmptyFetchRecords
 - testAcquireWithMaxFetchRecords
 - testAcquireWithMultipleBatchesAndMaxFetchRecords
+- testAcquireWithReadCommittedIsolationLevel
 - testAcquireWithWriteShareGroupStateDelay
 - testAcquisitionLockAfterDifferentAcknowledges
 - testAcquisitionLockForAcquiringMultipleRecords
@@ -3209,6 +3215,10 @@ kafka.server.share.SharePartitionTest:
 - testCanAcquireRecordsWithCachedDataAndLimitNotReached
 - testCanAcquireRecordsWithCachedDataAndLimitReached
 - testCanAcquireRecordsWithEmptyCache
+- testContainsAbortMarker
+- testFetchAbortedTransactionRecordBatchesForAbortedAndCommittedTransactions
+- testFetchAbortedTransactionRecordBatchesForOnlyAbortedTransactions
+- testFilterRecordBatchesFromAcquiredRecords
 - testFindLastOffsetAcknowledgedWhenGapAtBeginning
 - testLsoMovementAheadOfEndOffset
 - testLsoMovementAheadOfEndOffsetPostAcknowledgment
