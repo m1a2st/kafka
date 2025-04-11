@@ -445,7 +445,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
-- testShareGroupDelete
+- testShareGroupDeleteRequest
+- testShareGroupDeleteTombstones
 - testShareGroupDescribeNoErrors
 - testShareGroupDescribeOnConsumerGroup
 - testShareGroupDescribeOnStreamsGroup
@@ -465,7 +466,6 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupStates
 - testShareGroupUnknownGroupId
 - testShareGroupUnknownMemberIdJoins
-- testSharePartitionDeleteRequest
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdJoins
 - testShouldThrowFencedInstanceIdExceptionWhenStaticMemberWithDifferentMemberIdLeaves
 - testShouldThrowUnknownMemberIdExceptionWhenUnknownStaticMemberLeaves
@@ -1137,9 +1137,9 @@ org.apache.kafka.coordinator.group.streams.assignor.StickyTaskAssignorTest:
 org.apache.kafka.coordinator.group.streams.topics.ChangelogTopicsTest:
 - shouldContainBothTypesOfPreExistingChangelogs
 - shouldContainNonSourceBasedChangelogs
+- shouldContainSourceBasedChangelogs
 - shouldFailIfNoSourceTopicsAndNoRepartitionSourceTopics
 - shouldNotContainChangelogsForStatelessTasks
-- shouldNotContainSourceBasedChangelogs
 - shouldNotFailIfOnlyRepartitionSourceTopicsEmpty
 - shouldNotFailIfOnlySourceTopicsEmpty
 org.apache.kafka.coordinator.group.streams.topics.ConfiguredInternalTopicTest:
