@@ -2604,7 +2604,8 @@ org.apache.kafka.clients.producer.KafkaProducerTest:
 - testExplicitlyOnlyEnableJmxReporter
 - testFlushCompleteSendOfInflightBatches
 - testFlushMeasureLatency
-- testHeaders
+- testHeadersFailure
+- testHeadersSuccess
 - testInflightRequestsAndIdempotenceForIdempotentProducers
 - testInitTransactionTimeout
 - testInitTransactionWhileThrottled
@@ -5161,5 +5162,11 @@ org.apache.kafka.common.utils.UtilsTest:
 - utf8ByteArraySerde
 - utf8ByteBufferSerde
 - writeToBuffer
+org.apache.kafka.common.utils.annotation.ApiKeyVersionsProviderTest:
+- testFromVersionTooOldThrowsException
+- testInvalidRangeThrowsExceptionFromGreaterThanTo
+- testProvideArgumentsWithDefaultRange
+- testProvideArgumentsWithExplicitRange
+- testToVersionTooNewThrowsException
 org.apache.kafka.server.policy.AlterConfigPolicyTest:
 - testRequestMetadataEquals
