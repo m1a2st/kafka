@@ -464,7 +464,9 @@ kafka.api.PlaintextProducerSendTest:
 - testValidBeforeAndAfterTimestampsWithinThreshold
 - testWrongSerializer
 kafka.api.ProducerSendWhileDeletionTest:
+- testSendWithRecreatedTopic
 - testSendWithTopicDeletionMidWay
+- testSendWithTopicReassignmentIsMidWay
 kafka.api.SaslClientsWithInvalidCredentialsTest:
 - testConsumerWithAuthenticationFailure
 - testKafkaAdminClientWithAuthenticationFailure
@@ -2322,7 +2324,8 @@ kafka.server.KafkaApisTest:
 - testStreamsGroupHeartbeatRequestGroupAuthorizationFailed
 - testStreamsGroupHeartbeatRequestInternalTopicNames
 - testStreamsGroupHeartbeatRequestInvalidTopicNames
-- testStreamsGroupHeartbeatRequestProtocolDisabled
+- testStreamsGroupHeartbeatRequestProtocolDisabledViaConfig
+- testStreamsGroupHeartbeatRequestProtocolDisabledViaFeature
 - testStreamsGroupHeartbeatRequestTopicAuthorizationFailed
 - testStreamsGroupHeartbeatRequestWithAuthorizedTopology
 - testStreamsGroupHeartbeatRequestWithInternalTopicsToCreate
