@@ -2490,6 +2490,14 @@ org.apache.kafka.clients.consumer.internals.TimedRequestStateTest:
 - testIsExpired
 - testRemainingMs
 - testToStringUpdatesTimer
+org.apache.kafka.clients.consumer.internals.TopicIdPartitionSetTest:
+- testIsEmpty
+- testRetrieveTopicIds
+- testRetrieveTopicNames
+- testRetrieveTopicPartitions
+- testRetrievedTopicNamesAreSorted
+- testToString
+- testToStringSorted
 org.apache.kafka.clients.consumer.internals.TopicMetadataFetcherTest:
 - testGetAllTopics
 - testGetAllTopicsDisconnect
@@ -4058,6 +4066,11 @@ org.apache.kafka.common.record.MemoryRecordsTest:
 - testHasRoomForMethodWithHeaders
 - testIterator
 - testNextBatchSize
+- testSlice
+- testSliceEmptyRecords
+- testSliceForAlreadySlicedMemoryRecords
+- testSliceInvalidPosition
+- testSliceInvalidSize
 - testUnsupportedCompress
 - testWithRecords
 org.apache.kafka.common.record.MultiRecordsSendTest:
