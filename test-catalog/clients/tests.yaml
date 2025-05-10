@@ -359,7 +359,14 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListConsumerGroupOffsetsRetriableErrors
 - testListConsumerGroupOffsetsRetryBackoff
 - testListConsumerGroups
+- testListConsumerGroupsDeprecated
+- testListConsumerGroupsDeprecatedMetadataFailure
+- testListConsumerGroupsDeprecatedWithStates
+- testListConsumerGroupsDeprecatedWithStatesOlderBrokerVersion
+- testListConsumerGroupsDeprecatedWithTypes
+- testListConsumerGroupsDeprecatedWithTypesOlderBrokerVersion
 - testListConsumerGroupsMetadataFailure
+- testListConsumerGroupsWithProtocolTypes
 - testListConsumerGroupsWithStates
 - testListConsumerGroupsWithStatesOlderBrokerVersion
 - testListConsumerGroupsWithTypes
@@ -368,6 +375,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListGroupsEmptyGroupType
 - testListGroupsEmptyProtocol
 - testListGroupsMetadataFailure
+- testListGroupsWithProtocolTypes
 - testListGroupsWithTypes
 - testListGroupsWithTypesOlderBrokerVersion
 - testListOffsets
@@ -442,6 +450,13 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testUpdateFeaturesTopLevelError
 org.apache.kafka.clients.admin.ListConsumerGroupsOptionsTest:
 - testState
+org.apache.kafka.clients.admin.ListGroupsOptionsTest:
+- testForConsumerGroups
+- testForShareGroups
+- testForStreamsGroups
+- testGroupStates
+- testProtocolTypes
+- testTypes
 org.apache.kafka.clients.admin.ListTransactionsResultTest:
 - testAllFuturesFailIfLookupFails
 - testAllFuturesSucceed
@@ -2160,6 +2175,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testAcknowledgementCommitCallbackRegistrationEvent
 - testAcknowledgementCommitCallbackRegistrationEvent_Null
 - testBackgroundError
+- testCloseWithBackgroundQueueErrorsAfterUnsubscribe
 - testCloseWithInvalidTopicException
 - testCloseWithTopicAuthorizationException
 - testCompleteQuietly
@@ -4236,14 +4252,11 @@ org.apache.kafka.common.requests.OffsetFetchRequestTest:
 - testThrowOnFetchStableOffsetsUnsupported
 - testWithMultipleGroups
 org.apache.kafka.common.requests.OffsetFetchResponseTest:
-- testConstructor
-- testConstructorWithMultipleGroups
-- testNullableMetadataV0ToV7
-- testNullableMetadataV8AndAbove
-- testShouldThrottle
-- testStructBuild
-- testUseDefaultLeaderEpochV0ToV7
-- testUseDefaultLeaderEpochV8
+- testBuilderWithMultipleGroups
+- testBuilderWithSingleGroup
+- testGroupWithMultipleGroups
+- testGroupWithSingleGroup
+- testGroupWithSingleGroupWithTopLevelError
 org.apache.kafka.common.requests.OffsetsForLeaderEpochRequestTest:
 - testForConsumerRequiresVersion3
 - testForFollower
