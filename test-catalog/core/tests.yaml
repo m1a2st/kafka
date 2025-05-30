@@ -37,6 +37,11 @@ kafka.api.AuthorizerIntegrationTest:
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessDuringSend
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessOnEndTransaction
 - shouldThrowTransactionalIdAuthorizationExceptionWhenNoTransactionAccessOnSendOffsetsToTxn
+- testAlterShareGroupOffsetsWithGroupReadAndTopicReadAcl
+- testAlterShareGroupOffsetsWithOperationAll
+- testAlterShareGroupOffsetsWithoutGroupReadAcl
+- testAlterShareGroupOffsetsWithoutGroupReadOrTopicReadAcl
+- testAlterShareGroupOffsetsWithoutTopicReadAcl
 - testAuthorizationFetchVersionFromOldestTo12
 - testAuthorizationProduceVersionFromOldestTo12
 - testAuthorizationWithTopicExisting
@@ -208,9 +213,6 @@ kafka.api.ConsumerBounceTest:
 - testConsumptionWithBrokerFailures
 - testSeekAndCommitWithBrokerFailures
 - testSubscribeWhenTopicUnavailable
-kafka.api.ConsumerWithLegacyMessageFormatIntegrationTest:
-- testEarliestOrLatestOffsets
-- testOffsetsForTimes
 kafka.api.CustomQuotaCallbackTest:
 - testCustomQuotaCallback
 kafka.api.DelegationTokenEndToEndAuthorizationTest:
@@ -244,8 +246,6 @@ kafka.api.DelegationTokenEndToEndAuthorizationWithOwnerTest:
 - testProduceConsumeViaSubscribe
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
-kafka.api.EndToEndClusterIdTest:
-- testEndToEnd
 kafka.api.GroupAuthorizerIntegrationTest:
 - testAuthorizedProduceAndConsume
 - testConsumeCloseWithoutGroupPermission
