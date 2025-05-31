@@ -246,11 +246,6 @@ kafka.api.DelegationTokenEndToEndAuthorizationWithOwnerTest:
 - testProduceConsumeViaSubscribe
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
-kafka.api.GroupAuthorizerIntegrationTest:
-- testAuthorizedProduceAndConsume
-- testConsumeCloseWithoutGroupPermission
-- testConsumeUnsubscribeWithoutGroupPermission
-- testUnauthorizedProduceAndConsume
 kafka.api.GroupCoordinatorIntegrationTest:
 - testCoordinatorFailoverAfterCompactingPartitionWithConsumerGroupDeleted
 - testCoordinatorFailoverAfterCompactingPartitionWithConsumerGroupMemberJoiningAndLeaving
@@ -368,6 +363,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testOffsetsForTimesAfterDeleteRecords
 - testReplicaCanFetchFromLogStartOffsetAfterDeleteRecords
 - testSeekAfterDeleteRecords
+- testShareGroups
 - testValidIncrementalAlterConfigs
 kafka.api.PlaintextConsumerAssignTest:
 - testAssignAndCommitAsyncNotCommitted
@@ -517,10 +513,6 @@ kafka.api.SaslOAuthBearerSslEndToEndAuthorizationTest:
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
 - testTwoConsumersWithDifferentSaslCredentials
-kafka.api.SaslPlainPlaintextConsumerTest:
-- testClusterResourceListener
-- testCoordinatorFailover
-- testSimpleConsumption
 kafka.api.SaslPlaintextConsumerTest:
 - testClusterResourceListener
 - testCoordinatorFailover

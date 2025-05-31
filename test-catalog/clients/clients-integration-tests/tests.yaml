@@ -158,6 +158,13 @@ org.apache.kafka.clients.consumer.PlaintextConsumerPollTest:
 - testClassicConsumerPerPartitionLeadWithMaxPollRecords
 - testClassicConsumerPollEventuallyReturnsRecordsWithZeroTimeout
 - testClassicConsumerRecoveryOnPollAfterDelayedRebalance
+org.apache.kafka.clients.consumer.SaslPlainPlaintextConsumerTest:
+- testAsyncConsumeCoordinatorFailover
+- testAsyncConsumerClusterResourceListener
+- testAsyncConsumerSimpleConsumption
+- testClassicConsumerClusterResourceListener
+- testClassicConsumerCoordinatorFailover
+- testClassicConsumerSimpleConsumption
 org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testAcknowledgementCommitCallbackCallsShareConsumerDisallowed
 - testAcknowledgementCommitCallbackCallsShareConsumerWakeup
@@ -241,6 +248,15 @@ org.apache.kafka.clients.producer.ProducerIdExpirationTest:
 - testDynamicProducerIdExpirationMs
 - testProducerIdExpirationWithNoTransactions
 - testTransactionAfterTransactionIdExpiresButProducerIdRemains
+org.apache.kafka.clients.security.GroupAuthorizerIntegrationTest:
+- testAsyncConsumeCloseWithGroupPermission
+- testAsyncConsumeUnsubscribeWithoutGroupPermission
+- testAuthorizedProduceAndConsumeWithAsync
+- testAuthorizedProduceAndConsumeWithClassic
+- testClassicConsumeCloseWithGroupPermission
+- testClassicConsumeUnsubscribeWithoutGroupPermission
+- testUnauthorizedProduceAndConsumeWithAsyncConsumer
+- testUnauthorizedProduceAndConsumeWithClassicConsumer
 org.apache.kafka.server.quota.CustomQuotaCallbackTest:
 - testCustomQuotaCallbackWithControllerServer
 - testMonitorableCustomQuotaCallbackWithCombinedMode
