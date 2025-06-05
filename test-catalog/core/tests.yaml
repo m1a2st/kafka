@@ -2733,6 +2733,7 @@ kafka.server.ReplicaManagerTest:
 - testTransactionVerificationDynamicDisablement
 - testTransactionVerificationFlow
 - testTransactionVerificationGuardOnMultiplePartitions
+- testTransactionVerificationRejectsLowerProducerEpoch
 - testTransactionVerificationWhenNotLeader
 - testUnknownReplicaSelector
 - testVerificationErrorConversionsTV1
@@ -2971,7 +2972,6 @@ kafka.server.share.SharePartitionManagerTest:
 - testFetchMessagesRotatePartitions
 - testGetErroneousAndValidTopicIdPartitions
 - testListenerRegistration
-- testMultipleConcurrentShareFetches
 - testMultipleSequentialShareFetches
 - testNewContext
 - testNewContextExistingSessionNewRequestWithInitialEpoch
