@@ -1,3 +1,8 @@
+integration.kafka.api.ClientOAuthIntegrationTest:
+- testBasicClientCredentials
+- testBasicJwtBearer
+- testBasicJwtBearer2
+- testUnsupportedJwtRetriever
 kafka.KafkaConfigTest:
 - testBrokerRequiredProperties
 - testBrokerRoleNodeIdValidation
@@ -72,6 +77,7 @@ kafka.api.AuthorizerIntegrationTest:
 - testConsumerGroupHeartbeatWithOperationAll
 - testConsumerGroupHeartbeatWithRegex
 - testConsumerGroupHeartbeatWithRegexWithDifferentMemberAcls
+- testConsumerGroupHeartbeatWithRegexWithTopicDescribeAclAddedAndRemoved
 - testConsumerGroupHeartbeatWithRegexWithoutTopicDescribeAcl
 - testConsumerGroupHeartbeatWithoutGroupReadAcl
 - testConsumerGroupHeartbeatWithoutGroupReadOrTopicDescribeAcl
@@ -756,6 +762,7 @@ kafka.coordinator.transaction.TransactionCoordinatorTest:
 - shouldGenerateNewProducerIdIfEpochsExhausted
 - shouldGenerateNewProducerIdIfEpochsExhaustedV2
 - shouldGenerateNewProducerIdIfNoStateAndProducerIdAndEpochProvided
+- shouldHandleTimeoutAtEpochOverflowBoundaryCorrectlyTV2
 - shouldIncrementEpochAndUpdateMetadataOnHandleInitPidWhenExistingCompleteCommitTransaction
 - shouldIncrementEpochAndUpdateMetadataOnHandleInitPidWhenExistingCompleteTransaction
 - shouldIncrementEpochAndUpdateMetadataOnHandleInitPidWhenExistingEmptyTransaction
@@ -764,6 +771,7 @@ kafka.coordinator.transaction.TransactionCoordinatorTest:
 - shouldNotAcceptSmallerEpochDuringTransactionExpiration
 - shouldNotBumpEpochWhenAbortingExpiredTransactionIfAppendToLogFails
 - shouldNotBumpEpochWithPendingTransaction
+- shouldNotCauseEpochOverflowWhenInitPidDuringOngoingTxnV2
 - shouldNotRepeatedlyBumpEpochDueToInitPidDuringOngoingTxnIfAppendToLogFails
 - shouldRemoveTransactionsForPartitionOnEmigration
 - shouldReplyWithInvalidPidMappingOnEndTxnWhenPidDoesntMatchMapped
@@ -1891,6 +1899,7 @@ kafka.server.DynamicBrokerConfigTest:
 - testDynamicLogLocalRetentionThrowsOnIncorrectConfig
 - testDynamicRemoteFetchMaxWaitMsConfig
 - testDynamicRemoteListOffsetsRequestTimeoutMsConfig
+- testDynamicRemoteLogManagerFollowerThreadPoolSizeConfig
 - testImproperConfigsAreRemoved
 - testIsolatedControllerAuthorizerConfig
 - testLogRetentionTimeMinutesIsNotDynamicallyReconfigurable
