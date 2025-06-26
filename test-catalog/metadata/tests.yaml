@@ -3,6 +3,7 @@ org.apache.kafka.controller.AclControlManagerTest:
 - testCreateAclDeleteAcl
 - testCreateDedupe
 - testDeleteDedupe
+- testDeleteExceedsMaxRecords
 - testLoadSnapshot
 - testValidateAclWithBadPrincipal
 - testValidateAclWithEmptyPrincipal
@@ -460,7 +461,10 @@ org.apache.kafka.image.TopicsImageTest:
 - testApplyDelta1
 - testBasicLocalChanges
 - testClearElrRecordForNonExistTopic
+- testClearElrRecordOnNonExistingTopic
 - testClearElrRecords
+- testClearElrRecords_All_ForDeletedTopics
+- testClearElrRecords_Single_ForDeletedTopics
 - testDeleteAfterChanges
 - testEmptyImageRoundTrip
 - testImage1RoundTrip

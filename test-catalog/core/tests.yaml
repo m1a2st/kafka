@@ -1666,6 +1666,8 @@ kafka.server.ClientQuotaManagerTest:
 - testExpireThrottleTimeSensor
 - testGetMaxValueInQuotaWindowWithNonDefaultQuotaWindow
 - testQuotaConfigPrecedence
+- testQuotaTypesEnabledUpdatesWithCustomCallback
+- testQuotaTypesEnabledUpdatesWithDefaultCallback
 - testQuotaViolation
 - testSetAndRemoveDefaultUserQuota
 - testSetAndRemoveUserClientQuota
@@ -1713,6 +1715,7 @@ kafka.server.ConsumerGroupHeartbeatRequestTest:
 - testConsumerGroupHeartbeatWithEmptySubscription
 - testConsumerGroupHeartbeatWithInvalidRegularExpression
 - testConsumerGroupHeartbeatWithRegularExpression
+- testEmptyConsumerGroupId
 - testMemberIdGeneratedOnServerWhenApiVersionIs0
 - testRejoiningStaticMemberGetsAssignmentsBackWhenNewGroupCoordinatorIsEnabled
 - testStaticMemberRemovedAfterSessionTimeoutExpiryWhenNewGroupCoordinatorIsEnabled
