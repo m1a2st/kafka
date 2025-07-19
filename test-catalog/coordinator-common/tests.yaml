@@ -4,6 +4,19 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorExecutorImplTest:
 - testTaskFailedLifecycle
 - testTaskSchedulingWriteOperationFailed
 - testTaskSuccessfulLifecycle
+org.apache.kafka.coordinator.common.runtime.CoordinatorLoaderImplTest:
+- testDeserializationErrorFailsTheLoading
+- testLoadGroupAndOffsetsWithCorruptedLog
+- testLoadSummary
+- testLoading
+- testLoadingIsRejectedWhenClosed
+- testLoadingStoppedWhenClosed
+- testNonexistentPartition
+- testPartitionGoesOfflineDuringLoad
+- testUnknownRecordTypeAreIgnored
+- testUpdateLastWrittenOffsetAndUpdateLastCommittedOffsetNoRecordsRead
+- testUpdateLastWrittenOffsetOnBatchLoaded
+- testUpdateLastWrittenOffsetOnBatchLoadedWhileHighWatermarkAhead
 org.apache.kafka.coordinator.common.runtime.CoordinatorRecordTest:
 - testAttributes
 - testEquals
@@ -28,11 +41,14 @@ org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeMetricsImplTest:
 - testUpdateNumPartitionsMetrics
 org.apache.kafka.coordinator.common.runtime.CoordinatorRuntimeTest:
 - testAppendRecordBatchSize
+- testBufferShrinkWhenMaxMessageSizeReducedBelowInitialBufferSize
 - testCancelTimer
 - testClose
 - testCompleteTransactionEventCompletesOnlyOnce
 - testCoordinatorCompleteTransactionEventWriteTimeoutTaskIsCancelledWhenHighWatermarkIsUpdated
+- testCoordinatorDoNotRetainBufferLargeThanMaxMessageSize
 - testCoordinatorExecutor
+- testCoordinatorRetainExpandedBufferLessOrEqualToMaxMessageSize
 - testEmptyBatch
 - testHighWatermarkUpdate
 - testHighWatermarkUpdateWithDeferredEventExceptions
@@ -103,6 +119,13 @@ org.apache.kafka.coordinator.common.runtime.HdrHistogramTest:
 - testLatestHistogramRace
 - testMax
 - testRecordLimit
+org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataDeltaTest:
+- testEqualsAndHashcode
+- testKRaftCoordinatorDelta
+- testKRaftCoordinatorDeltaWithNulls
+org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataImageTest:
+- testEqualsAndHashcode
+- testKRaftCoordinatorMetadataImage
 org.apache.kafka.coordinator.common.runtime.KafkaMetricHistogramTest:
 - testStats
 org.apache.kafka.coordinator.common.runtime.MultiThreadedEventProcessorTest:
