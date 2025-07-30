@@ -2142,6 +2142,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testAcknowledgementCommitCallbackMultiplePartitionCommitAsync
 - testBatchingAcknowledgeRequestStates
 - testCallbackHandlerConfig
+- testCloseInternalClosesShareFetchMetricsManager
 - testCloseShouldBeIdempotent
 - testCloseWithSubscriptionChange
 - testCommitAsync
@@ -2238,7 +2239,9 @@ org.apache.kafka.clients.consumer.internals.ShareFetchCollectorTest:
 - testFetchWithUnknownLeaderEpoch
 - testFetchWithUnknownServerError
 org.apache.kafka.clients.consumer.internals.ShareFetchMetricsManagerTest:
+- testAcknowledgements
 - testBytesFetched
+- testCloseRemovesAllSensors
 - testLatency
 - testNodeLatency
 - testRecordsFetched
@@ -3059,6 +3062,8 @@ org.apache.kafka.clients.producer.internals.TransactionManagerTest:
 - testHasOngoingTransactionSuccessfulCommit
 - testHealthyPartitionRetriesDuringEpochBump
 - testIllegalGenerationInTxnOffsetCommitByGroupMetadata
+- testInitPidResponseWithKeepPreparedTrueAndNoOngoingTransaction
+- testInitPidResponseWithKeepPreparedTrueAndOngoingTransaction
 - testInitializeTransactionsTwiceRaisesError
 - testInitializeTransactionsWithKeepPreparedTxn
 - testInvalidProducerEpochConvertToProducerFencedInAddOffSetsToTxn
@@ -5246,6 +5251,12 @@ org.apache.kafka.common.utils.UtilsTest:
 - shouldAcceptValidDateFormats
 - shouldThrowOnInvalidDateFormatOrNullTimestamp
 - testAbs
+- testCastToStringObjectMap
+- testCastToStringObjectMapNonStringKey
+- testCastToStringObjectMapPropertiesAsInput
+- testCastToStringObjectMapPropertiesNonStringKey
+- testCastToStringObjectMapPropertiesWithDefaults
+- testCastToStringObjectMapPropertiesWithDefaultsAndSameKey
 - testCharacterArrayEquality
 - testCloseAll
 - testCloseAllQuietly
@@ -5270,6 +5281,9 @@ org.apache.kafka.common.utils.UtilsTest:
 - testMin
 - testMurmur2
 - testPropsToMap
+- testPropsToMapNonStringKey
+- testPropsToMapWithDefaults
+- testPropsToMapWithDefaultsAndSameKey
 - testReadBytes
 - testReadFullyIfEofIsReached
 - testReadFullyOrFailWithPartialFileChannelReads

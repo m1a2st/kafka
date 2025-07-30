@@ -151,6 +151,7 @@ org.apache.kafka.raft.KafkaRaftClientPreVoteTest:
 - testRejectPreVoteIfRemoteLogIsNotUpToDate
 org.apache.kafka.raft.KafkaRaftClientReconfigTest:
 - testAddVoter
+- testAddVoterCompletesEarlyWithAckWhenCommittedFalse
 - testAddVoterFailsWhenLosingLeadership
 - testAddVoterInvalidClusterId
 - testAddVoterInvalidFeatureVersion
@@ -342,6 +343,7 @@ org.apache.kafka.raft.KafkaRaftClientTest:
 - testMetrics
 - testNodeDirectoryId
 - testObserverFetchWithNoLocalId
+- testObserverFollowerSendFetchToBestNode
 - testObserverGracefulShutdown
 - testObserverHandleRetryFetchToBootstrapServer
 - testObserverHandleRetryFetchToLeader
@@ -349,7 +351,7 @@ org.apache.kafka.raft.KafkaRaftClientTest:
 - testObserverLeaderRediscoveryAfterRequestTimeout
 - testObserverQuorumDiscoveryFailure
 - testObserverReplication
-- testObserverSendDiscoveryFetchAfterFetchTimeout
+- testObserverUnattachedSendFetchToBootstrapServers
 - testPurgatoryFetchCompletedByFollowerTransition
 - testPurgatoryFetchSatisfiedByWrite
 - testPurgatoryFetchTimeout
@@ -573,6 +575,7 @@ org.apache.kafka.raft.RaftEventSimulationTest:
 - leadershipAssignedOnlyOnceWithNetworkPartitionIfThereExistsMajority
 - leadershipWillNotChangeDuringNetworkPartitionIfMajorityStillReachable
 org.apache.kafka.raft.RaftUtilTest:
+- testAddRaftVoterRequestAckWhenCommittedNotIgnorable
 - testErrorResponse
 - testFetchRequestV17Compatibility
 - testSingletonBeginQuorumEpochRequestForAllVersion
@@ -593,6 +596,7 @@ org.apache.kafka.raft.RequestManagerTest:
 - testBackoffAfterFailure
 - testFindReadyWithInflightRequest
 - testFindReadyWithRequestTimedOut
+- testHasRequestTimedOut
 - testIgnoreUnexpectedResponse
 - testRequestTimeout
 - testRequestToBootstrapList
