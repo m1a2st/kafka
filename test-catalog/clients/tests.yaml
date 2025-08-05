@@ -4300,6 +4300,7 @@ org.apache.kafka.common.requests.OffsetFetchRequestTest:
 org.apache.kafka.common.requests.OffsetFetchResponseTest:
 - testBuilderWithMultipleGroups
 - testBuilderWithSingleGroup
+- testErrorCounts
 - testGroupWithMultipleGroups
 - testGroupWithSingleGroup
 - testGroupWithSingleGroupWithTopLevelError
@@ -4515,6 +4516,7 @@ org.apache.kafka.common.security.authenticator.SaslAuthenticatorTest:
 - testMissingUsernameSaslPlain
 - testMultipleServerMechanisms
 - testPacketSizeTooBig
+- testReauthenticateWithLargeReauthValue
 - testRepeatedValidSaslPlainOverSsl
 - testSaslAuthenticationMaxReceiveSize
 - testSaslHandshakeRequestWithUnsupportedVersion
@@ -4553,6 +4555,7 @@ org.apache.kafka.common.security.authenticator.SaslServerAuthenticatorTest:
 - testSessionExpiresAtMaxReauthTime
 - testSessionExpiresAtTokenExpiry
 - testSessionExpiresAtTokenExpiryDespiteNoReauthIsSet
+- testSessionWontExpireWithLargeExpirationTime
 - testUnexpectedRequestTypeWithValidRequestHeader
 org.apache.kafka.common.security.kerberos.KerberosNameTest:
 - testInvalidRules
@@ -5281,6 +5284,7 @@ org.apache.kafka.common.utils.UtilsTest:
 - testLoadProps
 - testMax
 - testMin
+- testMsToNs
 - testMurmur2
 - testPropsToMap
 - testPropsToMapNonStringKey
