@@ -30,10 +30,6 @@ kafka.admin.AddPartitionsTest:
 kafka.admin.RemoteTopicCrudTest:
 - testClusterWideDisablementOfTieredStorageWithEnabledTieredTopic
 - testClusterWithoutTieredStorageStartsSuccessfullyIfTopicWithTieringDisabled
-kafka.api.AdminClientWithPoliciesIntegrationTest:
-- testInvalidAlterConfigs
-- testInvalidAlterConfigsDueToPolicy
-- testValidAlterConfigs
 kafka.api.AuthorizerIntegrationTest:
 - shouldInitTransactionsWhenAclSet
 - shouldNotIncludeUnauthorizedTopicsInDescribeTransactionsResponse
@@ -2322,6 +2318,7 @@ kafka.server.KafkaConfigTest:
 - testInvalidGzipCompressionLevel
 - testInvalidInterBrokerSecurityProtocol
 - testInvalidLz4CompressionLevel
+- testInvalidQuorumAutoJoinForKRaftBroker
 - testInvalidQuorumVoterConfig
 - testInvalidSecurityInterBrokerProtocol
 - testInvalidZstdCompressionLevel
@@ -2537,8 +2534,10 @@ kafka.server.ProduceRequestTest:
 kafka.server.RaftClusterSnapshotTest:
 - testSnapshotsGenerated
 kafka.server.ReconfigurableQuorumIntegrationTest:
+- testControllersAutoJoinStandaloneVoter
 - testCreateAndDestroyNonReconfigurableCluster
 - testCreateAndDestroyReconfigurableCluster
+- testNewVoterAutoRemovesAndAdds
 - testRemoveAndAddSameController
 - testRemoveController
 kafka.server.RemoteLeaderEndPointTest:
