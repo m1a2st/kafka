@@ -334,6 +334,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDescribeTopicPartitionsApiWithAuthorizedOps
 - testDescribeTopicPartitionsApiWithoutAuthorizedOps
 - testDescribeTopicsByIds
+- testDescribeTopicsTimeoutWhenNoBrokerResponds
 - testDescribeTopicsWithDescribeTopicPartitionsApiBasic
 - testDescribeTopicsWithDescribeTopicPartitionsApiEdgeCase
 - testDescribeTopicsWithDescribeTopicPartitionsApiErrorHandling
@@ -388,6 +389,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testListGroupsWithTypesOlderBrokerVersion
 - testListOffsets
 - testListOffsetsEarliestLocalSpecMinVersion
+- testListOffsetsEarliestPendingUploadSpecSpecMinVersion
 - testListOffsetsHandlesFulfillmentTimeouts
 - testListOffsetsLatestTierSpecSpecMinVersion
 - testListOffsetsMaxTimestampUnsupportedMultipleOffsetSpec
