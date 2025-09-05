@@ -305,6 +305,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDeleteRecordsAfterCorruptRecords
 - testDeleteRecordsWithException
 - testDeleteShareGroupOffsets
+- testDeleteStreamsGroups
 - testDeleteTopicsWithIds
 - testDeleteTopicsWithOptionTimeoutMs
 - testDescribeAndAlterConfigs
@@ -320,6 +321,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeNonExistingTopic
 - testDescribeProducers
 - testDescribeReplicaLogDirs
+- testDescribeStreamsGroups
 - testDescribeTopicsWithIds
 - testDescribeTopicsWithNames
 - testDescribeTopicsWithOptionPartitionSizeLimitPerResponse
@@ -2336,6 +2338,7 @@ kafka.server.KafkaConfigTest:
 - testListenerDefaults
 - testListenerNameMissingFromListenerSecurityProtocolMap
 - testListenerNamesWithAdvertisedListenerUnset
+- testLogBrokerHeartbeatIntervalMsShouldBeLowerThanHalfOfBrokerSessionTimeoutMs
 - testLogRetentionTimeBothMinutesAndHoursProvided
 - testLogRetentionTimeBothMinutesAndMsProvided
 - testLogRetentionTimeHoursProvided
