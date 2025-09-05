@@ -34,7 +34,7 @@ class ProducerPerformanceService(HttpMetricsCollector, PerformanceService):
     LOG_DIR = os.path.join(PERSISTENT_ROOT, "logs")
     LOG_FILE = os.path.join(LOG_DIR, "producer_performance.log")
 
-    def __init__(self, context, num_nodes, kafka, topic, num_records, record_size, throughput, version=DEV_BRANCH, settings=None,
+    def __init__(self, context, num_nodes, kafka, topic, num_records, record_size, throughput, version=DEV_BRANCH, settings=None, warmup_records=1000,
                  intermediate_stats=False, client_id="producer-performance"):
 
         super(ProducerPerformanceService, self).__init__(context=context, num_nodes=num_nodes)
@@ -59,7 +59,8 @@ class ProducerPerformanceService(HttpMetricsCollector, PerformanceService):
             'kafka_opts': self.security_config.kafka_opts,
             'num_records': num_records,
             'record_size': record_size,
-            'throughput': throughput
+            'throughput': throughput,
+            'warmup-records': warmup_records
         }
         self.settings = settings or {}
         self.intermediate_stats = intermediate_stats
