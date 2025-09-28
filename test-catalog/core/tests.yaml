@@ -326,6 +326,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeProducers
 - testDescribeReplicaLogDirs
 - testDescribeStreamsGroups
+- testDescribeStreamsGroupsNotReady
 - testDescribeTopicsWithIds
 - testDescribeTopicsWithNames
 - testDescribeTopicsWithOptionPartitionSizeLimitPerResponse
@@ -625,6 +626,8 @@ kafka.cluster.PartitionTest:
 - testAppendRecordsAsFollowerBelowLogStartOffset
 - testAppendRecordsToFollowerWithNoReplicaThrowsException
 - testAtMinIsr
+- testDeleteRecordsOnLeaderWithCompactPolicy
+- testDeleteRecordsOnLeaderWithEmptyPolicy
 - testDoNotResetReplicaStateIfLeaderEpochIsNotBumped
 - testDoNotUpdateEpochStartOffsetIfLeaderEpochIsNotBumped
 - testFenceFollowerFetchWithStaleBrokerEpoch
