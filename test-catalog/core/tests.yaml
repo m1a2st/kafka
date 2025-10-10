@@ -1499,6 +1499,7 @@ kafka.server.AbstractFetcherManagerTest:
 - testExpandThreadPool
 - testMaybeUpdateTopicIds
 - testMetricFailedPartitionCount
+- testMetricsClassName
 - testShrinkThreadPool
 kafka.server.AbstractFetcherThreadTest:
 - testConsumerLagRemovedWithPartition
@@ -2571,13 +2572,6 @@ kafka.server.ProduceRequestTest:
 - testZSTDProduceRequest
 kafka.server.RaftClusterSnapshotTest:
 - testSnapshotsGenerated
-kafka.server.ReconfigurableQuorumIntegrationTest:
-- testControllersAutoJoinStandaloneVoter
-- testCreateAndDestroyNonReconfigurableCluster
-- testCreateAndDestroyReconfigurableCluster
-- testNewVoterAutoRemovesAndAdds
-- testRemoveAndAddSameController
-- testRemoveController
 kafka.server.RemoteLeaderEndPointTest:
 - testBrokerEpochSupplier
 - testFetchEarliestLocalOffset
@@ -2792,6 +2786,9 @@ kafka.server.ShareGroupHeartbeatRequestTest:
 - testShareGroupHeartbeatIsInAccessibleWhenConfigsDisabled
 - testShareGroupHeartbeatWithMultipleMembers
 - testShareGroupMaxSizeConfigExceeded
+kafka.server.StreamsGroupDescribeRequestTest:
+- testStreamsGroupDescribeGroupsWithNewGroupCoordinator
+- testStreamsGroupDescribeWhenFeatureFlagNotEnabled
 kafka.server.StrictControllerMutationQuotaTest:
 - testControllerMutationQuotaViolation
 kafka.server.SyncGroupRequestTest:
