@@ -326,6 +326,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeProducers
 - testDescribeReplicaLogDirs
 - testDescribeStreamsGroups
+- testDescribeStreamsGroupsForStatelessTopology
 - testDescribeStreamsGroupsNotReady
 - testDescribeTopicsWithIds
 - testDescribeTopicsWithNames
@@ -1599,6 +1600,7 @@ kafka.server.AuthHelperTest:
 - testComputeDescribeClusterResponseWhereControllerIsNotFound
 - testFilterByAuthorized
 kafka.server.AutoTopicCreationManagerTest:
+- testBackoffAndInflightInteraction
 - testCreateNonInternalTopic
 - testCreateOffsetTopic
 - testCreateShareStateTopic
@@ -1614,11 +1616,14 @@ kafka.server.AutoTopicCreationManagerTest:
 - testErrorCacheExpirationBasedEviction
 - testErrorCacheTTL
 - testGetTopicCreationErrorsWithMultipleTopics
+- testInflightTopicsAreNotRetriedConcurrently
 - testSendCreateTopicRequestEnvelopeHandling
 - testTopicCreationErrorCaching
 - testTopicCreationWithMetadataContextNoRetryUponUnsupportedVersion
 - testTopicCreationWithMetadataContextPassPrincipal
 - testTopicCreationWithMetadataContextWhenPrincipalSerdeNotDefined
+- testTopicsInBackoffAreNotRetried
+- testTopicsOutOfBackoffCanBeRetried
 kafka.server.BrokerLifecycleManagerTest:
 - testAlwaysSendsAccumulatedOfflineDirs
 - testControlledShutdown
@@ -3248,6 +3253,7 @@ kafka.tools.StorageToolTest:
 - testFormatWithoutStaticQuorumSucceedsWithoutInitialControllersOnBroker
 - testHandleFeatureDependenciesForFeatureWithNoDependencies
 - testHandleFeatureDependenciesForFeatureWithUnknownFeatureVersion
+- testHandleFeatureDependenciesForInvalidFormat
 - testHandleFeatureDependenciesForInvalidVersionFormat
 - testHandleFeatureDependenciesForUnknownFeature
 - testIgnoreFormatted
