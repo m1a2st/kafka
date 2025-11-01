@@ -2020,18 +2020,13 @@ kafka.server.JoinGroupRequestTest:
 kafka.server.KRaftClusterTest:
 - testAbandonedFutureReplicaRecovered_mainReplicaInOfflineLogDir
 - testAbandonedFutureReplicaRecovered_mainReplicaInOnlineLogDir
-- testAuthorizerFailureFoundInControllerStartup
 - testClientQuotas
-- testClusterWithLowerCaseListeners
 - testControllerFailover
-- testCreateClusterAndClose
 - testCreateClusterAndCreateAndManyTopics
 - testCreateClusterAndCreateListDeleteTopic
 - testCreateClusterAndCreateTopicWithRemoteLogManagerInstantiation
 - testCreateClusterAndPerformReassignment
-- testCreateClusterAndRestartBrokerNode
 - testCreateClusterAndRestartControllerNode
-- testCreateClusterAndWaitForBrokerInRunningState
 - testCreateClusterWithAdvertisedHostAndPortDifferentFromSocketServer
 - testCreateClusterWithAdvertisedPortZero
 - testCreatePartitions
@@ -2044,10 +2039,7 @@ kafka.server.KRaftClusterTest:
 - testIncrementalAlterConfigs
 - testOldBootstrapMetadataFile
 - testOverlyLargeCreateTopics
-- testReconfigureControllerAuthorizer
-- testReconfigureControllerClientQuotas
 - testRegisteredControllerEndpoints
-- testRemoteLogManagerInstantiation
 - testSetLog4jConfigurations
 - testSingleControllerSingleBrokerCluster
 - testSnapshotCount
@@ -2445,6 +2437,7 @@ kafka.server.KafkaRequestHandlerTest:
 - testLogSizeBytesMetricWithPartitionExpansion
 - testLogSizeBytesMetricWithPartitionShrinking
 - testLogSizeBytesMetricWithRemovingNonexistentPartitions
+- testMetricsForMultipleRequestPools
 - testMultipleCopyLagBytesMetrics
 - testMultipleCopyLagSegmentsMetrics
 - testMultipleDeleteLagBytesMetrics
@@ -2787,6 +2780,20 @@ kafka.server.ShareGroupHeartbeatRequestTest:
 kafka.server.StreamsGroupDescribeRequestTest:
 - testStreamsGroupDescribeGroupsWithNewGroupCoordinator
 - testStreamsGroupDescribeWhenFeatureFlagNotEnabled
+kafka.server.StreamsGroupHeartbeatRequestTest:
+- testDynamicGroupConfig
+- testEmptyStreamsGroupId
+- testGroupCoordinatorChange
+- testInternalTopicsCreation
+- testInvalidMemberEpoch
+- testMemberJoiningAndExpiring
+- testMemberLeaveHeartbeat
+- testStreamsGroupHeartbeatForMultipleMembers
+- testStreamsGroupHeartbeatIsAccessibleWhenNewGroupCoordinatorIsEnabledTopicNotExistFirst
+- testStreamsGroupHeartbeatIsInaccessibleWhenDisabledByFeatureConfig
+- testStreamsGroupHeartbeatIsInaccessibleWhenDisabledByStaticGroupCoordinatorProtocolConfig
+- testStreamsGroupHeartbeatIsInaccessibleWhenUnstableLatestVersionNotEnabled
+- testStreamsGroupHeartbeatWithInvalidAPIVersion
 kafka.server.StrictControllerMutationQuotaTest:
 - testControllerMutationQuotaViolation
 kafka.server.SyncGroupRequestTest:
