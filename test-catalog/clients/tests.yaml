@@ -3490,6 +3490,7 @@ org.apache.kafka.common.feature.SupportedVersionRangeTest:
 - testMinMax
 - testToString
 org.apache.kafka.common.header.internals.RecordHeadersTest:
+- repetition
 - shouldThrowNpeWhenAddingCollectionWithNullHeader
 - shouldThrowNpeWhenAddingNullHeader
 - testAdd
@@ -5237,6 +5238,7 @@ org.apache.kafka.common.utils.ExitTest:
 - shouldNotInvokeShutdownHookImmediately
 org.apache.kafka.common.utils.ExponentialBackoffTest:
 - testExponentialBackoff
+- testExponentialBackoffWithInvalidJitter
 - testExponentialBackoffWithoutJitter
 org.apache.kafka.common.utils.FixedOrderMapTest:
 - shouldForbidConditionalRemove
