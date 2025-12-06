@@ -1,4 +1,5 @@
 integration.kafka.api.ClientOAuthIntegrationTest:
+- testAuthenticationErrorOnTamperedJwt
 - testBasicClientCredentials
 - testBasicJwtBearer
 - testBasicJwtBearer2
@@ -472,6 +473,20 @@ kafka.api.SaslOAuthBearerSslEndToEndAuthorizationTest:
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
 - testTwoConsumersWithDifferentSaslCredentials
+kafka.api.SaslPlainSslEndToEndAuthorizationTest:
+- testNoConsumeWithDescribeAclViaAssign
+- testNoConsumeWithDescribeAclViaSubscribe
+- testNoConsumeWithoutDescribeAclViaAssign
+- testNoConsumeWithoutDescribeAclViaSubscribe
+- testNoDescribeProduceOrConsumeWithoutTopicDescribeAcl
+- testNoGroupAcl
+- testNoProduceWithDescribeAcl
+- testProduceConsumeTopicAutoCreateTopicCreateAcl
+- testProduceConsumeViaAssign
+- testProduceConsumeViaSubscribe
+- testProduceConsumeWithPrefixedAcls
+- testProduceConsumeWithWildcardAcls
+- testTwoConsumersWithDifferentSaslCredentials
 kafka.api.SaslPlaintextConsumerTest:
 - testClusterResourceListener
 - testCoordinatorFailover
@@ -696,6 +711,8 @@ kafka.coordinator.group.CoordinatorPartitionWriterTest:
 - testRegisterDeregisterListener
 - testWriteRecords
 - testWriteRecordsWithFailure
+- testWriteTransactionMarker
+- testWriteTransactionMarkerWithTVUnknownThrowsException
 kafka.coordinator.transaction.ProducerIntegrationTest:
 - testTransactionWithAndWithoutSend
 - testTransactionWithInvalidSendAndEndTxnRequestSent
@@ -1200,6 +1217,7 @@ kafka.log.UnifiedLogTest:
 - testLastStableOffsetWithMixedProducerData
 - testLeaderEpochCacheClearedAfterDowngradeInAppendedMessages
 - testLeaderEpochCacheCreatedAfterMessageFormatUpgrade
+- testLeaderRejectsTVUnknownForTransactionMarker
 - testLoadEmptyLog
 - testLoadPartitionDirWithNoSegmentsShouldNotThrow
 - testLoadingLogDeletesProducerStateSnapshotsPastLogEndOffset
@@ -1247,6 +1265,7 @@ kafka.log.UnifiedLogTest:
 - testRecoveryPointNotIncrementedOnProducerStateSnapshotFlushFailure
 - testRemoteLogStorageIsDisabledOnInternalAndRemoteLogMetadataTopic
 - testRenamingDirWithoutReinitialization
+- testReplicationWithTVUnknownAllowed
 - testRetentionDeletesProducerStateSnapshots
 - testRetentionIdempotency
 - testRetentionOnLocalLogDeletionWhenRemoteLogCopyDisabled
@@ -1260,6 +1279,7 @@ kafka.log.UnifiedLogTest:
 - testStaleProducerEpochReturnsRecoverableErrorForTV1Clients
 - testStaleProducerEpochReturnsRecoverableErrorForTV2Clients
 - testStartOffsetsRemoteLogStorageIsEnabled
+- testTV2MarkerWithBumpedEpochSucceeds
 - testTakeSnapshotOnRollAndDeleteSnapshotOnRecoveryPointCheckpoint
 - testThatGarbageCollectingSegmentsDoesntChangeOffset
 - testTimeBasedLogRollDuringAppend
@@ -2313,6 +2333,7 @@ kafka.server.KafkaApisTest:
 - testValidateAcknowledgementBatchesForRenew
 - testWriteShareGroupStateAuthorizationFailed
 - testWriteShareGroupStateSuccess
+- testWriteTxnMarkersEpochValidationError
 - testWriteTxnMarkersShouldAllBeIncludedInTheResponse
 kafka.server.KafkaConfigTest:
 - testAcceptsLargeId
@@ -2528,6 +2549,7 @@ kafka.server.MetadataRequestTest:
 - testIsInternal
 - testIsrAfterBrokerShutDownAndJoinsBack
 - testNoTopicsRequest
+- testPartitionInfoPreferredReplica
 - testPreferredReplica
 - testRack
 - testReplicaDownResponse
@@ -2940,6 +2962,12 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 kafka.server.share.ShareFetchUtilsTest:
 - FileRecords
 - MemoryRecords
+- testAccumulateAcquiredRecords
+- testAccumulateAcquiredRecordsAllBatches
+- testAccumulateAcquiredRecordsEmptyList
+- testAccumulateAcquiredRecordsNoMerging
+- testAccumulateAcquiredRecordsSingleRecord
+- testAccumulateAcquiredRecordsWithRanges
 - testProcessFetchResponse
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords
@@ -3033,7 +3061,10 @@ kafka.server.share.SharePartitionTest:
 - testAcknowledgeWithAnotherMemberRollbackSubsetError
 - testAcquireAndAcknowledgeMultipleSubsetRecordInRecordLimitMode
 - testAcquireAndAcknowledgeWithRecordsAheadOfRecordBatchStartOffset
+- testAcquireBatchInRecordLimitModeWithMovedStartOffset
+- testAcquireBatchPriorToStartOffset
 - testAcquireBatchSkipWithBatchSizeAndEndOffsetLargerThanFirstBatch
+- testAcquireBatchWithMovedStartOffsetAndNoOverlapWithCachedBatch
 - testAcquireCachedStateGapInBetweenOverlapsWithActualPartitionGap
 - testAcquireCachedStateGapInBetweenOverlapsWithActualPartitionGapInRecordLimitMode
 - testAcquireCachedStateInitialGapMatchesWithActualPartitionGap
@@ -3051,6 +3082,7 @@ kafka.server.share.SharePartitionTest:
 - testAcquireMultipleRecords
 - testAcquireMultipleRecordsWithOverlapAndNewBatch
 - testAcquireMultipleRecordsWithOverlapAndNewBatchInRecordLimitMode
+- testAcquireRecordsHalvesBatchSizeOnEachFailureUntilSingleRecordOnLastAttempt
 - testAcquireReleasedRecord
 - testAcquireReleasedRecordMultipleBatches
 - testAcquireSameBatchAgain
@@ -3105,6 +3137,8 @@ kafka.server.share.SharePartitionTest:
 - testAcquisitionLockTimeoutMultipleRecordBatchInRecordLimitMode
 - testAcquisitionLockTimeoutWithConcurrentAcknowledgement
 - testAcquisitionLockTimeoutWithWriteStateRPCFailure
+- testAcquisitionNotThrottledIfHighDeliveryCountRecordNotAcquired
+- testAcquisitionThrottlingWithOngoingStateTransition
 - testCacheUpdateWhenBatchHasOngoingTransition
 - testCacheUpdateWhenOffsetStateHasOngoingTransition
 - testCanAcquireRecordsAfterAcceptAcknowledgement
@@ -3126,6 +3160,7 @@ kafka.server.share.SharePartitionTest:
 - testFetchAckTypeMapForBatch
 - testFetchLockReleasedByDifferentId
 - testFilterRecordBatchesFromAcquiredRecords
+- testLastAttemptRecordIsolationWithMixedDeliveryCount
 - testLsoMovementAheadOfEndOffset
 - testLsoMovementAheadOfEndOffsetPostAcknowledgement
 - testLsoMovementForArchivingAllAvailableBatches
@@ -3184,6 +3219,7 @@ kafka.server.share.SharePartitionTest:
 - testMaybeInitializeWithEmptyStateBatches
 - testMaybeInitializeWithEmptyTopicsData
 - testMaybeInitializeWithErrorPartitionResponse
+- testMaybeInitializeWithInvalidOffsetInBatch
 - testMaybeInitializeWithInvalidPartitionResponse
 - testMaybeInitializeWithInvalidStartOffsetStateBatches
 - testMaybeInitializeWithInvalidTopicIdResponse
@@ -3218,8 +3254,9 @@ kafka.server.share.SharePartitionTest:
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovement
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovementToMiddleOfBatch
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovementToStartOfBatch
-- testReleaseAcquiredRecordsDecreaseDeliveryCount
+- testReleaseAcquiredRecordsDoNotDecreaseDeliveryCount
 - testReleaseAcquiredRecordsForEmptyCachedData
+- testReleaseAcquiredRecordsPerOffsetWithDifferentMemberId
 - testReleaseAcquiredRecordsSubsetWithAnotherMember
 - testReleaseAcquiredRecordsWithAnotherMember
 - testReleaseAcquiredRecordsWithAnotherMemberAndSubsetAcknowledged
@@ -3239,6 +3276,7 @@ kafka.server.share.SharePartitionTest:
 - testTerminalRecordsNotUpdatedWhenOffsetsBeforeStartOffsetAreExpiredAfterAcknowledgements
 - testTerminalRecordsUpdatedWhenAbortedTransactionBatchesAreArchived
 - testTerminalRecordsUpdatedWhenAbortedTransactionOffsetsAreArchived
+- testThrottleRecordsWhenPendingDeliveriesExist
 - testWriteShareGroupState
 - testWriteShareGroupStateFailure
 - testWriteShareGroupStateWithInvalidTopicsData

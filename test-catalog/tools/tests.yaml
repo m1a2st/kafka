@@ -142,6 +142,10 @@ org.apache.kafka.tools.ConfigCommandTest:
 - testOptionEntityTypeNames
 - testParseConfigsToBeAddedForAddConfigFile
 org.apache.kafka.tools.ConnectPluginPathTest:
+- testListEmptyPluginPathArg
+- testListEmptyPluginPathElementArg
+- testListEmptyPluginPathElementInWorkerConfig
+- testListEmptyPluginPathInWorkerConfig
 - testListMultipleLocations
 - testListMultiplePluginPaths
 - testListMultipleWorkerConfigs
@@ -226,10 +230,13 @@ org.apache.kafka.tools.EndToEndLatencyTest:
 org.apache.kafka.tools.FeatureCommandTest:
 - testDescribeWithKRaft
 - testDescribeWithKRaftAndBootstrapControllers
+- testDescribeWithUnstableApiVersions
+- testDescribeWithUnstableFeatureVersions
 - testDowngradeMetadataVersionWithKRaft
 - testDowngradeType
 - testDowngradeWithReleaseVersion
 - testHandleDescribe
+- testHandleDescribeWithNegativeNodeId
 - testHandleDisable
 - testHandleDisableDryRun
 - testHandleDowngrade
@@ -836,6 +843,7 @@ org.apache.kafka.tools.consumer.group.ShareGroupCommandTest:
 - testDescribeNonexistentGroup
 - testDescribeOffsetsOfAllExistingGroups
 - testDescribeOffsetsOfExistingGroup
+- testDescribeOffsetsOfExistingGroupWithNoOffsetInfo
 - testDescribeOffsetsOfExistingGroupWithNulls
 - testDescribeStateOfExistingGroup
 - testDescribeStatesOfAllExistingGroups
@@ -965,6 +973,7 @@ org.apache.kafka.tools.streams.ResetStreamsGroupOffsetTest:
 - testResetOffsetsWithDeleteAllInternalTopics
 - testResetOffsetsWithDeleteInternalTopicsOption
 - testResetOffsetsWithDeleteSpecifiedInternalTopics
+- testResetOffsetsWithoutDryRunOrExecuteOption
 - testResetOffsetsWithoutGroupOption
 - testResetWithUnrecognizedOption
 org.apache.kafka.tools.streams.StreamsGroupCommandTest:

@@ -49,6 +49,9 @@ org.apache.kafka.clients.admin.DescribeAuthorizedOperationsTest:
 - testClusterAuthorizedOperations
 - testConsumerGroupAuthorizedOperations
 - testTopicAuthorizedOperations
+org.apache.kafka.clients.admin.DescribeFeaturesTest:
+- testSendRequestToWrongNodeType
+- testUnstableApiVersions
 org.apache.kafka.clients.admin.DescribeProducersWithBrokerIdTest:
 - testDescribeProducersDefaultRoutesToLeader
 - testDescribeProducersFromFollower
@@ -229,6 +232,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerTest:
 - testAsyncConsumeCoordinatorFailover
 - testAsyncConsumerAutoOffsetReset
 - testAsyncConsumerCloseLeavesGroupOnInterrupt
+- testAsyncConsumerCloseOnBrokerShutdown
 - testAsyncConsumerClusterResourceListener
 - testAsyncConsumerConsumeMessagesWithCreateTime
 - testAsyncConsumerConsumeMessagesWithLogAppendTime
@@ -264,6 +268,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerTest:
 - testAsyncConsumerStaticConsumerDetectsNewPartitionCreatedAfterRestart
 - testClassicConsumerAutoOffsetReset
 - testClassicConsumerCloseLeavesGroupOnInterrupt
+- testClassicConsumerCloseOnBrokerShutdown
 - testClassicConsumerClusterResourceListener
 - testClassicConsumerConsumeMessagesWithCreateTime
 - testClassicConsumerConsumeMessagesWithLogAppendTime
@@ -325,9 +330,10 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testConfiguredExplicitAcknowledgeCommitSuccess
 - testConfiguredImplicitAcknowledgeExplicitAcknowledgeFails
 - testConsumerCloseInGroupSequential
+- testConsumerCloseOnBrokerShutdown
 - testControlRecordsSkipped
 - testDeliveryCountDifferentBehaviorWhenClosingSessionWithExplicitAcknowledgement
-- testDeliveryCountNotIncreaseAfterSessionClose
+- testDescribeShareGroupOffsetsForEmptySharePartition
 - testExplicitAcknowledgeCommitSuccess
 - testExplicitAcknowledgeOffsetThrowsNotException
 - testExplicitAcknowledgeOffsetThrowsParametersError
@@ -342,6 +348,11 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testExplicitAcknowledgementCommitAsyncPartialBatch
 - testExplicitOverrideAcknowledgeCorruptedMessage
 - testFetchRecordLargerThanMaxPartitionFetchBytes
+- testFetchWithThrottledDelivery
+- testFetchWithThrottledDeliveryBatchesMultipleConsumers
+- testFetchWithThrottledDeliveryBatchesWithDecreasedDeliveryLimit
+- testFetchWithThrottledDeliveryBatchesWithIncreasedDeliveryLimit
+- testFetchWithThrottledDeliveryValidateDeliveryCount
 - testHeaders
 - testHeadersSerializerDeserializer
 - testImplicitAcknowledgeCommitSync
@@ -362,6 +373,8 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testPollThrowsInterruptExceptionIfInterrupted
 - testReadCommittedIsolationLevel
 - testReadUncommittedIsolationLevel
+- testRenewAcknowledgementInvalidStateRecord
+- testRenewAcknowledgementNoResultInPoll
 - testRenewAcknowledgementOnCommitSync
 - testRenewAcknowledgementOnPoll
 - testShareAutoOffsetResetByDuration
@@ -371,7 +384,14 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testShareAutoOffsetResetEarliestAfterLsoMovement
 - testShareAutoOffsetResetMultipleGroupsWithDifferentValue
 - testShareConsumerAfterCoordinatorMovement
+- testShareGroupMaxSizeConfigExceeded
 - testShareGroupShareSessionCacheIsFull
+- testSharePartitionLagForMultipleShareConsumers
+- testSharePartitionLagForSingleShareConsumer
+- testSharePartitionLagOnGroupCoordinatorMovement
+- testSharePartitionLagOnShareCoordinatorMovement
+- testSharePartitionLagWithRejectAcknowledgement
+- testSharePartitionLagWithReleaseAcknowledgement
 - testSubscribeAndPollNoRecords
 - testSubscribeOnInvalidTopicThrowsInvalidTopicException
 - testSubscribePollSubscribe
