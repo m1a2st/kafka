@@ -1884,6 +1884,7 @@ kafka.server.DynamicBrokerConfigTest:
 - testDynamicRemoteFetchMaxWaitMsConfig
 - testDynamicRemoteListOffsetsRequestTimeoutMsConfig
 - testDynamicRemoteLogManagerFollowerThreadPoolSizeConfig
+- testEnableFollowerFetchLastTieredOffset
 - testImproperConfigsAreRemoved
 - testIsolatedControllerAuthorizerConfig
 - testLogRetentionTimeMinutesIsNotDynamicallyReconfigurable
@@ -2045,17 +2046,11 @@ kafka.server.JoinGroupRequestTest:
 kafka.server.KRaftClusterTest:
 - testAbandonedFutureReplicaRecovered_mainReplicaInOfflineLogDir
 - testAbandonedFutureReplicaRecovered_mainReplicaInOnlineLogDir
-- testClientQuotas
 - testControllerFailover
-- testCreateClusterAndCreateAndManyTopics
-- testCreateClusterAndCreateListDeleteTopic
 - testCreateClusterAndCreateTopicWithRemoteLogManagerInstantiation
 - testCreateClusterAndPerformReassignment
 - testCreateClusterAndRestartControllerNode
-- testCreateClusterWithAdvertisedHostAndPortDifferentFromSocketServer
-- testCreateClusterWithAdvertisedPortZero
 - testCreatePartitions
-- testDefaultClientQuotas
 - testDescribeKRaftVersion
 - testDescribeQuorumRequestToBrokers
 - testDescribeQuorumRequestToControllers
@@ -2071,7 +2066,6 @@ kafka.server.KRaftClusterTest:
 - testStartupWithNonDefaultKControllerDynamicConfiguration
 - testTimedOutHeartbeats
 - testTopicDeletedAndRecreatedWhileBrokerIsDown
-- testUnregisterBroker
 - testUpdateMetadataVersion
 kafka.server.KafkaApisTest:
 - requiredAclsNotPresentWriteTxnMarkersThrowsAuthorizationException
