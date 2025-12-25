@@ -1137,20 +1137,6 @@ kafka.log.LogManagerTest:
 - testTopicConfigChangeUpdatesLogConfig
 - testTwoLogManagersUsingSameDirFails
 kafka.log.UnifiedLogTest:
-- followerShouldSaveEpochInformationFromReplicatedMessagesToTheEpochCache
-- shouldApplyEpochToMessageOnAppendIfLeader
-- shouldDeleteLocalLogSegmentsWhenPolicyIsEmptyWithMsRetention
-- shouldDeleteLocalLogSegmentsWhenPolicyIsEmptyWithSizeRetention
-- shouldDeleteSegmentsReadyToBeDeletedWhenCleanupPolicyIsCompactAndDelete
-- shouldDeleteSizeBasedSegments
-- shouldDeleteStartOffsetBreachedSegmentsWhenPolicyDoesNotIncludeDelete
-- shouldDeleteTimeBasedSegmentsReadyToBeDeleted
-- shouldNotDeleteSegmentsWhenPolicyDoesNotIncludeDelete
-- shouldNotDeleteSizeBasedSegmentsWhenUnderRetentionSize
-- shouldNotDeleteTimeBasedSegmentsWhenNoneReadyToBeDeleted
-- shouldTruncateLeaderEpochCheckpointFileWhenTruncatingLog
-- shouldTruncateLeaderEpochsWhenDeletingSegments
-- shouldUpdateOffsetForLeaderEpochsWhenDeletingSegments
 - testAbortedTransactionSpanningMultipleSegments
 - testActiveProducers
 - testActiveSegmentDeletionDueToRetentionTimeBreachWithRemoteStorage
@@ -1178,7 +1164,6 @@ kafka.log.UnifiedLogTest:
 - testDegenerateSegmentSplitWithOutOfRangeBatchLastOffset
 - testDeletableSegmentsFilter
 - testDeletableSegmentsIteration
-- testDeleteOldSegments
 - testDeleteSnapshotsOnIncrementLogStartOffset
 - testDisabledVerificationClearsVerificationGuard
 - testDuplicateAppendToFollower
@@ -1201,8 +1186,6 @@ kafka.log.UnifiedLogTest:
 - testFetchUpToHighWatermark
 - testFetchUpToLastStableOffset
 - testFetchUpToLogEndOffset
-- testFirstUnstableOffsetNoTransactionalData
-- testFirstUnstableOffsetWithTransactionalData
 - testFlushingEmptyActiveSegments
 - testGetFirstBatchTimestampForSegments
 - testHighWatermarkMaintenance
@@ -1221,8 +1204,6 @@ kafka.log.UnifiedLogTest:
 - testLoadEmptyLog
 - testLoadPartitionDirWithNoSegmentsShouldNotThrow
 - testLoadingLogDeletesProducerStateSnapshotsPastLogEndOffset
-- testLogDeletionAfterClose
-- testLogDeletionAfterDeleteRecords
 - testLogFailsWhenInconsistentTopicIdSet
 - testLogFlushesPartitionMetadataOnAppend
 - testLogFlushesPartitionMetadataOnClose
@@ -2451,6 +2432,9 @@ kafka.server.ListOffsetsRequestWithRemoteStoreTest:
 - testResponseDefaultOffsetAndLeaderEpochForAllVersions
 - testResponseIncludesLeaderEpoch
 kafka.server.LocalLeaderEndPointTest:
+- testEarliestPendingUploadOffsetWhenHighestRemoteOffsetKnown
+- testEarliestPendingUploadOffsetWhenLocalStartGreaterThanStart
+- testEarliestPendingUploadOffsetWhenNoSegmentsUploaded
 - testFetchEarliestLocalOffset
 - testFetchEarliestOffset
 - testFetchEpochEndOffsets
@@ -2586,6 +2570,7 @@ kafka.server.ReplicaFetcherThreadTest:
 - testBuildFetch
 - testLagIsUpdatedWhenNoRecords
 - testLocalFetchCompletionIfHighWatermarkUpdated
+- testShouldFetchFromLastTieredOffset
 - testTruncateOnFetchDoesNotUpdateHighWatermark
 kafka.server.ReplicaManagerConcurrencyTest:
 - testIsrExpandAndShrinkWithConcurrentProduce
