@@ -17,13 +17,14 @@
 
 package kafka.server.metadata
 
-import java.util.OptionalInt
+import java.util.{OptionalInt, Properties}
 import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.log.LogManager
 import kafka.server.share.SharePartitionManager
-import kafka.server.{KafkaConfig, ReplicaManager}
+import kafka.server.{DynamicBrokerConfig, KafkaConfig, ReplicaManager}
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.config.{ConfigException, ConfigResource}
 import org.apache.kafka.common.errors.TimeoutException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.coordinator.group.GroupCoordinator
@@ -134,6 +135,7 @@ class BrokerMetadataPublisher(
       def metadataVersionLogMsg = s"metadata.version ${newImage.features().metadataVersion()}"
 
       if (_firstPublish) {
+        validateDynamicConfigsStrictly(newImage)
         info(s"Publishing initial metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
 
         // If this is the first metadata update we are applying, initialize the managers
@@ -414,5 +416,52 @@ class BrokerMetadataPublisher(
 
   override def close(): Unit = {
     firstPublishFuture.completeExceptionally(new TimeoutException())
+  }
+
+  private def validateDynamicConfigsStrictly(newImage: MetadataImage): Unit = {
+    try {
+      // Extract broker-level configs for this broker
+      val brokerResource = new ConfigResource(ConfigResource.Type.BROKER, config.brokerId.toString)
+      val brokerConfigs = newImage.configs().configProperties(brokerResource)
+
+      val clusterResource = new ConfigResource(ConfigResource.Type.BROKER, "")
+      val clusterConfigs = newImage.configs().configProperties(clusterResource)
+
+      if (!clusterConfigs.isEmpty) {
+        info(s"Validating cluster-level dynamic configs: ${clusterConfigs.keySet()}")
+        validateConfigsWithStrictValidation(clusterConfigs, perBrokerConfig = false)
+      }
+
+      if (!brokerConfigs.isEmpty) {
+        info(s"Validating broker-level dynamic configs for broker ${config.brokerId}: ${brokerConfigs.keySet()}")
+        validateConfigsWithStrictValidation(brokerConfigs, perBrokerConfig = true)
+      }
+
+    } catch {
+      case e: ConfigException =>
+        throw new ConfigException(s"Invalid dynamic configuration found in metadata log: ${e.getMessage}", e)
+      case t: Throwable =>
+        throw new ConfigException(s"Failed to validate dynamic configurations: ${t.getMessage}", t)
+    }
+  }
+
+  private def validateConfigsWithStrictValidation(props: Properties, perBrokerConfig: Boolean): Unit = {
+    if (props.isEmpty) return
+
+    DynamicBrokerConfig.validateConfigs(props, perBrokerConfig)
+    val propsResolved = DynamicBrokerConfig.resolveVariableConfigs(props)
+
+    DynamicBrokerConfig.validateConfigTypes(propsResolved)
+
+    val testProps = new Properties()
+    testProps.putAll(config.props)
+    testProps.putAll(propsResolved)
+
+    try {
+      new KafkaConfig(testProps, false)
+    } catch {
+      case e: Exception =>
+        throw new ConfigException(s"Dynamic config validation failed: ${e.getMessage}", e)
+    }
   }
 }

@@ -173,7 +173,7 @@ object DynamicBrokerConfig {
     DynamicSecurityConfigs.filter(props.containsKey)
   }
 
-  private def validateConfigTypes(props: Properties): Unit = {
+  private[server] def validateConfigTypes(props: Properties): Unit = {
     val baseProps = new Properties
     props.asScala.foreach {
       case (ListenerConfigRegex(baseName), v) => baseProps.put(baseName, v)
