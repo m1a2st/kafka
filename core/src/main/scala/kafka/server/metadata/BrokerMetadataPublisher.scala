@@ -134,17 +134,23 @@ class BrokerMetadataPublisher(
 
       def metadataVersionLogMsg = s"metadata.version ${newImage.features().metadataVersion()}"
 
-      if (_firstPublish) {
-        validateDynamicConfigsStrictly(newImage)
-        info(s"Publishing initial metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
+      try {
+        if (_firstPublish) {
+          validateDynamicConfigsStrictly(newImage)
+          info(s"Publishing initial metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
 
-        // If this is the first metadata update we are applying, initialize the managers
-        // first (but after setting up the metadata cache).
-        initializeManagers(newImage)
-      } else if (isDebugEnabled) {
-        debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
+          // If this is the first metadata update we are applying, initialize the managers
+          // first (but after setting up the metadata cache).
+          initializeManagers(newImage)
+        } else if (isDebugEnabled) {
+          debug(s"Publishing metadata at offset $highestOffsetAndEpoch with $metadataVersionLogMsg.")
+        }
+      } catch {
+        case t: Throwable =>
+          // Use fatalFaultHandler to ensure broker fails to start
+          fatalFaultHandler.handleFault("Invalid dynamic configuration in metadata log", t)
       }
-
+      
       // Apply topic deltas.
       Option(delta.topicsDelta()).foreach { topicsDelta =>
         try {
