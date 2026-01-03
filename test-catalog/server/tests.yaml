@@ -126,18 +126,42 @@ org.apache.kafka.server.KRaftClusterTest:
 - testCreateClusterAndClose
 - testCreateClusterAndCreateAndManyTopics
 - testCreateClusterAndCreateListDeleteTopic
+- testCreateClusterAndCreateTopicWithRemoteLogManagerInstantiation
+- testCreateClusterAndPerformReassignment
 - testCreateClusterAndRestartBrokerNode
 - testCreateClusterAndWaitForBrokerInRunningState
 - testCreateClusterWithAdvertisedHostAndPortDifferentFromSocketServer
 - testCreateClusterWithAdvertisedPortZero
+- testCreatePartitions
 - testDefaultClientQuotas
+- testDescribeKRaftVersion
+- testDescribeQuorumRequestToBrokers
+- testDescribeQuorumRequestToControllers
+- testIncrementalAlterConfigs
 - testReconfigureControllerAuthorizer
 - testReconfigureControllerClientQuotas
 - testRemoteLogManagerInstantiation
+- testSetLog4jConfigurations
 - testUnregisterBroker
+- testUpdateMetadataVersion
 org.apache.kafka.server.LogManagerIntegrationTest:
 - testIOExceptionOnLogSegmentCloseResultsInRecovery
 - testRestartBrokerNoErrorIfMissingPartitionMetadata
+org.apache.kafka.server.MetadataRequestTest:
+- testAliveBrokersWithNoTopics
+- testAllTopicsRequest
+- testAutoCreateTopicWithInvalidReplicationFactor
+- testAutoTopicCreation
+- testClusterIdIsValid
+- testClusterIdWithRequestVersion1
+- testIsInternal
+- testIsrAfterBrokerShutDownAndJoinsBack
+- testNoTopicsRequest
+- testPartitionInfoPreferredReplica
+- testPreferredReplica
+- testRack
+- testReplicaDownResponse
+- testTopicIdsInResponse
 org.apache.kafka.server.MonitorablePluginsIntegrationTest:
 - testMonitorableServerPlugins
 org.apache.kafka.server.ReconfigurableQuorumIntegrationTest:
@@ -184,6 +208,9 @@ org.apache.kafka.server.metrics.ClientMetricsTelemetryPluginTest:
 org.apache.kafka.server.metrics.ClientTelemetryTest:
 - testMultipleDeprecatedReceivers
 - testMultipleNewExporters
+org.apache.kafka.server.metrics.DefaultExternalKRaftMetricsTest:
+- testDefaultExternalKRaftMetrics
+- testEmptyDefaultExternalKRaftMetrics
 org.apache.kafka.server.metrics.ForwardingManagerMetricsTest:
 - testMetricsNames
 - testQueueLength

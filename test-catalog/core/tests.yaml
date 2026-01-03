@@ -1401,9 +1401,6 @@ kafka.network.SocketServerTest:
 - testUnmuteChannelWithBufferedReceives
 - testZeroMaxConnectionsPerIp
 - tooBigRequestIsRejected
-kafka.raft.DefaultExternalKRaftMetricsTest:
-- testDefaultExternalKRaftMetrics
-- testEmptyDefaultExternalKRaftMetrics
 kafka.raft.RaftManagerTest:
 - testLogDirLockWhenBrokerOnlyWithSeparateMetadataDir
 - testLogDirLockWhenControllerOnly
@@ -1983,26 +1980,17 @@ kafka.server.KRaftClusterTest:
 - testAbandonedFutureReplicaRecovered_mainReplicaInOfflineLogDir
 - testAbandonedFutureReplicaRecovered_mainReplicaInOnlineLogDir
 - testControllerFailover
-- testCreateClusterAndCreateTopicWithRemoteLogManagerInstantiation
-- testCreateClusterAndPerformReassignment
 - testCreateClusterAndRestartControllerNode
-- testCreatePartitions
-- testDescribeKRaftVersion
-- testDescribeQuorumRequestToBrokers
-- testDescribeQuorumRequestToControllers
 - testDirectToControllerCommunicationFailsOnOlderMetadataVersion
 - testIncreaseNumIoThreads
-- testIncrementalAlterConfigs
 - testOldBootstrapMetadataFile
 - testOverlyLargeCreateTopics
 - testRegisteredControllerEndpoints
-- testSetLog4jConfigurations
 - testSingleControllerSingleBrokerCluster
 - testSnapshotCount
 - testStartupWithNonDefaultKControllerDynamicConfiguration
 - testTimedOutHeartbeats
 - testTopicDeletedAndRecreatedWhileBrokerIsDown
-- testUpdateMetadataVersion
 kafka.server.KafkaApisTest:
 - requiredAclsNotPresentWriteTxnMarkersThrowsAuthorizationException
 - shouldAppendToLogOnWriteTxnMarkersWhenCorrectMagicVersion
@@ -2476,21 +2464,6 @@ kafka.server.MetadataCacheTest:
 - testGetPartitionReplicaEndpoints
 - testIsBrokerFenced
 - testIsBrokerInControlledShutdown
-kafka.server.MetadataRequestTest:
-- testAliveBrokersWithNoTopics
-- testAllTopicsRequest
-- testAutoCreateTopicWithInvalidReplicationFactor
-- testAutoTopicCreation
-- testClusterIdIsValid
-- testClusterIdWithRequestVersion1
-- testIsInternal
-- testIsrAfterBrokerShutDownAndJoinsBack
-- testNoTopicsRequest
-- testPartitionInfoPreferredReplica
-- testPreferredReplica
-- testRack
-- testReplicaDownResponse
-- testTopicIdsInResponse
 kafka.server.MultipleListenersWithAdditionalJaasContextTest:
 - testProduceConsume
 kafka.server.MultipleListenersWithDefaultJaasContextTest:
