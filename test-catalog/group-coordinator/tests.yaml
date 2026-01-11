@@ -153,11 +153,10 @@ org.apache.kafka.coordinator.group.GroupCoordinatorServiceTest:
 - testListGroupsWithEmptyTopicPartitions
 - testListGroupsWithFailure
 - testOnElection
-- testOnPartitionsDeleted
-- testOnPartitionsDeletedCleanupShareGroupState
-- testOnPartitionsDeletedCleanupShareGroupStateEmptyMetadata
-- testOnPartitionsDeletedCleanupShareGroupStateTopicsNotInMetadata
-- testOnPartitionsDeletedWhenServiceIsNotStarted
+- testOnMetadataUpdateDoesNotScheduleOperationsWhenNoTopicsDeleted
+- testOnMetadataUpdateSchedulesOperationsWhenTopicsDeleted
+- testOnMetadataUpdateSwallowsErrorsWhenTopicsDeleted
+- testOnMetadataUpdateWhenNotStarted
 - testOnResignation
 - testOnResignationWithEmptyLeaderEpoch
 - testPartitionFor
@@ -205,7 +204,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testInitiateDeleteShareGroupOffsetsSuccess
 - testInitiateDeleteShareGroupOffsetsSuccessWithErrorTopics
 - testOnLoaded
-- testOnPartitionsDeleted
+- testOnTopicsDeleted
 - testOnUnloaded
 - testReplayConsumerGroupCurrentMemberAssignment
 - testReplayConsumerGroupCurrentMemberAssignmentWithNullValue
@@ -716,7 +715,10 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testOffsetCommitsSensor
 - testOffsetDeletionsSensor
 - testOffsetsExpiredSensor
-- testOnPartitionsDeleted
+- testOnTopicsDeletedWithMatchingTopicId
+- testOnTopicsDeletedWithMismatchedTopicId
+- testOnTopicsDeletedWithMixedTopicIds
+- testOnTopicsDeletedWithZeroTopicId
 - testReplay
 - testReplayTransactionEndMarkerKeepsTheMostRecentCommittedOffset
 - testReplayTransactionEndMarkerWithCommit
