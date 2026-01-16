@@ -403,6 +403,9 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testListGroups
 - testMaybeCleanupShareGroupStateEmptyTopicIds
 - testMaybeCleanupShareGroupStateInitDeletedTopicsPresent
+- testMemberCanRejoinWithEpochZeroInStableState
+- testMemberCanRejoinWithEpochZeroInUnreleasedPartitionsState
+- testMemberCanRejoinWithEpochZeroInUnrevokedPartitionsState
 - testMemberIdGeneration
 - testMemberJoinsEmptyConsumerGroup
 - testMemberJoinsEmptyStreamsGroup
@@ -506,6 +509,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupInitializeSuccess
 - testShareGroupInitializingClearsCommonDeleting
 - testShareGroupLeavingMemberBumpsGroupEpoch
+- testShareGroupMemberCanRejoinWithEpochZero
 - testShareGroupMemberIdGeneration
 - testShareGroupMemberJoinsEmptyGroupWithAssignments
 - testShareGroupNewMemberIsRejectedWithMaximumMembersIsReached
