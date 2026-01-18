@@ -1623,6 +1623,10 @@ kafka.server.ConsumerGroupHeartbeatRequestTest:
 - testConsumerGroupHeartbeatWithEmptySubscription
 - testConsumerGroupHeartbeatWithInvalidRegularExpression
 - testConsumerGroupHeartbeatWithRegularExpression
+- testDuplicateFullHeartbeatDuringRevocation
+- testDuplicateFullHeartbeatInStableState
+- testDuplicateFullHeartbeatWhileWaitingForPartitions
+- testDuplicateFullHeartbeatWithRevocationAck
 - testEmptyConsumerGroupId
 - testFencedMemberCanRejoinWithEpochZero
 - testMemberIdGeneratedOnServerWhenApiVersionIs0
@@ -2721,6 +2725,7 @@ kafka.server.StreamsGroupDescribeRequestTest:
 kafka.server.StreamsGroupHeartbeatRequestTest:
 - testDynamicGroupConfig
 - testEmptyStreamsGroupId
+- testFencedMemberCanRejoinWithEpochZero
 - testGroupCoordinatorChange
 - testInternalTopicsCreation
 - testInvalidMemberEpoch
