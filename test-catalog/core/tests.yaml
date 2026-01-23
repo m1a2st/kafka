@@ -1973,19 +1973,6 @@ kafka.server.IsrExpirationTest:
 - testIsrExpirationIfNoFetchRequestMade
 kafka.server.JoinGroupRequestTest:
 - testJoinGroupWithOldConsumerGroupProtocol
-kafka.server.KRaftTopicCreatorTest:
-- testAuthenticationException
-- testCreateTopicWithMetadataContextPassPrincipal
-- testCreateTopicWithMetadataContextWhenPrincipalSerdeNotDefined
-- testCreateTopicWithoutRequestContext
-- testDirectCreateTopicsResponse
-- testEnvelopeResponseParsingException
-- testEnvelopeResponseSuccessfulParsing
-- testEnvelopeResponseWithEnvelopeError
-- testEnvelopeResponseWithTopicErrors
-- testTimeoutException
-- testUnexpectedResponseType
-- testVersionMismatchException
 kafka.server.KafkaApisTest:
 - requiredAclsNotPresentWriteTxnMarkersThrowsAuthorizationException
 - shouldAppendToLogOnWriteTxnMarkersWhenCorrectMagicVersion
@@ -2741,8 +2728,6 @@ kafka.server.StrictControllerMutationQuotaTest:
 - testControllerMutationQuotaViolation
 kafka.server.SyncGroupRequestTest:
 - testSyncGroupWithOldConsumerGroupProtocol
-kafka.server.ThrottledChannelExpirationTest:
-- testCallbackInvocationAfterExpiration
 kafka.server.TierStateMachineTest:
 - testFencedOffsetResetAfterMovedToRemoteTier
 - testFollowerFetchMovedToTieredStore
@@ -3267,9 +3252,6 @@ kafka.tools.StorageToolTest:
 - testVersionMappingWithInvalidReleaseVersion
 - testVersionMappingWithNoReleaseVersion
 - testVersionMappingWithValidReleaseVersion
-kafka.utils.CoreUtilsTest:
-- testInLock
-- testSwallow
 kafka.utils.LoggingTest:
 - testLog4jControllerIsRegistered
 - testLogName
