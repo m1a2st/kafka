@@ -947,38 +947,6 @@ kafka.log.LogCleanerIntegrationTest:
 - testMaxLogCompactionLag
 kafka.log.LogCleanerLagIntegrationTest:
 - cleanerTest
-kafka.log.LogCleanerManagerTest:
-- testAlterCheckpointDirShouldRemoveDataInSrcDirAndAddInNewDir
-- testCheckpointUpdatedForInvalidOffsetNoCleaning
-- testCheckpointUpdatedForInvalidOffsetNotSelected
-- testCleanableOffsetsActiveSegment
-- testCleanableOffsetsForNone
-- testCleanableOffsetsForShortTime
-- testCleanableOffsetsForTime
-- testCleanableOffsetsNeedsCheckpointReset
-- testConcurrentLogCleanupAndLogTruncation
-- testConcurrentLogCleanupAndTopicDeletion
-- testDirtyOffsetLargerThanActiveSegmentBaseOffset
-- testDirtyOffsetResetIfLargerThanEndOffset
-- testDirtyOffsetResetIfSmallerThanStartOffset
-- testDoneCleaning
-- testDoneDeleting
-- testGrabFilthiestCompactedLogIgnoresBothInProgressPartitionsAndUncleanablePartitions
-- testGrabFilthiestCompactedLogIgnoresInProgressPartitions
-- testGrabFilthiestCompactedLogIgnoresUncleanablePartitions
-- testGrabFilthiestCompactedLogReturnsLogWithDirtiestRatio
-- testGrabFilthiestCompactedLogThrowsException
-- testHandleLogDirFailureShouldRemoveDirAndData
-- testLogStartOffsetLargerThanActiveSegmentBaseOffset
-- testLogsUnderCleanupIneligibleForCompaction
-- testLogsWithSegmentsToDeleteShouldConsiderCleanupPolicyCompactDeleteLogs
-- testLogsWithSegmentsToDeleteShouldConsiderCleanupPolicyCompactLogs
-- testLogsWithSegmentsToDeleteShouldNotConsiderCleanupPolicyDeleteLogs
-- testLogsWithSegmentsToDeleteShouldNotConsiderUncleanablePartitions
-- testMaybeTruncateCheckpointShouldTruncateData
-- testUndecidedTransactionalDataNotCleanable
-- testUpdateCheckpointsShouldAddOffsetToPartition
-- testUpdateCheckpointsShouldRemovePartitionData
 kafka.log.LogCleanerParameterizedIntegrationTest:
 - cleanerConfigUpdateTest
 - cleanerTest
@@ -1131,6 +1099,7 @@ kafka.log.LogManagerTest:
 - testMetricsExistWhenLogIsRecreatedBeforeDeletion
 - testRecoveryDirectoryMappingWithRelativeDirectory
 - testRecoveryDirectoryMappingWithTrailingSlash
+- testReplaceCurrentWithFutureLogDoesNotCloseSourceLog
 - testShutdownWithZeroFileDeleteDelayMs
 - testTimeBasedFlush
 - testTopicConfigChangeStopCleaningIfCompactIsRemoved
@@ -1824,7 +1793,6 @@ kafka.server.DynamicBrokerConfigTest:
 - testRemoteLogManagerFetchQuotaUpdates
 - testRemoteLogManagerMultipleConfigUpdates
 - testSecurityConfigs
-- testSynonyms
 - testUpdateDynamicRemoteLogManagerConfig
 - testUpdateDynamicThreadPool
 - testUpdateMetricReporters
