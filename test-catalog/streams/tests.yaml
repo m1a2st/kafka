@@ -4064,6 +4064,26 @@ org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedKeyValueBytesSt
 - shouldWriteKeyValueBytesToInnerStoreOnPut
 - shouldWriteToChangelogOnPutIfAbsentWhenNoPreviousValue
 - shouldWriteToInnerOnPutIfAbsentNoPreviousValue
+org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedKeyValueBytesStoreWithHeadersTest:
+- shouldDelegateInit
+- shouldHandleEmptyHeaders
+- shouldHandleMultipleHeadersInSingleRecord
+- shouldHandleNullValueInPut
+- shouldHandleNullValueInPutIfAbsent
+- shouldLogChangesOnPutAll
+- shouldLogKeyNullOnDelete
+- shouldNotWriteToChangeLogOnPutIfAbsentWhenValueForKeyExists
+- shouldNotWriteToInnerOnPutIfAbsentWhenValueForKeyExists
+- shouldPropagateDelete
+- shouldReturnCurrentValueOnPutIfAbsent
+- shouldReturnNullOnGetWhenDoesntExist
+- shouldReturnNullOnPutIfAbsentWhenNoPreviousValue
+- shouldReturnOldValueOnDelete
+- shouldReturnValueOnGetWhenExists
+- shouldWriteAllKeyValueToInnerStoreOnPutAll
+- shouldWriteKeyValueBytesToInnerStoreOnPut
+- shouldWriteToChangelogOnPutIfAbsentWhenNoPreviousValue
+- shouldWriteToInnerOnPutIfAbsentNoPreviousValue
 org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedWindowBytesStoreTest:
 - shouldDelegateInit
 - shouldDelegateToUnderlyingStoreWhenFetching
@@ -4717,6 +4737,26 @@ org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStoreTest:
 - shouldPutAllToInnerStoreAndRecordPutAllMetric
 - shouldPutIfAbsentAndRecordPutIfAbsentMetric
 - shouldPutIfOutOfOrder
+- shouldSetFlushListenerOnWrappedCachingStore
+- shouldTimeIteratorDuration
+- shouldTrackOldestOpenIteratorTimestamp
+- shouldTrackOpenIteratorsMetric
+- shouldWriteBytesToInnerStoreAndRecordPutMetric
+- testMetrics
+org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStoreWithHeadersTest:
+- shouldCommitInnerWhenCommitTimeRecords
+- shouldDelegateInit
+- shouldDeleteFromInnerStoreAndRecordDeleteMetric
+- shouldGetAllFromInnerStoreAndRecordAllMetric
+- shouldGetBytesFromInnerStoreAndReturnGetMetric
+- shouldGetRangeFromInnerStoreAndRecordRangeMetric
+- shouldNotSetFlushListenerOnWrappedNoneCachingStore
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromConstructorParameters
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromProcessorContext
+- shouldPassChangelogTopicNameToStateStoreSerde
+- shouldPassDefaultChangelogTopicNameToStateStoreSerdeIfLoggingDisabled
+- shouldPutAllToInnerStoreAndRecordPutAllMetric
+- shouldPutIfAbsentAndRecordPutIfAbsentMetric
 - shouldSetFlushListenerOnWrappedCachingStore
 - shouldTimeIteratorDuration
 - shouldTrackOldestOpenIteratorTimestamp
