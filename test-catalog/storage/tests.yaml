@@ -204,6 +204,10 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testRemoteSizeTime
 - testRemoteStorageManagerWithUserDefinedConfigs
 - testRemoveMetricsOnClose
+- testRetentionSizeInPercentMetrics
+- testRetentionSizeInPercentMetricsTaskCancellation
+- testRetentionSizeInPercentMetricsWithNegativeRetention
+- testRetentionSizeInPercentMetricsWithZeroRetention
 - testStopPartitionsWithDeletion
 - testStopPartitionsWithoutDeletion
 - testTierLagResetsToZeroOnBecomingFollower
@@ -298,6 +302,8 @@ org.apache.kafka.storage.internals.log.LocalLogTest:
 - testTruncateTo
 - testUpdateConfig
 - testWhenFetchOffsetHigherThanMaxOffset
+org.apache.kafka.storage.internals.log.LogCleanerLagIntegrationTest:
+- cleanerTest
 org.apache.kafka.storage.internals.log.LogCleanerManagerTest:
 - testAlterCheckpointDirShouldRemoveDataInSrcDirAndAddInNewDir
 - testCheckpointUpdatedForInvalidOffsetNoCleaning
