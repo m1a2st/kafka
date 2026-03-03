@@ -236,6 +236,8 @@ org.apache.kafka.server.purgatory.DelayedRemoteFetchTest:
 - testRequestExpiry
 org.apache.kafka.server.purgatory.DelayedRemoteListOffsetsTest:
 - testPartialResponseWhenNotLeaderOrFollowerExceptionOnOnePartition
+- testRemovePartitionMetrics
+- testRemovePartitionMetricsForNonExistentPartition
 - testResponseOnPartialError
 - testResponseOnRequestExpiration
 - testResponseOnSuccess
@@ -596,6 +598,9 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testLogDeletionAfterClose
 - testLogDeletionAfterDeleteRecords
 - testOffsetFromProducerSnapshotFile
+- testRetentionSizeInPercentMetric
+- testRetentionSizeInPercentMetricUpdatedOnDeletionError
+- testRetentionSizeInPercentWithInfiniteRetention
 org.apache.kafka.storage.internals.log.VerificationGuardTest:
 - testEqualsAndHashCode
 - testVerify
