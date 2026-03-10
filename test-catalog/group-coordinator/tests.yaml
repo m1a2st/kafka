@@ -253,6 +253,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupCompletedRebalanceSensor
 - testClassicGroupDelete
+- testClassicGroupHeartbeatToConsumerGroupDuringAssignmentDelay
 - testClassicGroupHeartbeatToConsumerGroupMaintainsSession
 - testClassicGroupHeartbeatToConsumerGroupRebalanceInProgress
 - testClassicGroupHeartbeatToConsumerWithFencedInstanceId
@@ -276,6 +277,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupOnUnloadedEmptyAndPreparingRebalance
 - testClassicGroupSyncOnShareGroup
 - testClassicGroupSyncOnStreamsGroup
+- testClassicGroupSyncToConsumerGroupDuringAssignmentDelay
 - testClassicGroupSyncToConsumerGroupRebalanceInProgress
 - testClassicGroupSyncToConsumerGroupWithAllConsumerProtocolVersions
 - testClassicGroupSyncToConsumerGroupWithFencedInstanceId
@@ -396,6 +398,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testLastConsumerProtocolMemberSessionTimeoutInConsumerGroup
 - testLastJoiningMembersAreKickedOutWhenRejoiningGroupWithMaxSize
 - testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMember
+- testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMemberWhenTargetAssignmentIsStale
 - testLeaderFailureInSyncGroup
 - testLeaveDeadGroup
 - testLeaveGroupInvalidGroup
@@ -740,6 +743,9 @@ org.apache.kafka.coordinator.group.ShareGroupAutoOffsetResetStrategyTest:
 - testTimestamp
 - testValidator
 org.apache.kafka.coordinator.group.UtilsTest:
+- testAssignmentFromTopicPartitionsWithEpochsProvided
+- testAssignmentFromTopicPartitionsWithNegativeDefaultEpoch
+- testAssignmentFromTopicPartitionsWithUnequalEpochLength
 - testComputeGroupHashWithDifferentOrder
 - testComputeGroupHashWithEmptyMap
 - testComputeGroupHashWithSameKeyButDifferentValue
@@ -958,6 +964,7 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupMemberTest:
 - testNewMember
 - testUpdateMember
 - testUpdateWithConsumerGroupCurrentMemberAssignmentValue
+- testUpdateWithConsumerGroupCurrentMemberAssignmentValueWithNegativeEpoch
 - testUpdateWithConsumerGroupMemberMetadataValue
 org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testAddPartitionEpochs
@@ -1036,6 +1043,15 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupAssignmentBuilderTest:
 - testStableToStable
 - testStableToStableWithAssignmentTopicsNoLongerInSubscription
 - testStableToStableWithNewPartitions
+org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProviderTest:
+- testDeliveryCountLimitOrDefaultWithGroupConfig
+- testDeliveryCountLimitOrDefaultWithoutGroupConfig
+- testIsRenewAcknowledgeDisabledWithGroupConfig
+- testIsRenewAcknowledgeEnabledWithoutGroupConfig
+- testPartitionMaxRecordLocksOrDefaultWithGroupConfig
+- testPartitionMaxRecordLocksOrDefaultWithoutGroupConfig
+- testRecordLockDurationMsOrDefaultWithGroupConfig
+- testRecordLockDurationMsOrDefaultWithoutGroupConfig
 org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigTest:
 - testConfigs
 - testInvalidConfigs
