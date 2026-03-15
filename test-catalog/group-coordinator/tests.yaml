@@ -1,17 +1,25 @@
 org.apache.kafka.coordinator.group.GroupConfigManagerTest:
+- testClampWithCustomBrokerBounds
 - testGetNonExistentGroupConfig
 - testUpdateConfigWithInvalidGroupId
+- testUpdateConfigWithNullGroupId
 - testUpdateGroupConfig
-- testValidateUsesAllGroupTypeDefaults
 org.apache.kafka.coordinator.group.GroupConfigTest:
+- testEvaluateDoesNotModifyInput
+- testEvaluateEmptyPropsReturnsEmpty
+- testEvaluateMaxBoundedValueAboveMaxIsCapped
+- testEvaluateValueAboveMaxIsCapped
+- testEvaluateValueBelowMinIsCapped
 - testFromPropsInvalid
 - testFromPropsWithDefaultValue
 - testInvalidConfigName
 - testInvalidProps
 - testValidShareAutoOffsetResetValues
 - testValidShareIsolationLevelValues
+- testValidateWithAllGroupTypeConfigs
 org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testAppendLingerMs
+- testClampDynamicConfigs
 - testConfigs
 - testConsumerGroupAssignorFullClassNames
 - testConsumerGroupAssignors
@@ -31,8 +39,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewConsumerGroupRegularExpressionRecord
 - testNewConsumerGroupRegularExpressionTombstone
 - testNewConsumerGroupSubscriptionMetadataTombstoneRecord
-- testNewConsumerGroupTargetAssignmentEpochRecord
-- testNewConsumerGroupTargetAssignmentEpochTombstoneRecord
+- testNewConsumerGroupTargetAssignmentMetadataRecord
+- testNewConsumerGroupTargetAssignmentMetadataTombstoneRecord
 - testNewConsumerGroupTargetAssignmentRecord
 - testNewConsumerGroupTargetAssignmentTombstoneRecord
 - testNewGroupMetadataRecord
@@ -297,6 +305,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testConsumerGroupDescribeOnStreamsGroup
 - testConsumerGroupDescribeWithErrors
 - testConsumerGroupDynamicConfigs
+- testConsumerGroupEvaluatedConfigs
 - testConsumerGroupHeartbeatFromExistingClassicStaticMember
 - testConsumerGroupHeartbeatFullResponse
 - testConsumerGroupHeartbeatOnShareGroup
@@ -514,6 +523,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDescribeOnStreamsGroup
 - testShareGroupDescribeRequest
 - testShareGroupDynamicConfigs
+- testShareGroupEvaluatedConfigs
 - testShareGroupHeartbeatInitializeOnPartitionUpdate
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
@@ -586,6 +596,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupEndpointInformationIncludesNewMember
 - testStreamsGroupEndpointInformationOnlyWhenEpochGreater
 - testStreamsGroupEpochIncreaseWithAssignmentConfigChanges
+- testStreamsGroupEvaluatedConfigs
 - testStreamsGroupHeartbeatAlwaysSetsStatus
 - testStreamsGroupHeartbeatOnConsumerGroup
 - testStreamsGroupHeartbeatOnShareGroup
@@ -1126,10 +1137,10 @@ org.apache.kafka.coordinator.group.streams.StreamsCoordinatorRecordHelpersTest:
 - testNewStreamsGroupMetadataRecord
 - testNewStreamsGroupMetadataRecordNullGroupId
 - testNewStreamsGroupMetadataRecordWithNullAssignmentConfig
-- testNewStreamsGroupTargetAssignmentEpochRecord
-- testNewStreamsGroupTargetAssignmentEpochRecordNullGroupId
-- testNewStreamsGroupTargetAssignmentEpochTombstoneRecord
-- testNewStreamsGroupTargetAssignmentEpochTombstoneRecordNullGroupId
+- testNewStreamsGroupTargetAssignmentMetadataRecord
+- testNewStreamsGroupTargetAssignmentMetadataRecordNullGroupId
+- testNewStreamsGroupTargetAssignmentMetadataTombstoneRecord
+- testNewStreamsGroupTargetAssignmentMetadataTombstoneRecordNullGroupId
 - testNewStreamsGroupTargetAssignmentRecord
 - testNewStreamsGroupTargetAssignmentRecordNullAssignment
 - testNewStreamsGroupTargetAssignmentRecordNullGroupId

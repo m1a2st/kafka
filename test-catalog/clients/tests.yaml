@@ -2327,9 +2327,9 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testDelayedMetadataUsedToCompleteAssignment
 - testFatalFailureWhenMemberAlreadyLeft
+- testFatalFailureWhenStateIsJoining
 - testFatalFailureWhenStateIsLeaving
 - testFatalFailureWhenStateIsStable
-- testFatalFailureWhenStateIsUnjoined
 - testFencedWhenAssignmentEmpty
 - testFencingWhenStateIsLeaving
 - testFencingWhenStateIsReconciling
@@ -2702,6 +2702,7 @@ org.apache.kafka.clients.consumer.internals.events.ApplicationEventProcessorTest
 - testResetOffsetEvent
 - testSeekUnvalidatedEvent
 - testSeekUnvalidatedEventWithException
+- testSharePollEventCallsShareManagers
 - testStreamsOnAllTasksLostCallbackCompletedEvent
 - testStreamsOnAllTasksLostCallbackCompletedEventWithoutStreamsMembershipManager
 - testStreamsOnTasksAssignedCallbackCompletedEvent
@@ -5363,9 +5364,6 @@ org.apache.kafka.common.utils.JavaTest:
 - testLoadKerberosLoginModule
 org.apache.kafka.common.utils.LoggingSignalHandlerTest:
 - testRegister
-org.apache.kafka.common.utils.MappedIteratorTest:
-- testEmptyList
-- testStringToInteger
 org.apache.kafka.common.utils.MockTimeTest:
 - testAdvanceClock
 - testAutoTickMs
