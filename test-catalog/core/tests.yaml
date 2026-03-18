@@ -3,6 +3,9 @@ integration.kafka.api.ClientOAuthIntegrationTest:
 - testBasicClientCredentials
 - testBasicJwtBearer
 - testBasicJwtBearer2
+- testClientAssertionAdminOperations
+- testClientAssertionFileBasedProduceConsume
+- testClientAssertionProduceConsume
 - testUnsupportedJwtRetriever
 kafka.KafkaConfigTest:
 - testBrokerRequiredProperties
@@ -1687,6 +1690,7 @@ kafka.server.ControllerRegistrationManagerTest:
 - testCreateStartAndClose
 - testRegistration
 - testRetransmitRegistration
+- testRetransmitRegistrationAfterTimeout
 - testWrongIncarnationId
 kafka.server.CreateTopicsRequestTest:
 - testCreateClusterMetadataTopic
@@ -2823,7 +2827,6 @@ kafka.server.share.SharePartitionManagerTest:
 - testNewContextThrowsErrorWhenShareSessionCacheIsFullOnInitialEpoch
 - testNewContextThrowsErrorWhenShareSessionNotFoundOnFinalEpoch
 - testOnShareVersionToggle
-- testOnShareVersionToggleWhenEnabledFromConfig
 - testPartitionLoadTimeMetricWithMultiplePartitions
 - testPendingInitializationShouldCompleteFetchRequest
 - testReleaseSessionCompletesDelayedShareFetchRequest
