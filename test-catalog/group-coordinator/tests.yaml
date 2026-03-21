@@ -220,6 +220,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testInitiateDeleteShareGroupOffsetsSuccess
 - testInitiateDeleteShareGroupOffsetsSuccessWithErrorTopics
 - testOnLoaded
+- testOnMetadataUpdate
 - testOnTopicsDeleted
 - testOnUnloaded
 - testReplayConsumerGroupCurrentMemberAssignment
@@ -266,6 +267,9 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testSharePartitionDeleteRequestsNonEmptyShareGroup
 - testStreamsGroupHeartbeat
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
+- testCanComputeNextTargetAssignment
+- testCanComputeNextTargetAssignmentWithNoPreviousAssignmentTimestamp
+- testCanComputeNextTargetAssignmentWithZeroAssignmentIntervalMs
 - testClassicGroupCompletedRebalanceSensor
 - testClassicGroupDelete
 - testClassicGroupHeartbeatToConsumerGroupDuringAssignmentDelay
@@ -305,6 +309,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testCompleteJoinPhaseInEmptyStateSkipsRebalance
 - testCompleteJoinPhaseNoMembersRejoinedExtendsJoinPhase
 - testCompleteJoinRemoveNotYetRejoinedDynamicMembers
+- testConsumerGroupAssignmentInterval
 - testConsumerGroupDelete
 - testConsumerGroupDescribeBeforeAndAfterCommittingOffset
 - testConsumerGroupDescribeNoErrors
@@ -414,6 +419,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testLastConsumerProtocolMemberSessionTimeoutInConsumerGroup
 - testLastJoiningMembersAreKickedOutWhenRejoiningGroupWithMaxSize
 - testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMember
+- testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMemberWhenTargetAssignmentIsMissing
 - testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMemberWhenTargetAssignmentIsStale
 - testLeaderFailureInSyncGroup
 - testLeaveDeadGroup
@@ -520,6 +526,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
+- testShareGroupAssignmentInterval
 - testShareGroupDeleteRequestNoDeletingTopics
 - testShareGroupDeleteRequestWithAlreadyDeletingTopics
 - testShareGroupDeleteRequestWithAlreadyDeletingTopicsButMetadataIsEmpty
@@ -531,6 +538,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDescribeRequest
 - testShareGroupDynamicConfigs
 - testShareGroupEvaluatedConfigs
+- testShareGroupHeartbeatDoesNotBumpGroupEpochDuringAssignmentDelay
 - testShareGroupHeartbeatInitializeOnPartitionUpdate
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
@@ -593,6 +601,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStaticMembersLeaveUnknownGroup
 - testStaticMembersUnknownInstanceBatchLeaveGroup
 - testStaticMembersValidBatchLeaveGroup
+- testStreamsGroupAssignmentInterval
 - testStreamsGroupDeleteCancelsInitialRebalanceTimer
 - testStreamsGroupDescribeBeforeAndAfterCommittingOffset
 - testStreamsGroupDescribeNoErrors
@@ -678,10 +687,12 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testCleanupExpiredOffsetsWithPendingTransactionalOffsetsOnly
 - testConsumerGroupOffsetCommit
 - testConsumerGroupOffsetCommitFromAdminClient
+- testConsumerGroupOffsetCommitResolvesTopicId
 - testConsumerGroupOffsetCommitWithIllegalGenerationId
 - testConsumerGroupOffsetCommitWithOffsetMetadataTooLarge
 - testConsumerGroupOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupOffsetCommitWithUnknownMemberId
+- testConsumerGroupOffsetCommitWithZeroTopicId
 - testConsumerGroupOffsetDelete
 - testConsumerGroupOffsetDeleteWithErrors
 - testConsumerGroupOffsetDeleteWithPendingTransactionalOffsets
@@ -691,8 +702,10 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testConsumerGroupOffsetFetchWithStaleMemberEpoch
 - testConsumerGroupOffsetFetchWithUnknownMemberId
 - testConsumerGroupTransactionalOffsetCommit
+- testConsumerGroupTransactionalOffsetCommitResolvesTopicId
 - testConsumerGroupTransactionalOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupTransactionalOffsetCommitWithUnknownMemberId
+- testConsumerGroupTransactionalOffsetCommitWithUnresolvedTopicId
 - testDeleteGroupAllOffsets
 - testDeleteGroupAllOffsetsWithPendingTransactionalOffsets
 - testFetchAllOffsetsAtDifferentCommittedOffset
@@ -977,6 +990,7 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupMemberTest:
 - testAsConsumerGroupDescribeMember
 - testAsConsumerGroupDescribeWithTargetAssignmentNull
 - testAsConsumerGroupDescribeWithTopicNameNotFound
+- testAssignedAndPendingRevocationEpoch
 - testClassicProtocolListFromJoinRequestProtocolCollection
 - testEquals
 - testNewMember
@@ -1025,6 +1039,9 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testUpdatingMemberUpdatesPartitionEpochWhenPartitionIsReassignedBeforeBeingRevoked
 - testValidateDeleteGroup
 - testValidateOffsetCommit
+- testValidateOffsetCommitWithClassicProtocolMember
+- testValidateOffsetCommitWithEpochValidation
+- testValidateOffsetCommitWithUnassignedTopicOrPartition
 - testValidateOffsetFetch
 - testValidateTransactionalOffsetCommit
 - testWaitingOnUnreleasedPartition
