@@ -1409,11 +1409,14 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testStaleMemberWaitsForCallbackToRejoinWhenTimerReset
 - testTransitionToFailedWhenTryingToJoin
 - testTransitionToFatal
+- testTransitionToFatalMarksPendingRevocationBeforeSignalingPartitionsLost
+- testTransitionToFencedMarksPendingRevocationBeforeSignalingPartitionsLost
 - testTransitionToLeavingWhileAcknowledgingDueToStaleMember
 - testTransitionToLeavingWhileJoiningDueToStaleMember
 - testTransitionToLeavingWhileReconcilingDueToStaleMember
 - testTransitionToLeavingWhileStableDueToStaleMember
 - testTransitionToReconcilingIfEmptyAssignmentReceived
+- testTransitionToStaleMarksPendingRevocationBeforeSignalingPartitionsLost
 - testUnresolvedTargetAssignmentIsReconciledWhenMetadataReceived
 - testUpdateStateFailsOnResponsesWithErrors
 org.apache.kafka.clients.consumer.internals.ConsumerMetadataTest:
@@ -1924,6 +1927,16 @@ org.apache.kafka.clients.consumer.internals.FetchRequestManagerTest:
 - testUpdatePositionWithLastRecordMissingFromBatch
 - testWhenFetchResponseReturnsALeaderShipChangeErrorAndNewLeaderInformation
 - testWhenFetchResponseReturnsALeaderShipChangeErrorButNoNewLeaderInformation
+org.apache.kafka.clients.consumer.internals.FetchTest:
+- testAddForPartitionFetchToEmptyFetch
+- testAddPropagatesPositionAdvanced
+- testAddToForPartitionFetch
+- testAddWithSamePartitionMergesRecords
+- testEmpty
+- testForPartitionWithEmptyRecords
+- testForPartitionWithoutPositionAdvanced
+- testNextOffsetsReturnsUnmodifiableMap
+- testRecordsReturnsUnmodifiableMap
 org.apache.kafka.clients.consumer.internals.FetcherTest:
 - testClearBufferedDataForTopicPartitions
 - testCloseShouldBeIdempotent
@@ -2465,6 +2478,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testMaybeRejoinStaleMember
 - testOnAllTasksLostCallbackCompleted
 - testOnAllTasksLostCallbackCompletedWhenCallbackFails
+- testOnFencedMarksPendingRevocationBeforeCallback
 - testOnFencedWhenInAcknowledging
 - testOnFencedWhenInJoining
 - testOnFencedWhenInLeaving
@@ -2517,6 +2531,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testReconcilingWhenReconciliationAbortedBeforeAssignmentDueToNotInReconciling
 - testReconcilingWhenReconciliationAbortedBeforeAssignmentDueToRejoin
 - testStandbyTasksAreNullInHeartbeatResponse
+- testTransitionToFatalMarksPendingRevocationBeforeCallback
 - testTransitionToFatalWhenInAcknowledging
 - testTransitionToFatalWhenInJoining
 - testTransitionToFatalWhenInLeaving
@@ -2524,6 +2539,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testTransitionToFatalWhenInReconciling
 - testTransitionToFatalWhenInStable
 - testTransitionToFatalWhenInUnsubscribe
+- testTransitionToStaleMarksPendingRevocationBeforeCallback
 - testUnexpectedErrorInHeartbeatResponse
 - testWarmupTasksAreNullInHeartbeatResponse
 org.apache.kafka.clients.consumer.internals.StreamsRebalanceDataTest:
