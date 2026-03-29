@@ -304,8 +304,13 @@ org.apache.kafka.storage.internals.log.LocalLogTest:
 - testTruncateTo
 - testUpdateConfig
 - testWhenFetchOffsetHigherThanMaxOffset
-org.apache.kafka.storage.internals.log.LogCleanerLagIntegrationTest:
+org.apache.kafka.storage.internals.log.LogCleanerIntegrationTest:
+- cleanerConfigUpdateTest
 - cleanerTest
+- testCleanerCompaction
+- testCleanerWithMessageFormatV0V1V2
+- testCleaningNestedMessagesWithV0V1
+- testCleansCombinedCompactAndDeleteTopic
 - testIsThreadFailed
 - testMarksPartitionsAsOfflineAndPopulatesUncleanableMetrics
 - testMaxLogCompactionLag
@@ -598,6 +603,7 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - shouldTruncateLeaderEpochCheckpointFileWhenTruncatingLog
 - shouldTruncateLeaderEpochsWhenDeletingSegments
 - shouldUpdateOffsetForLeaderEpochsWhenDeletingSegments
+- testAbortedTransactionSpanningMultipleSegments
 - testActiveProducers
 - testAppendAndReadWithNonSequentialOffsets
 - testAppendAndReadWithSequentialOffsets
@@ -605,10 +611,14 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testAppendInfoFirstOffset
 - testAppendMessageWithNullPayload
 - testAppendToOrReadFromLogInFailedLogDir
+- testAppendToTransactionIndexFailure
 - testAppendWithNoTimestamp
 - testAppendWithOutOfOrderOffsetsThrowsException
 - testAsyncDelete
+- testBackgroundDeletionWithIOException
 - testBuildTimeIndexWhenNotAssigningOffsets
+- testCannotDeleteSegmentsAtOrAboveHighWatermark
+- testCannotIncrementLogStartOffsetPastHighWatermark
 - testCompactedTopicConstraints
 - testCompactionDeletesProducerStateSnapshots
 - testCompressedMessages
@@ -618,6 +628,7 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testDeleteSnapshotsOnIncrementLogStartOffset
 - testDuplicateAppendToFollower
 - testDuplicateAppends
+- testEndTxnWithFencedProducerEpoch
 - testFetchEarliestPendingUploadTimestampNoRemoteStorage
 - testFetchEarliestPendingUploadTimestampNoSegmentsUploaded
 - testFetchEarliestPendingUploadTimestampStaleHighestOffsetInRemote
@@ -640,9 +651,14 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testInitializationOfProducerSnapshotsUpgradePath
 - testInvalidLeaderEpoch
 - testInvalidMemoryRecords
+- testLastStableOffsetDoesNotExceedLogStartOffsetAfterSegmentDeletion
+- testLastStableOffsetDoesNotExceedLogStartOffsetMidSegment
+- testLastStableOffsetWithMixedProducerData
 - testLeaderEpochCacheClearedAfterDowngradeInAppendedMessages
 - testLeaderEpochCacheCreatedAfterMessageFormatUpgrade
+- testLeaderRejectsTVUnknownForTransactionMarker
 - testLoadEmptyLog
+- testLoadPartitionDirWithNoSegmentsShouldNotThrow
 - testLoadingLogDeletesProducerStateSnapshotsPastLogEndOffset
 - testLogDeletionAfterClose
 - testLogDeletionAfterDeleteRecords
@@ -662,6 +678,7 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testMultipleProducersWithDuplicatesInSingleAppend
 - testNonSequentialAppend
 - testOffsetFromProducerSnapshotFile
+- testOffsetSnapshot
 - testOldProducerEpoch
 - testPeriodicProducerIdExpiration
 - testProducerExpireCheckAfterDelete
@@ -680,14 +697,18 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testRebuildProducerIdMapWithCompactedData
 - testRebuildProducerStateWithEmptyCompactedBatch
 - testRebuildTransactionalState
+- testRenamingDirWithoutReinitialization
+- testReplicationWithTVUnknownAllowed
 - testRetentionDeletesProducerStateSnapshots
 - testRetentionIdempotency
 - testRetentionSizeInPercentMetric
 - testRetentionSizeInPercentMetricUpdatedOnDeletionError
 - testRetentionSizeInPercentWithInfiniteRetention
 - testRollSegmentThatAlreadyExists
+- testSegmentDeletionWithHighWatermarkInitialization
 - testSizeBasedLogRoll
 - testSplitOnOffsetOverflow
+- testTV2MarkerWithBumpedEpochSucceeds
 - testTakeSnapshotOnRollAndDeleteSnapshotOnRecoveryPointCheckpoint
 - testThatGarbageCollectingSegmentsDoesntChangeOffset
 - testTimeBasedLogRollDuringAppend
@@ -695,6 +716,7 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testTopicIdFlushesBeforeDirectoryRename
 - testTopicIdTransfersAfterDirectoryRename
 - testTransactionIndexUpdated
+- testTransactionIndexUpdatedThroughReplication
 - testTruncateBelowFirstUnstableOffset
 - testTruncateFullyAndStart
 - testTruncateFullyAndStartBelowFirstUnstableOffset
@@ -702,6 +724,8 @@ org.apache.kafka.storage.internals.log.UnifiedLogTest:
 - testTruncateToEndOffsetClearsEpochCache
 - testUpdateProducerIdMapWithCompactedData
 - testWriteLeaderEpochCheckpointAfterDirectoryRename
+- testZombieCoordinatorFenced
+- testZombieCoordinatorFencedEmptyTransaction
 org.apache.kafka.storage.internals.log.VerificationGuardTest:
 - testEqualsAndHashCode
 - testVerify
