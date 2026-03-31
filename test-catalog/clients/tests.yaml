@@ -1194,6 +1194,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testOffsetsForTimesOnNullPartitions
 - testOffsetsForTimesTimeoutException
 - testOffsetsForTimesWithZeroTimeout
+- testPollDoesNotAddNewAsyncPollEventWhenOneIsAlreadyInFlight
 - testPollThrowsInterruptExceptionIfInterrupted
 - testProcessBackgroundEventsTimesOut
 - testProcessBackgroundEventsWithInitialDelay
@@ -2226,9 +2227,11 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testHandleFetchResponseError
 - testHeaders
 - testInvalidDefaultRecordBatch
-- testLeadershipChangeAfterFetchBeforeClose
+- testLeadershipChangeAfterFetchBeforeCloseMove
 - testLeadershipChangeAfterFetchBeforeCommitAsync
 - testLeadershipChangeAfterFetchBeforeCommitSync
+- testLeadershipChangeAfterFetchMoveBeforeClose
+- testLeadershipChangeAfterFetchMoveBeforeCloseMove
 - testMultipleFetches
 - testMultipleTopicsFetch
 - testMultipleTopicsFetchError
@@ -2280,6 +2283,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumerImplTest:
 - testInvalidGroupId
 - testMetricsRemovedOnClose
 - testMultipleBackgroundErrors
+- testPollDoesNotAddNewSharePollEventWhenOneIsAlreadyInFlight
 - testProcessBackgroundEventsTimesOut
 - testProcessBackgroundEventsWithInitialDelay
 - testProcessBackgroundEventsWithoutDelay
@@ -5374,23 +5378,6 @@ org.apache.kafka.common.utils.ByteBufferOutputStreamTest:
 - testWriteDirectByteBuffer
 org.apache.kafka.common.utils.ByteBufferUnmapperTest:
 - testUnmap
-org.apache.kafka.common.utils.ByteUtilsTest:
-- testCorrectnessReadUnsignedVarint
-- testCorrectnessWriteUnsignedVarint
-- testDouble
-- testInvalidVarint
-- testInvalidVarlong
-- testReadInt
-- testReadUnsignedInt
-- testReadUnsignedIntLEFromArray
-- testReadUnsignedIntLEFromInputStream
-- testSizeOfUnsignedVarint
-- testSizeOfVarlong
-- testUnsignedVarintSerde
-- testVarintSerde
-- testVarlongSerde
-- testWriteUnsignedIntLEToArray
-- testWriteUnsignedIntLEToOutputStream
 org.apache.kafka.common.utils.BytesTest:
 - testBytesLexicographicCases
 - testIncrement
@@ -5415,9 +5402,6 @@ org.apache.kafka.common.utils.CircularIteratorTest:
 - testCycleCollection
 - testEmptyCollection
 - testNullCollection
-org.apache.kafka.common.utils.CollectionUtilsTest:
-- testSubtractMapDoesntRemoveAnythingWhenEmptyMap
-- testSubtractMapRemovesSecondMapsKeys
 org.apache.kafka.common.utils.ConfigUtilsTest:
 - testConfigMapToRedactedStringForEmptyMap
 - testConfigMapToRedactedStringWithSecrets
@@ -5444,35 +5428,6 @@ org.apache.kafka.common.utils.FixedOrderMapTest:
 - shouldForbidConditionalRemove
 - shouldForbidRemove
 - shouldMaintainOrderWhenAdding
-org.apache.kafka.common.utils.ImplicitLinkedHashCollectionTest:
-- testCollisions
-- testEmptyListIterator
-- testEnlargement
-- testEquals
-- testFindContainsRemoveOnEmptyCollection
-- testInsertDelete
-- testInsertingTheSameObjectMultipleTimes
-- testListIteratorCreation
-- testListIteratorRemove
-- testListIteratorTraversal
-- testListViewGet
-- testListViewModification
-- testManyInsertsAndDeletes
-- testMoveToEnd
-- testNullForbidden
-- testRemovals
-- testSameKeysDifferentValues
-- testSetViewGet
-- testSetViewModification
-- testSort
-- testTraversal
-org.apache.kafka.common.utils.ImplicitLinkedHashMultiCollectionTest:
-- testEnlargement
-- testFindFindAllContainsRemoveOnEmptyCollection
-- testInsertDelete
-- testManyInsertsAndDeletes
-- testNullForbidden
-- testTraversal
 org.apache.kafka.common.utils.JavaTest:
 - testIsIBMJdk
 - testIsIBMJdkSemeru
@@ -5588,5 +5543,51 @@ org.apache.kafka.common.utils.annotation.ApiKeyVersionsProviderTest:
 - testProvideArgumentsWithDefaultRange
 - testProvideArgumentsWithExplicitRange
 - testToVersionTooNewThrowsException
+org.apache.kafka.common.utils.internals.ByteUtilsTest:
+- testCorrectnessReadUnsignedVarint
+- testCorrectnessWriteUnsignedVarint
+- testDouble
+- testInvalidVarint
+- testInvalidVarlong
+- testReadInt
+- testReadUnsignedInt
+- testReadUnsignedIntLEFromArray
+- testReadUnsignedIntLEFromInputStream
+- testSizeOfUnsignedVarint
+- testSizeOfVarlong
+- testUnsignedVarintSerde
+- testVarintSerde
+- testVarlongSerde
+- testWriteUnsignedIntLEToArray
+- testWriteUnsignedIntLEToOutputStream
+org.apache.kafka.common.utils.internals.ImplicitLinkedHashCollectionTest:
+- testCollisions
+- testEmptyListIterator
+- testEnlargement
+- testEquals
+- testFindContainsRemoveOnEmptyCollection
+- testInsertDelete
+- testInsertingTheSameObjectMultipleTimes
+- testListIteratorCreation
+- testListIteratorRemove
+- testListIteratorTraversal
+- testListViewGet
+- testListViewModification
+- testManyInsertsAndDeletes
+- testMoveToEnd
+- testNullForbidden
+- testRemovals
+- testSameKeysDifferentValues
+- testSetViewGet
+- testSetViewModification
+- testSort
+- testTraversal
+org.apache.kafka.common.utils.internals.ImplicitLinkedHashMultiCollectionTest:
+- testEnlargement
+- testFindFindAllContainsRemoveOnEmptyCollection
+- testInsertDelete
+- testManyInsertsAndDeletes
+- testNullForbidden
+- testTraversal
 org.apache.kafka.server.policy.AlterConfigPolicyTest:
 - testRequestMetadataEquals
