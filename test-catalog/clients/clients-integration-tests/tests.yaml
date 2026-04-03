@@ -71,6 +71,10 @@ org.apache.kafka.clients.admin.DescribeProducersWithBrokerIdTest:
 - testDescribeProducersDefaultRoutesToLeader
 - testDescribeProducersFromFollower
 - testDescribeProducersWithInvalidBrokerId
+org.apache.kafka.clients.admin.DynamicGroupConfigIntegrationTest:
+- testDescribeGroupConfigSynonymsWithBrokerSynonym
+- testDescribeGroupConfigSynonymsWithStaticBrokerConfig
+- testDescribeGroupConfigSynonymsWithoutBrokerSynonym
 org.apache.kafka.clients.admin.ListOffsetsIntegrationTest:
 - testListMaxTimestampWithEmptyLog
 - testThreeCompressedRecordsInOneBatch
@@ -127,6 +131,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerAssignTest:
 - testAsyncAssignAndConsumeSkippingPosition
 - testAsyncAssignAndFetchCommittedOffsets
 - testAsyncAssignAndRetrievingCommittedOffsetsMultipleTimes
+- testAsyncPollAfterTopicDeleted
 - testClassicAssignAndCommitAsyncNotCommitted
 - testClassicAssignAndCommitSyncAllConsumed
 - testClassicAssignAndCommitSyncNotCommitted
@@ -135,6 +140,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerAssignTest:
 - testClassicAssignAndConsumeSkippingPosition
 - testClassicAssignAndFetchCommittedOffsets
 - testClassicAssignAndRetrievingCommittedOffsetsMultipleTimes
+- testClassicPollAfterTopicDeleted
 org.apache.kafka.clients.consumer.PlaintextConsumerCallbackTest:
 - testAsyncConsumerGetPositionOfNewlyAssignedPartitionOnPartitionsAssignedCallback
 - testAsyncConsumerRebalanceListenerAssignOnPartitionsAssigned
@@ -168,6 +174,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerCommitTest:
 - testAsyncConsumerAutoCommitOnRebalance
 - testAsyncConsumerCommitMetadata
 - testAsyncConsumerCommitSpecifiedOffsets
+- testAsyncConsumerCommittedDeletedTopic
 - testAsyncConsumerNoCommittedOffsets
 - testAsyncConsumerPositionAndCommit
 - testAsyncConsumerSubscribeAndCommitSync
@@ -178,6 +185,7 @@ org.apache.kafka.clients.consumer.PlaintextConsumerCommitTest:
 - testClassicConsumerAutoCommitOnRebalance
 - testClassicConsumerCommitMetadata
 - testClassicConsumerCommitSpecifiedOffsets
+- testClassicConsumerCommittedDeletedTopic
 - testClassicConsumerNoCommittedOffsets
 - testClassicConsumerPositionAndCommit
 - testClassicConsumerSubscribeAndCommitSync
