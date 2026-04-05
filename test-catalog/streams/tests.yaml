@@ -713,6 +713,8 @@ org.apache.kafka.streams.kstream.internals.ChangedSerdeTest:
 - serializerShouldThrowIfGivenAChangeWithBothNewAndOldValuesAsNull
 - serializerShouldThrowIfGivenAChangeWithBothNonNullNewAndOldValuesAndIsUpgrade
 - shouldDeserializeReservedVersions3Through5
+- shouldPassHeadersToUnderlyingDeserializer
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSerializeAndDeserializeChangeWithNonNullNewAndOldValues
 - shouldSerializeAndDeserializeChangeWithNonNullNewValueAndNullOldValue
 - shouldSerializeAndDeserializeChangeWithNullNewValueAndNonNullOldValue
@@ -1373,6 +1375,7 @@ org.apache.kafka.streams.kstream.internals.KTableTransformValuesTest:
 - shouldTransformOnGetIfNotMaterialized
 - shouldTransformValuesWithKey
 - shouldTransformValuesWithKeyAndMaterialize
+- shouldUseContextHeadersWhenValueTimestampHeadersIsNull
 org.apache.kafka.streams.kstream.internals.MaterializedInternalTest:
 - shouldGenerateStoreNameWithPrefixIfProvidedNameIsNull
 - shouldPreferStoreSupplierWhenProvidedWithStoreTypeViaTopologyConfig
@@ -1545,6 +1548,9 @@ org.apache.kafka.streams.kstream.internals.foreignkeyjoin.CombinedKeySchemaTest:
 - nullPrefixKeySerdeTest
 - nullPrimaryKeySerdeTest
 - prefixKeySerdeTest
+- shouldPassHeadersToUnderlyingDeserializersOnFromBytes
+- shouldPassHeadersToUnderlyingSerializerOnPrefixBytes
+- shouldPassHeadersToUnderlyingSerializersOnToBytes
 org.apache.kafka.streams.kstream.internals.foreignkeyjoin.ForeignTableJoinProcessorSupplierTests:
 - shouldIgnoreRecordWithNullKey
 - shouldNotMatchForeignKeysHavingThisFKAsPrefix
@@ -1579,7 +1585,9 @@ org.apache.kafka.streams.kstream.internals.foreignkeyjoin.SubscriptionReceivePro
 - shouldPropagateOnlyIfFKValAvailableV0
 - shouldPropagateOnlyIfFKValAvailableV1
 org.apache.kafka.streams.kstream.internals.foreignkeyjoin.SubscriptionResponseWrapperSerdeTest:
-- ShouldSerdeWithNonNullsTest
+- shouldPassHeadersToUnderlyingDeserializer
+- shouldPassHeadersToUnderlyingSerializer
+- shouldSerdeWithNonNullsTest
 - shouldSerdeWithNullForeignValueTest
 - shouldSerdeWithNullHashTest
 - shouldSerdeWithNullsTest
@@ -1623,6 +1631,8 @@ org.apache.kafka.streams.kstream.internals.foreignkeyjoin.SubscriptionSendProces
 - leftJoinShouldPropagateNewRecordOfUnchangedFK
 - leftJoinShouldPropagateNothingWhenOldAndNewLeftValueIsNull
 org.apache.kafka.streams.kstream.internals.foreignkeyjoin.SubscriptionWrapperSerdeTest:
+- shouldPassHeadersToUnderlyingDeserializer
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSerdeNullHashV0Test
 - shouldSerdeNullHashV1Test
 - shouldSerdeNullPrimaryPartitionOnV0Test
@@ -2497,6 +2507,19 @@ org.apache.kafka.streams.processor.internals.RepartitionTopicsTest:
 org.apache.kafka.streams.processor.internals.RepartitionWithMergeOptimizingTest:
 - shouldSendCorrectRecords_OPTIMIZED
 - shouldSendCorrectResults_NO_OPTIMIZATION
+org.apache.kafka.streams.processor.internals.SessionStoreMaterializerTest:
+- shouldCreateHeadersBuilderWithCachingAndLoggingDisabled
+- shouldCreateHeadersBuilderWithCachingAndLoggingEnabledByDefault
+- shouldCreateHeadersBuilderWithCachingDisabled
+- shouldCreateHeadersBuilderWithLoggingDisabled
+- shouldCreateHeadersStoreWithProvidedSupplierAndCachingAndLoggingDisabled
+- shouldCreateHeadersStoreWithProvidedSupplierAndCachingAndLoggingEnabledByDefault
+- shouldCreateHeadersStoreWithProvidedSupplierAndCachingDisabled
+- shouldCreateHeadersStoreWithProvidedSupplierAndLoggingDisabled
+- shouldCreateHeadersStoreWithProvidedSupplierOnWindowClose
+- shouldCreateHeadersStoreWithProvidedSupplierOnWindowCloseAndAutoDisableCaching
+- shouldCreateSessionStoreWithOnWindowCloseAndAutoDisableCaching
+- shouldCreateSessionStoreWithOnWindowCloseByDefault
 org.apache.kafka.streams.processor.internals.SinkNodeTest:
 - shouldThrowStreamsExceptionOnInputRecordWithInvalidTimestamp
 - shouldThrowStreamsExceptionOnUndefinedKeySerde
@@ -4700,7 +4723,10 @@ org.apache.kafka.streams.state.internals.KeyValueStoreWrapperTest:
 - shouldReturnPersistentForHeadersStore
 - shouldReturnPersistentForVersionedStore
 - shouldThrowOnNonHeadersOrVersionedStore
+org.apache.kafka.streams.state.internals.LeftOrRightValueDeserializerTest:
+- shouldPassHeadersToUnderlyingDeserializer
 org.apache.kafka.streams.state.internals.LeftOrRightValueSerializerTest:
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSerializeIntegerValue
 - shouldSerializeStringValue
 - shouldThrowIfSerializeOtherValueAsNull
@@ -6405,7 +6431,10 @@ org.apache.kafka.streams.state.internals.TimeOrderedWindowStoreUpgradeTest:
 - shouldMigrateFromWithIndexToWithIndexAndHeaders
 - shouldMigrateFromWithoutHeadersToWithHeaders
 - shouldMigrateFromWithoutIndexToWithIndexAndHeaders
+org.apache.kafka.streams.state.internals.TimestampedKeyAndJoinSideDeserializerTest:
+- shouldPassHeadersToUnderlyingDeserializer
 org.apache.kafka.streams.state.internals.TimestampedKeyAndJoinSideSerializerTest:
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSerializeKeyWithJoinSideAsFalse
 - shouldSerializeKeyWithJoinSideAsTrue
 - shouldThrowIfSerializeNullData
@@ -6539,9 +6568,12 @@ org.apache.kafka.streams.state.internals.UtilsTest:
 - testRawTimestampedValueWithSerdes
 - testRawTimestampedValueWithoutTimestamp
 - testReadBytes
+org.apache.kafka.streams.state.internals.ValueAndTimestampDeserializerTest:
+- shouldPassHeadersToUnderlyingDeserializer
 org.apache.kafka.streams.state.internals.ValueAndTimestampSerializerTest:
 - shouldDropSerializedValueIfEqualWithGreaterTimestamp
 - shouldKeepSerializedValueIfOutOfOrder
+- shouldPassHeadersToUnderlyingSerializer
 - shouldReturnNullWhenTheInternalSerializerReturnsNull
 - shouldSerializeNonNullDataUsingTheInternalSerializer
 - shouldSerializeNullDataAsNull
