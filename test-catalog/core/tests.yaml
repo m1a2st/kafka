@@ -1336,24 +1336,6 @@ kafka.server.AddPartitionsToTxnRequestServerTest:
 - shouldReceiveOperationNotAttemptedWhenOtherPartitionHasError
 - testOneSuccessOneErrorInBatchedRequest
 - testVerifyOnly
-kafka.server.AlterPartitionManagerTest:
-- testAuthorizationFailed
-- testBasic
-- testBasicSentLeaderRecoveryState
-- testBasicWithBrokerEpoch
-- testInvalidRequest
-- testInvalidUpdateVersion
-- testNotLeaderOrFollower
-- testOneInFlight
-- testOverwriteWithinBatch
-- testPartitionMissingInResponse
-- testRetryOnAuthenticationFailure
-- testRetryOnUnsupportedVersionError
-- testSingleBatch
-- testStaleBrokerEpoch
-- testSubmitFromCallback
-- testUnknownServer
-- testUnknownTopicPartition
 kafka.server.AlterReplicaLogDirsRequestTest:
 - testAlterReplicaLogDirsRequest
 - testAlterReplicaLogDirsRequestErrorCode
@@ -1454,6 +1436,7 @@ kafka.server.ConfigAdminManagerTest:
 - testReassembleLegacyResponse
 - testValidateResourceNameIsCurrentNodeId
 kafka.server.ConsumerGroupDescribeRequestTest:
+- testConsumerGroupDescribeIncludesPartitionsPendingRevocation
 - testConsumerGroupDescribeWhenFeatureFlagNotEnabled
 - testConsumerGroupDescribeWithMigrationMember
 - testConsumerGroupDescribeWithNewGroupCoordinator
@@ -2700,6 +2683,7 @@ kafka.server.share.DelayedShareFetchTest:
 - testDelayedShareFetchTryCompleteReturnsTrue
 - testEmptyFutureReturnedByDelayedShareFetchOnComplete
 - testExceptionInMinBytesCalculation
+- testForceCompleteNotTriggersDelayedActionsQueueWhenFetchDataIsEmpty
 - testForceCompleteTriggersDelayedActionsQueue
 - testLocksReleasedAcquireException
 - testLocksReleasedForCompletedFetch
@@ -2707,6 +2691,7 @@ kafka.server.share.DelayedShareFetchTest:
 - testPartitionMaxBytesFromUniformStrategyInCombineLogReadResponse
 - testPartitionMaxBytesFromUniformStrategyWhenAllPartitionsAreAcquirable
 - testPartitionMaxBytesFromUniformStrategyWhenFewPartitionsAreAcquirable
+- testRemoteStorageFetchCompletionNotTriggerActionsQueue
 - testRemoteStorageFetchCompletionPostRegisteringCallbackByPendingFetchesCompletion
 - testRemoteStorageFetchCompletionPostRegisteringCallbackByTimerTaskCompletion
 - testRemoteStorageFetchHappensForAllTopicPartitions
@@ -2825,6 +2810,10 @@ kafka.server.share.SharePartitionTest:
 - testAcknowledgeOffsetWithWriteShareGroupStateFailure
 - testAcknowledgeOutOfRangeCachedData
 - testAcknowledgeOutOfRangeCachedDataFirstBatch
+- testAcknowledgePerOffsetRejectWithDlqDisabled
+- testAcknowledgePerOffsetRejectWithDlqEnabled
+- testAcknowledgeRejectWithDlqDisabled
+- testAcknowledgeRejectWithDlqEnabled
 - testAcknowledgeRollbackWithFullBatchError
 - testAcknowledgeRollbackWithSubsetError
 - testAcknowledgeSingleRecordBatch

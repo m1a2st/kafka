@@ -132,6 +132,7 @@ org.apache.kafka.clients.NetworkClientTest:
 - testSimpleRequestResponse
 - testSimpleRequestResponseWithNoBrokerDiscovery
 - testSimpleRequestResponseWithStaticNodes
+- testStickyNodeDoesNotUseStaleIpOnReconnect
 - testTelemetryRequest
 - testUnsupportedApiVersionsRequestWithVersionProvidedByTheBroker
 - testUnsupportedApiVersionsRequestWithoutVersionProvidedByTheBroker
@@ -915,6 +916,7 @@ org.apache.kafka.clients.consumer.KafkaConsumerTest:
 - testSubscriptionOnNullTopicCollection
 - testSubscriptionWithEmptyPartitionAssignment
 - testUnSubscribingNonExisingMetricsDoesntCauseError
+- testUnsubscribeDoesNotCommitOffsetsEvenWithAutoCommitEnabled
 - testUnsubscribeShouldTriggerPartitionsLostWithNoGeneration
 - testUnsubscribeShouldTriggerPartitionsRevokedWithValidGeneration
 - testUnsubscribingCustomMetricsWithSameNameDoesntAffectConsumerMetrics
@@ -1202,6 +1204,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testPartitionsAssignedEventSendsErrorWhenApplyAssignmentFails
 - testPollDoesNotAddNewAsyncPollEventWhenOneIsAlreadyInFlight
 - testPollThrowsInterruptExceptionIfInterrupted
+- testPollWaitsForReconciliationCheckComplete
 - testProcessBackgroundEventsTimesOut
 - testProcessBackgroundEventsWithInitialDelay
 - testProcessBackgroundEventsWithoutDelay
@@ -1226,13 +1229,16 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testSubscriptionOnEmptyTopic
 - testSubscriptionOnNullTopic
 - testSuccessfulStartupShutdown
+- testUnsubscribeDoesNotCommitOffsetsEvenWithAutoCommitEnabled
 - testUnsubscribeGeneratesUnsubscribeEvent
+- testUnsubscribeWithPendingAssignmentEvent
 - testUnsubscribeWithoutGroupId
 - testVerifyApplicationEventOnShutdown
 - testWakeupAfterEmptyFetch
 - testWakeupAfterNonEmptyFetch
 - testWakeupBeforeCallingPoll
 - testWakeupCommitted
+- testWakeupWhileWaitingOnReconciliationCheck
 org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategyTest:
 - testEqualsAndHashCode
 - testFromString
@@ -1365,6 +1371,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testHeartbeatSuccessfulResponseWhenLeavingGroupCompletesLeave
 - testIgnoreHeartbeatResponseWhenNotInGroup
 - testIgnoreLeaveResponseWhenNotLeavingGroup
+- testLeaveGroupDuringReconciliationThenRejoin
 - testLeaveGroupEpoch
 - testLeaveGroupEpochOnClose
 - testLeaveGroupWhenMemberAlreadyLeaving
@@ -2481,6 +2488,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testIsGroupReadyWithNoStatuses
 - testIsGroupReadyWithOtherStatuses
 - testJoining
+- testLeaveGroupDuringReconciliationThenRejoin
 - testLeaveGroupOnCloseWhenInGroupWithAssignment
 - testLeaveGroupOnCloseWhenNotInGroup
 - testLeaveGroupOnCloseWhenNotInGroupAndFenced
@@ -5387,10 +5395,14 @@ org.apache.kafka.common.utils.ByteBufferOutputStreamTest:
 org.apache.kafka.common.utils.ByteBufferUnmapperTest:
 - testUnmap
 org.apache.kafka.common.utils.BytesTest:
-- testBytesLexicographicCases
-- testIncrement
-- testIncrementUpperBoundary
-- testIncrementWithSubmap
+- compareToReflectsLexicographicUnsignedOrdering
+- constructorThrowsForNullInput
+- equalsReflectsContentIdentityAndType
+- getReturnsUnderlyingArray
+- hashCodeIsConsistentAndContentBased
+- wrapEmptyArrayProducesEmptyBytes
+- wrapReturnsBytesBackedBySameArray
+- wrapReturnsNullForNullInput
 org.apache.kafka.common.utils.ChecksumsTest:
 - testUpdateByteBuffer
 - testUpdateByteBufferWithOffsetPosition
@@ -5552,9 +5564,13 @@ org.apache.kafka.common.utils.annotation.ApiKeyVersionsProviderTest:
 - testProvideArgumentsWithExplicitRange
 - testToVersionTooNewThrowsException
 org.apache.kafka.common.utils.internals.ByteUtilsTest:
+- testBytesLexicographicCases
 - testCorrectnessReadUnsignedVarint
 - testCorrectnessWriteUnsignedVarint
 - testDouble
+- testIncrement
+- testIncrementUpperBoundary
+- testIncrementWithSubmap
 - testInvalidVarint
 - testInvalidVarlong
 - testReadInt
