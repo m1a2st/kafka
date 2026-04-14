@@ -1092,10 +1092,6 @@ kafka.log.LogManagerTest:
 - testTopicConfigChangeUpdatesLogConfig
 - testTwoLogManagersUsingSameDirFails
 - testUpdateCordonedLogDirs
-kafka.metrics.KafkaMetricsGroupTest:
-- testTaggedMetricName
-- testTaggedMetricNameWithEmptyValue
-- testUntaggedMetricName
 kafka.metrics.MetricsTest:
 - testBrokerStateMetric
 - testBrokerTopicMetricsBytesInOut
@@ -1458,6 +1454,7 @@ kafka.server.ConsumerGroupHeartbeatRequestTest:
 - testMemberIdGeneratedOnServerWhenApiVersionIs0
 - testRejoiningStaticMemberGetsAssignmentsBackWhenNewGroupCoordinatorIsEnabled
 - testStaticMemberRemovedAfterSessionTimeoutExpiryWhenNewGroupCoordinatorIsEnabled
+- testStaticMembersRejoinWithDifferentServerAssignor
 - testUpdateConsumerGroupHeartbeatConfigSuccessful
 kafka.server.ConsumerGroupHeartbeatRequestTest$WithAssignmentBatchingDisabledTest:
 - testConsumerGroupHeartbeatFailureIfMemberIdMissingForVersionsAbove0
@@ -1477,6 +1474,7 @@ kafka.server.ConsumerGroupHeartbeatRequestTest$WithAssignmentBatchingDisabledTes
 - testMemberIdGeneratedOnServerWhenApiVersionIs0
 - testRejoiningStaticMemberGetsAssignmentsBackWhenNewGroupCoordinatorIsEnabled
 - testStaticMemberRemovedAfterSessionTimeoutExpiryWhenNewGroupCoordinatorIsEnabled
+- testStaticMembersRejoinWithDifferentServerAssignor
 - testUpdateConsumerGroupHeartbeatConfigSuccessful
 kafka.server.ConsumerProtocolMigrationTest:
 - testDowngradeFromEmptyConsumerToClassicGroupWithBidirectionalPolicy
