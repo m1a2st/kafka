@@ -120,6 +120,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.IntPredicate;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.SET;
@@ -162,6 +163,7 @@ public class ReplicationControlManager {
         private ClusterControlManager clusterControl = null;
         private Optional<CreateTopicPolicy> createTopicPolicy = Optional.empty();
         private FeatureControlManager featureControl = null;
+        private LongSupplier clock = System::currentTimeMillis;
 
         Builder setSnapshotRegistry(SnapshotRegistry snapshotRegistry) {
             this.snapshotRegistry = snapshotRegistry;
@@ -208,6 +210,11 @@ public class ReplicationControlManager {
             return this;
         }
 
+        Builder setClock(LongSupplier clock) {
+            this.clock = clock;
+            return this;
+        }
+
         ReplicationControlManager build() {
             if (configurationControl == null) {
                 throw new IllegalStateException("Configuration control must be set before building");
@@ -227,7 +234,8 @@ public class ReplicationControlManager {
                 configurationControl,
                 clusterControl,
                 createTopicPolicy,
-                featureControl);
+                featureControl,
+                clock);
         }
     }
 
@@ -321,6 +329,11 @@ public class ReplicationControlManager {
     private final FeatureControlManager featureControl;
 
     /**
+     * Supplier for the current time in milliseconds, used for partition creation timestamps.
+     */
+    private final LongSupplier clock;
+
+    /**
      * Maps topic names to topic UUIDs.
      */
     private final TimelineHashMap<String, Uuid> topicsByName;
@@ -387,7 +400,8 @@ public class ReplicationControlManager {
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
         Optional<CreateTopicPolicy> createTopicPolicy,
-        FeatureControlManager featureControl
+        FeatureControlManager featureControl,
+        LongSupplier clock
     ) {
         this.snapshotRegistry = snapshotRegistry;
         this.log = logContext.logger(ReplicationControlManager.class);
@@ -398,6 +412,7 @@ public class ReplicationControlManager {
         this.createTopicPolicy = createTopicPolicy;
         this.featureControl = featureControl;
         this.clusterControl = clusterControl;
+        this.clock = clock;
         this.topicsByName = new TimelineHashMap<>(snapshotRegistry, 0);
         this.topicsWithCollisionChars = new TimelineHashMap<>(snapshotRegistry, 0);
         this.topics = new TimelineHashMap<>(snapshotRegistry, 0);
@@ -716,6 +731,7 @@ public class ReplicationControlManager {
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
+        long creationTimeMs = clock.getAsLong();
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
         if (!topic.assignments().isEmpty()) {
             if (topic.replicationFactor() != -1) {
@@ -747,7 +763,7 @@ public class ReplicationControlManager {
                 }
                 newParts.put(
                     assignment.partitionIndex(),
-                    buildPartitionRegistration(partitionAssignment, isr)
+                    buildPartitionRegistration(partitionAssignment, isr, creationTimeMs)
                 );
             }
             for (int i = 0; i < newParts.size(); i++) {
@@ -794,7 +810,7 @@ public class ReplicationControlManager {
                     }
                     newParts.put(
                         partitionId,
-                        buildPartitionRegistration(partitionAssignment, isr)
+                        buildPartitionRegistration(partitionAssignment, isr, creationTimeMs)
                     );
                 }
             } catch (InvalidReplicationFactorException e) {
@@ -858,7 +874,8 @@ public class ReplicationControlManager {
 
     private static PartitionRegistration buildPartitionRegistration(
         PartitionAssignment partitionAssignment,
-        List<Integer> isr
+        List<Integer> isr,
+        long creationTimeMs
     ) {
         return new PartitionRegistration.Builder().
             setReplicas(Replicas.toArray(partitionAssignment.replicas())).
@@ -868,6 +885,7 @@ public class ReplicationControlManager {
             setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
             setLeaderEpoch(0).
             setPartitionEpoch(0).
+            setCreationTimeMs(creationTimeMs).
             build();
     }
 
@@ -1991,7 +2009,7 @@ public class ReplicationControlManager {
                     "Unable to replicate the partition " + replicationFactor +
                         " time(s): All brokers are currently fenced or in controlled shutdown.");
             }
-            records.add(buildPartitionRegistration(partitionAssignment, isr)
+            records.add(buildPartitionRegistration(partitionAssignment, isr, clock.getAsLong())
                 .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
                         build()));

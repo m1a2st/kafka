@@ -40,6 +40,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -259,10 +260,49 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
                 return;
             }
 
+            maybeApplyPartitionAgeOverrides(assignment);
+
             Map<Uuid, SortedSet<Integer>> newAssignment = new HashMap<>();
             assignment.topicPartitions().forEach(topicPartition ->
                 newAssignment.put(topicPartition.topicId(), new TreeSet<>(topicPartition.partitions())));
             processAssignmentReceived(newAssignment);
+        }
+    }
+
+    /**
+     * Inspect the partition ages in the heartbeat assignment and apply per-partition offset reset
+     * overrides for hot partitions (KIP-1327). A partition is considered hot when its age is
+     * non-negative and at most {@code autoOffsetResetLatestMaxAge} milliseconds.
+     */
+    private void maybeApplyPartitionAgeOverrides(ConsumerGroupHeartbeatResponseData.Assignment assignment) {
+        long maxAge = subscriptions.autoOffsetResetLatestMaxAge();
+        if (maxAge < 0) {
+            return;
+        }
+        Map<TopicPartition, AutoOffsetResetStrategy> overrides = new HashMap<>();
+        for (ConsumerGroupHeartbeatResponseData.TopicPartitions tp : assignment.topicPartitions()) {
+            List<Long> ages = tp.partitionAges();
+            if (ages == null || ages.size() != tp.partitions().size()) {
+                continue;
+            }
+            String topicName = metadata().topicNames().get(tp.topicId());
+            if (topicName == null) {
+                continue;
+            }
+            for (int i = 0; i < tp.partitions().size(); i++) {
+                long age = ages.get(i);
+                if (age >= 0 && age <= maxAge) {
+                    overrides.put(
+                        new TopicPartition(topicName, tp.partitions().get(i)),
+                        AutoOffsetResetStrategy.EARLIEST
+                    );
+                }
+            }
+        }
+        if (!overrides.isEmpty()) {
+            log.info("Hot partition detection (KIP-1327): overriding offset reset to earliest for {} partition(s): {}",
+                overrides.size(), overrides.keySet());
+            subscriptions.setPartitionResetOverrides(overrides);
         }
     }
 

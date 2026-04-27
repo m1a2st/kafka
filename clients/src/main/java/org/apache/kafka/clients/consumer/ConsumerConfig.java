@@ -181,6 +181,17 @@ public class ConsumerConfig extends AbstractConfig {
             "producers could start to send messages to newly added partitions (i.e. no initial offsets exist yet) before consumers reset their offsets.";
 
     /**
+     * <code>auto.offset.reset.latest.max.age</code>
+     */
+    public static final String AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG = "auto.offset.reset.latest.max.age";
+    public static final String AUTO_OFFSET_RESET_LATEST_MAX_AGE_DOC =
+            "When auto.offset.reset is set to 'latest', this config specifies the maximum age of a partition " +
+            "(in milliseconds) for it to be considered 'hot'. If a partition's age is less than or equal to " +
+            "this value, the consumer will use 'earliest' instead of 'latest' to avoid data loss on newly " +
+            "created partitions. A value of -1 (default) disables this feature. " +
+            "Only supported with group.protocol=consumer.";
+
+    /**
      * <code>fetch.min.bytes</code>
      */
     public static final String FETCH_MIN_BYTES_CONFIG = "fetch.min.bytes";
@@ -398,7 +409,8 @@ public class ConsumerConfig extends AbstractConfig {
     private static final List<String> CLASSIC_PROTOCOL_UNSUPPORTED_CONFIGS = List.of(
             GROUP_REMOTE_ASSIGNOR_CONFIG,
             SHARE_ACKNOWLEDGEMENT_MODE_CONFIG,
-            SHARE_ACQUIRE_MODE_CONFIG
+            SHARE_ACQUIRE_MODE_CONFIG,
+            AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG
     );
 
     /**
@@ -547,6 +559,12 @@ public class ConsumerConfig extends AbstractConfig {
                                         new AutoOffsetResetStrategy.Validator(),
                                         Importance.MEDIUM,
                                         AUTO_OFFSET_RESET_DOC)
+                                .define(AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG,
+                                        Type.LONG,
+                                        -1L,
+                                        ConfigDef.Range.atLeast(-1),
+                                        Importance.MEDIUM,
+                                        AUTO_OFFSET_RESET_LATEST_MAX_AGE_DOC)
                                 .define(CHECK_CRCS_CONFIG,
                                         Type.BOOLEAN,
                                         true,
@@ -722,6 +740,7 @@ public class ConsumerConfig extends AbstractConfig {
         maybeOverrideClientId(refinedConfigs);
         maybeOverrideEnableAutoCommit(refinedConfigs);
         checkUnsupportedConfigsPostProcess();
+        validateAutoOffsetResetLatestMaxAge();
         return refinedConfigs;
     }
 
@@ -789,6 +808,18 @@ public class ConsumerConfig extends AbstractConfig {
             if (!invalidConfigs.isEmpty()) {
                 throw new ConfigException(String.join(", ", invalidConfigs) +
                         " cannot be set when " + GROUP_PROTOCOL_CONFIG + "=" + groupProtocol.name());
+            }
+        }
+    }
+
+    private void validateAutoOffsetResetLatestMaxAge() {
+        long maxAge = getLong(AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG);
+        if (maxAge >= 0) {
+            String resetStrategy = getString(AUTO_OFFSET_RESET_CONFIG);
+            if (!AutoOffsetResetStrategy.LATEST.name().equals(resetStrategy)) {
+                throw new ConfigException(AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG +
+                        " can only be set when " + AUTO_OFFSET_RESET_CONFIG + "=latest, but found " +
+                        AUTO_OFFSET_RESET_CONFIG + "=" + resetStrategy);
             }
         }
     }

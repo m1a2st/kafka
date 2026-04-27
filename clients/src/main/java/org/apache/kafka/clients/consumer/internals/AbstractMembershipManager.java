@@ -225,6 +225,13 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
     }
 
     /**
+     * @return The metadata instance used for topic name resolution.
+     */
+    protected Metadata metadata() {
+        return metadata;
+    }
+
+    /**
      * Update the member state, setting it to the nextState only if it is a valid transition.
      *
      * @throws IllegalStateException If transitioning from the member {@link #state} to the

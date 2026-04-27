@@ -111,6 +111,12 @@ public class SubscriptionState {
     /* Default offset reset strategy */
     private final AutoOffsetResetStrategy defaultResetStrategy;
 
+    /* Per-partition offset reset strategy overrides for KIP-1327. Consumed once during resetInitializingPositions. */
+    private final Map<TopicPartition, AutoOffsetResetStrategy> partitionResetOverrides = new HashMap<>();
+
+    /* Maximum partition age (in ms) for 'hot' partition detection (KIP-1327). -1 means the feature is disabled. */
+    private long autoOffsetResetLatestMaxAge = -1;
+
     /* User-provided listener to be invoked when assignment changes */
     private Optional<ConsumerRebalanceListener> rebalanceListener = Optional.empty();
 
@@ -873,8 +879,15 @@ public class SubscriptionState {
             if (partitionState.shouldInitialize() && initPartitionsToInclude.test(tp)) {
                 if (defaultResetStrategy == AutoOffsetResetStrategy.NONE)
                     partitionsWithNoOffsets.add(tp);
-                else
-                    requestOffsetReset(tp);
+                else {
+                    // Check for per-partition override (KIP-1327: hot partition detection)
+                    AutoOffsetResetStrategy override = partitionResetOverrides.remove(tp);
+                    if (override != null) {
+                        requestOffsetReset(tp, override);
+                    } else {
+                        requestOffsetReset(tp);
+                    }
+                }
             }
         });
 
@@ -884,6 +897,22 @@ public class SubscriptionState {
 
     public synchronized void resetInitializingPositions() {
         resetInitializingPositions(tp -> true);
+    }
+
+    /**
+     * Set per-partition offset reset strategy overrides. These are consumed once during
+     * {@link #resetInitializingPositions} and cleared after use (KIP-1327).
+     */
+    public synchronized void setPartitionResetOverrides(Map<TopicPartition, AutoOffsetResetStrategy> overrides) {
+        partitionResetOverrides.putAll(overrides);
+    }
+
+    public synchronized void setAutoOffsetResetLatestMaxAge(long value) {
+        this.autoOffsetResetLatestMaxAge = value;
+    }
+
+    public synchronized long autoOffsetResetLatestMaxAge() {
+        return autoOffsetResetLatestMaxAge;
     }
 
     public synchronized Set<TopicPartition> partitionsNeedingReset(long nowMs) {

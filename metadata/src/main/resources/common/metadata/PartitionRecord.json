@@ -19,7 +19,8 @@
   "name": "PartitionRecord",
   // Version 1 adds Directories for KIP-858
   // Version 2 implements Eligible Leader Replicas and LastKnownElr as described in KIP-966.
-  "validVersions": "0-2",
+  // Version 3 adds CreationTimeMs for KIP-1327.
+  "validVersions": "0-3",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "PartitionId", "type": "int32", "versions": "0+", "default": "-1",
@@ -49,6 +50,9 @@
       "about": "The eligible leader replicas of this partition." },
     { "name": "LastKnownElr", "type": "[]int32", "default": "null", "entityType": "brokerId",
       "versions": "2+", "nullableVersions": "2+", "taggedVersions": "2+", "tag": 2,
-      "about": "The last known eligible leader replicas of this partition." }
+      "about": "The last known eligible leader replicas of this partition." },
+    { "name": "CreationTimeMs", "type": "int64", "default": "-1",
+      "versions": "3+", "taggedVersions": "3+", "tag": 3,
+      "about": "The time in milliseconds when this partition was created. -1 if unknown." }
   ]
 }

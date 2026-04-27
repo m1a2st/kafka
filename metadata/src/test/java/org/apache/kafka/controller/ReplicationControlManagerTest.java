@@ -275,6 +275,7 @@ public class ReplicationControlManagerTest {
                 setClusterControl(clusterControl).
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
+                setClock(time::milliseconds).
                 build();
             clusterControl.activate();
         }
@@ -670,7 +671,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00002DIRAAAA"),
                     Uuid.fromString("TESTBROKER00000DIRAAAA")
             }).
-            setIsr(new int[] {1, 2, 0}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).build(),
+            setIsr(new int[] {1, 2, 0}).setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).setCreationTimeMs(ctx.time.milliseconds()).build(),
             replicationControl.getPartition(
                 ((TopicRecord) result3.records().get(0).message()).topicId(), 0));
         ControllerResult<CreateTopicsResponseData> result4 =
@@ -744,7 +745,8 @@ public class ReplicationControlManagerTest {
                 setLeader(0).
                 setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
                 setLeaderEpoch(0).
-                setPartitionEpoch(0).build(),
+                setPartitionEpoch(0).
+                setCreationTimeMs(ctx.time.milliseconds()).build(),
             replicationControl.getPartition(
                 ((TopicRecord) result.records().get(0).message()).topicId(), 0));
     }
@@ -1781,6 +1783,7 @@ public class ReplicationControlManagerTest {
                 setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
                 setLeaderEpoch(0).
                 setPartitionEpoch(0).
+                setCreationTimeMs(ctx.time.milliseconds()).
                 build(),
             replicationControl.getPartition(
                 ((TopicRecord) result.records().get(0).message()).topicId(), 1));
@@ -2108,6 +2111,7 @@ public class ReplicationControlManagerTest {
                 setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
                 setLeaderEpoch(0).
                 setPartitionEpoch(1).
+                setCreationTimeMs(ctx.time.milliseconds()).
                 build(),
             replication.getPartition(fooId, 0));
 
@@ -2251,6 +2255,7 @@ public class ReplicationControlManagerTest {
                 setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).
                 setLeaderEpoch(0).
                 setPartitionEpoch(0).
+                setCreationTimeMs(ctx.time.milliseconds()).
                 build(),
             replication.getPartition(fooId, 0));
 
@@ -2309,7 +2314,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00003DIRAAAA"),
                     Uuid.fromString("TESTBROKER00004DIRAAAA")
             }).
-            setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(1).build(), replication.getPartition(fooId, 0));
+            setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(1).setCreationTimeMs(ctx.time.milliseconds()).build(), replication.getPartition(fooId, 0));
         ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
             replication.alterPartitionReassignments(
                 new AlterPartitionReassignmentsRequestData().setTopics(List.of(
@@ -2345,7 +2350,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00002DIRAAAA"),
                     Uuid.fromString("TESTBROKER00004DIRAAAA")
             }).
-            setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(1).setPartitionEpoch(2).build(), replication.getPartition(fooId, 0));
+            setLeader(1).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(1).setPartitionEpoch(2).setCreationTimeMs(ctx.time.milliseconds()).build(), replication.getPartition(fooId, 0));
         assertEquals(new PartitionRegistration.Builder().setReplicas(new int[] {1, 2, 3, 0}).setIsr(new int[] {0, 1, 2}).
             setDirectories(new Uuid[] {
                     Uuid.fromString("TESTBROKER00001DIRAAAA"),
@@ -2353,7 +2358,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00003DIRAAAA"),
                     Uuid.fromString("TESTBROKER00000DIRAAAA")
             }).
-            setLeader(0).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(2).build(), replication.getPartition(fooId, 1));
+            setLeader(0).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(2).setCreationTimeMs(ctx.time.milliseconds()).build(), replication.getPartition(fooId, 1));
         assertEquals(new PartitionRegistration.Builder().setReplicas(new int[] {1, 2, 3, 4, 0}).setIsr(new int[] {4, 2}).
             setDirectories(new Uuid[] {
                     Uuid.fromString("TESTBROKER00001DIRAAAA"),
@@ -2362,7 +2367,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00004DIRAAAA"),
                     Uuid.fromString("TESTBROKER00000DIRAAAA")
             }).
-            setAddingReplicas(new int[] {0, 1}).setLeader(4).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(2).build(), replication.getPartition(barId, 0));
+            setAddingReplicas(new int[] {0, 1}).setLeader(4).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(2).setCreationTimeMs(ctx.time.milliseconds()).build(), replication.getPartition(barId, 0));
         ListPartitionReassignmentsResponseData currentReassigning =
             new ListPartitionReassignmentsResponseData().setErrorMessage(null).
                 setTopics(List.of(new OngoingTopicReassignment().
@@ -2431,7 +2436,7 @@ public class ReplicationControlManagerTest {
                     Uuid.fromString("TESTBROKER00003DIRAAAA"),
                     Uuid.fromString("TESTBROKER00004DIRAAAA")
             }).
-            setLeader(4).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(1).setPartitionEpoch(3).build(), replication.getPartition(barId, 0));
+            setLeader(4).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(1).setPartitionEpoch(3).setCreationTimeMs(ctx.time.milliseconds()).build(), replication.getPartition(barId, 0));
     }
 
     @Test
@@ -2457,7 +2462,7 @@ public class ReplicationControlManagerTest {
                         Uuid.fromString("TESTBROKER00004DIRAAAA"),
                         Uuid.fromString("TESTBROKER00005DIRAAAA")
                 }).
-                setIsr(new int[] {2}).setLeader(2).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).build(),
+                setIsr(new int[] {2}).setLeader(2).setLeaderRecoveryState(LeaderRecoveryState.RECOVERED).setLeaderEpoch(0).setPartitionEpoch(0).setCreationTimeMs(ctx.time.milliseconds()).build(),
             ctx.replicationControl.getPartition(fooId, 1));
     }
 

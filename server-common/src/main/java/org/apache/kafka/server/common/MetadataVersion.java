@@ -133,7 +133,10 @@ public enum MetadataVersion {
 
     // IBP_4_4_IV0 enables dead-letter queue support for share groups (KIP-1191). When this version
     // is finalized, so will the DLQ support.
-    IBP_4_4_IV0(31, "4.4", "IV0", false);
+    IBP_4_4_IV0(31, "4.4", "IV0", false),
+
+    // Add partition creation time to PartitionRecord v3 (KIP-1327).
+    IBP_4_4_IV1(32, "4.4", "IV1", true);
 
 
     // NOTES when adding a new version:
@@ -222,6 +225,10 @@ public enum MetadataVersion {
         return this.isAtLeast(MetadataVersion.IBP_4_3_IV0);
     }
 
+    public boolean isPartitionCreationTimeMsSupported() {
+        return this.isAtLeast(IBP_4_4_IV1);
+    }
+
     public short registerBrokerRecordVersion() {
         if (isCordonedLogDirsSupported()) {
             // new cordonedLogDirs field
@@ -261,7 +268,9 @@ public enum MetadataVersion {
     }
 
     public short partitionRecordVersion() {
-        if (isElrSupported()) {
+        if (isPartitionCreationTimeMsSupported()) {
+            return (short) 3;
+        } else if (isElrSupported()) {
             return (short) 2;
         } else if (isDirectoryAssignmentSupported()) {
             return (short) 1;

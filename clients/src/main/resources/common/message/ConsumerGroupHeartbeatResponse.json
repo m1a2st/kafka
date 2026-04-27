@@ -17,7 +17,8 @@
   "apiKey": 68,
   "type": "response",
   "name": "ConsumerGroupHeartbeatResponse",
-  "validVersions": "0-1",
+  // Version 2 adds PartitionAges to TopicPartitions (KIP-1327)
+  "validVersions": "0-2",
   "flexibleVersions": "0+",
   // Supported errors:
   // - GROUP_AUTHORIZATION_FAILED (version 0+)
@@ -56,7 +57,10 @@
       { "name": "TopicId", "type": "uuid", "versions": "0+",
         "about": "The topic ID." },
       { "name": "Partitions", "type": "[]int32", "versions": "0+",
-        "about": "The partitions." }
+        "about": "The partitions." },
+      { "name": "PartitionAges", "type": "[]int64", "versions": "2+",
+        "nullableVersions": "2+", "default": "null", "ignorable": true,
+        "about": "Partition ages in ms, parallel to Partitions array. -1 if unknown. null if not requested." }
     ]}
   ]
 }

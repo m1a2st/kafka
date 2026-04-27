@@ -247,6 +247,8 @@ public class RequestManagers implements Closeable {
                             streamsRebalanceData.get()
                         );
                     } else {
+                        subscriptions.setAutoOffsetResetLatestMaxAge(
+                            config.getLong(ConsumerConfig.AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG));
                         membershipManager = new ConsumerMembershipManager(
                             groupRebalanceConfig.groupId,
                             groupRebalanceConfig.groupInstanceId,

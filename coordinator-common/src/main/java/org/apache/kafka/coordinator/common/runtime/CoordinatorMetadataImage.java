@@ -54,6 +54,12 @@ public interface CoordinatorMetadataImage {
         int partitionCount();
 
         List<String> partitionRacks(int partitionId);
+
+        /**
+         * Returns the creation time in milliseconds for the given partition,
+         * or -1 if unknown.
+         */
+        long partitionCreationTimeMs(int partitionId);
     }
 
     private static CoordinatorMetadataImage emptyImage() {

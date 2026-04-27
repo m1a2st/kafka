@@ -152,5 +152,14 @@ public class KRaftCoordinatorMetadataImage implements CoordinatorMetadataImage {
                 return List.of();
             }
         }
+
+        @Override
+        public long partitionCreationTimeMs(int partitionId) {
+            PartitionRegistration partitionRegistration = topicImage.partitions().get(partitionId);
+            if (partitionRegistration != null) {
+                return partitionRegistration.creationTimeMs;
+            }
+            return -1L;
+        }
     }
 }

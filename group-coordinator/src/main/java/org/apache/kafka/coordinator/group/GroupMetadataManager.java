@@ -4982,19 +4982,46 @@ public class GroupMetadataManager {
             );
         } else {
             // Otherwise, it is a regular heartbeat.
-            return consumerGroupHeartbeat(
-                context,
-                request.groupId(),
-                request.memberId(),
-                request.memberEpoch(),
-                request.instanceId(),
-                request.rackId(),
-                request.rebalanceTimeoutMs(),
-                request.subscribedTopicNames(),
-                request.subscribedTopicRegex(),
-                request.serverAssignor(),
-                request.topicPartitions()
-            );
+            CoordinatorResult<ConsumerGroupHeartbeatResponseData, CoordinatorRecord> result =
+                consumerGroupHeartbeat(
+                    context,
+                    request.groupId(),
+                    request.memberId(),
+                    request.memberEpoch(),
+                    request.instanceId(),
+                    request.rackId(),
+                    request.rebalanceTimeoutMs(),
+                    request.subscribedTopicNames(),
+                    request.subscribedTopicRegex(),
+                    request.serverAssignor(),
+                    request.topicPartitions()
+                );
+
+            // Populate partition ages if requested (KIP-1327).
+            if (request.requestPartitionAges() && result.response().assignment() != null) {
+                long currentTimeMs = time.milliseconds();
+                for (ConsumerGroupHeartbeatResponseData.TopicPartitions tp :
+                        result.response().assignment().topicPartitions()) {
+                    List<Long> ages = new ArrayList<>(tp.partitions().size());
+                    Optional<CoordinatorMetadataImage.TopicMetadata> topicMeta =
+                        metadataImage.topicMetadata(tp.topicId());
+                    for (int partitionId : tp.partitions()) {
+                        if (topicMeta.isPresent()) {
+                            long creationTimeMs = topicMeta.get().partitionCreationTimeMs(partitionId);
+                            if (creationTimeMs >= 0) {
+                                ages.add(currentTimeMs - creationTimeMs);
+                            } else {
+                                ages.add(-1L);
+                            }
+                        } else {
+                            ages.add(-1L);
+                        }
+                    }
+                    tp.setPartitionAges(ages);
+                }
+            }
+
+            return result;
         }
     }
 

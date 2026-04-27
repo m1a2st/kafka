@@ -71,7 +71,9 @@ public class ConsumerHeartbeatRequestManager extends AbstractHeartbeatRequestMan
         super(logContext, time, config, coordinatorRequestManager, backgroundEventHandler,
             new HeartbeatMetricsManager(metrics));
         this.membershipManager = membershipManager;
-        this.heartbeatState = new HeartbeatState(subscriptions, membershipManager, maxPollIntervalMs);
+        long autoOffsetResetLatestMaxAge = config.getLong(ConsumerConfig.AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG);
+        this.heartbeatState = new HeartbeatState(subscriptions, membershipManager, maxPollIntervalMs,
+            autoOffsetResetLatestMaxAge);
     }
 
     // Visible for testing
@@ -234,16 +236,27 @@ public class ConsumerHeartbeatRequestManager extends AbstractHeartbeatRequestMan
         private final SubscriptionState subscriptions;
         private final ConsumerMembershipManager membershipManager;
         private final int rebalanceTimeoutMs;
+        private final boolean requestPartitionAges;
         private final SentFields sentFields;
 
         public HeartbeatState(
                 final SubscriptionState subscriptions,
                 final ConsumerMembershipManager membershipManager,
-                final int rebalanceTimeoutMs) {
+                final int rebalanceTimeoutMs,
+                final long autoOffsetResetLatestMaxAge) {
             this.subscriptions = subscriptions;
             this.membershipManager = membershipManager;
             this.rebalanceTimeoutMs = rebalanceTimeoutMs;
+            this.requestPartitionAges = autoOffsetResetLatestMaxAge >= 0;
             this.sentFields = new SentFields();
+        }
+
+        // Visible for testing - backward compatible constructor
+        public HeartbeatState(
+                final SubscriptionState subscriptions,
+                final ConsumerMembershipManager membershipManager,
+                final int rebalanceTimeoutMs) {
+            this(subscriptions, membershipManager, rebalanceTimeoutMs, -1L);
         }
 
 
@@ -315,6 +328,11 @@ public class ConsumerHeartbeatRequestManager extends AbstractHeartbeatRequestMan
             String rackId = membershipManager.rackId().orElse(null);
             if (sendAllFields) {
                 data.setRackId(rackId);
+            }
+
+            // RequestPartitionAges - set when auto.offset.reset.latest.max.age is configured (KIP-1327)
+            if (requestPartitionAges) {
+                data.setRequestPartitionAges(true);
             }
 
             return data;

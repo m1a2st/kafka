@@ -19,7 +19,8 @@
   "listeners": ["broker"],
   "name": "ConsumerGroupHeartbeatRequest",
   // Version 1 adds SubscribedTopicRegex (KIP-848), and requires the consumer to generate their own Member ID (KIP-1082)
-  "validVersions": "0-1",
+  // Version 2 adds RequestPartitionAges (KIP-1327)
+  "validVersions": "0-2",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "GroupId", "type": "string", "versions": "0+", "entityType": "groupId",
@@ -46,6 +47,9 @@
         "about": "The topic ID." },
       { "name": "Partitions", "type": "[]int32", "versions": "0+",
         "about": "The partitions." }
-    ]}
+    ]},
+    { "name": "RequestPartitionAges", "type": "bool", "versions": "2+",
+      "taggedVersions": "2+", "tag": 0, "default": "false",
+      "about": "True if the consumer requests partition ages in the response." }
   ]
 }
