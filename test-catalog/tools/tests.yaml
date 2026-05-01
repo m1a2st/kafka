@@ -62,14 +62,17 @@ org.apache.kafka.tools.ClusterToolTest:
 - testUnregisterWithBootstrapController
 org.apache.kafka.tools.ConfigCommandIntegrationTest:
 - testAddConfigKeyValuesUsingCommand
+- testAlterBrokerConfigWithOfflineBroker
 - testAlterReadOnlyConfigInKRaftThenShouldFail
 - testAlterStreamsGroupHeartbeatInterval
 - testAlterStreamsGroupNumOfStandbyReplicas
+- testAlterStreamsGroupNumWarmupReplicas
 - testAlterStreamsGroupSessionTimeout
 - testAlterStreamsGroupTaskOffsetInterval
 - testBrokerLoggerConfigUpdate
 - testClientMetricsConfigUpdate
 - testDeleteNonExistentConfigIsIdempotent
+- testDeleteNonExistentConfigIsIdempotentWithBootstrapController
 - testDescribeGroupWithoutDynamicConfigs
 - testDescribeNonExistentConfigResource
 - testDescribeStreamsGroupConfigs
