@@ -26,6 +26,7 @@ import org.apache.kafka.common.protocol.Readable;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.stream.Collectors;
 
 public class DescribeTopicPartitionsResponse extends AbstractResponse {
@@ -74,12 +75,15 @@ public class DescribeTopicPartitionsResponse extends AbstractResponse {
     public static TopicPartitionInfo partitionToTopicPartitionInfo(
         DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition partition,
         Map<Integer, Node> nodes) {
+        long rawCreationTimeMs = partition.creationTimeMs();
+        OptionalLong creationTimeMs = rawCreationTimeMs == -1L ? OptionalLong.empty() : OptionalLong.of(rawCreationTimeMs);
         return new TopicPartitionInfo(
             partition.partitionIndex(),
             nodes.get(partition.leaderId()),
             partition.replicaNodes().stream().map(id -> nodes.getOrDefault(id, new Node(id, "", -1))).collect(Collectors.toList()),
             partition.isrNodes().stream().map(id -> nodes.getOrDefault(id, new Node(id, "", -1))).collect(Collectors.toList()),
             partition.eligibleLeaderReplicas().stream().map(id -> nodes.getOrDefault(id, new Node(id, "", -1))).collect(Collectors.toList()),
-            partition.lastKnownElr().stream().map(id -> nodes.getOrDefault(id, new Node(id, "", -1))).collect(Collectors.toList()));
+            partition.lastKnownElr().stream().map(id -> nodes.getOrDefault(id, new Node(id, "", -1))).collect(Collectors.toList()),
+            creationTimeMs);
     }
 }

@@ -55,6 +55,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -68,6 +71,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -368,6 +372,18 @@ public abstract class TopicCommand {
                     .collect(Collectors.joining(",")));
             } else {
                 System.out.print("\tLastKnownElr: N/A");
+            }
+            OptionalLong ct = info.creationTimeMs();
+            if (ct.isPresent()) {
+                long ts = ct.getAsLong();
+                if (ts >= 0) {
+                    String formatted = Instant.ofEpochMilli(ts)
+                        .atZone(ZoneOffset.UTC)
+                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX"));
+                    System.out.print("\tCreationTimeMs: " + formatted);
+                } else {
+                    System.out.print("\tCreationTimeMs: -");
+                }
             }
             System.out.println();
         }

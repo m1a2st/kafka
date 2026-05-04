@@ -1321,6 +1321,13 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
     }
 
     /**
+     * @return Metadata object used by this member.
+     */
+    protected Metadata metadata() {
+        return metadata;
+    }
+
+    /**
      * @return Set of topic IDs received in a target assignment that have not been reconciled yet
      * because topic names are not in metadata or reconciliation hasn't finished. Reconciliation
      * hasn't finished for a topic if the currently active assignment has a different set of partitions

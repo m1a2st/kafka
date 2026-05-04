@@ -181,6 +181,17 @@ public class ConsumerConfig extends AbstractConfig {
             "producers could start to send messages to newly added partitions (i.e. no initial offsets exist yet) before consumers reset their offsets.";
 
     /**
+     * <code>auto.offset.reset.latest.max.age</code>
+     */
+    public static final String AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG = "auto.offset.reset.latest.max.age";
+    private static final String AUTO_OFFSET_RESET_LATEST_MAX_AGE_DOC = "When <code>auto.offset.reset</code> "
+            + "is <code>latest</code> and there is no committed offset for a partition, this setting controls "
+            + "whether newly created partitions reset to earliest instead. If set to a positive value (ms), "
+            + "partitions whose age is within this threshold are considered 'hot' and reset to earliest. "
+            + "Partitions older than this threshold or with unknown age use latest. "
+            + "-1 (default) disables this behavior. Only supported with <code>group.protocol=consumer</code>.";
+
+    /**
      * <code>fetch.min.bytes</code>
      */
     public static final String FETCH_MIN_BYTES_CONFIG = "fetch.min.bytes";
@@ -398,7 +409,8 @@ public class ConsumerConfig extends AbstractConfig {
     private static final List<String> CLASSIC_PROTOCOL_UNSUPPORTED_CONFIGS = List.of(
             GROUP_REMOTE_ASSIGNOR_CONFIG,
             SHARE_ACKNOWLEDGEMENT_MODE_CONFIG,
-            SHARE_ACQUIRE_MODE_CONFIG
+            SHARE_ACQUIRE_MODE_CONFIG,
+            AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG
     );
 
     /**
@@ -547,6 +559,12 @@ public class ConsumerConfig extends AbstractConfig {
                                         new AutoOffsetResetStrategy.Validator(),
                                         Importance.MEDIUM,
                                         AUTO_OFFSET_RESET_DOC)
+                                .define(AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG,
+                                        Type.LONG,
+                                        -1L,
+                                        atLeast(-1),
+                                        Importance.MEDIUM,
+                                        AUTO_OFFSET_RESET_LATEST_MAX_AGE_DOC)
                                 .define(CHECK_CRCS_CONFIG,
                                         Type.BOOLEAN,
                                         true,

@@ -66,4 +66,8 @@ public class ApiVersions {
         return new FinalizedFeaturesInfo(maxFinalizedFeaturesEpoch, finalizedFeatures);
     }
 
+    public synchronized Map<String, NodeApiVersions> all() {
+        return new HashMap<>(nodeApiVersions);
+    }
+
 }

@@ -285,6 +285,12 @@ public class Metadata implements Closeable {
         }
     }
 
+    public synchronized long partitionAgeMs(TopicPartition topicPartition) {
+        return metadataSnapshot.partitionMetadata(topicPartition)
+                .map(pm -> pm.partitionAgeMs)
+                .orElse(-1L);
+    }
+
     /**
      * @return a mapping from topic names to topic IDs for all topics with valid IDs in the cache
      */

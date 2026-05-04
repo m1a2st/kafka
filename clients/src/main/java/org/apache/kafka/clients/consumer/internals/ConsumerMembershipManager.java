@@ -135,11 +135,17 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
 
     /**
      * Serves as the conduit by which we can report events to the application thread. This is needed as we send
-     * {@link PartitionsAssignedEvent}, {@link PartitionsRemovedEvent} and, if needed,
+     * {@link PartitionsAssignedEvent}, {@link PartitionsRemokedEvent} and, if needed,
      * {@link ErrorEvent errors} to the application thread.
      */
     private final BackgroundEventHandler backgroundEventHandler;
 
+    /**
+     * Maximum age in milliseconds for using latest offset reset strategy. -1 means disabled.
+     */
+    private final long autoOffsetResetLatestMaxAgeMs;
+
+    @SuppressWarnings("checkstyle:ParameterNumber")
     public ConsumerMembershipManager(String groupId,
                                      Optional<String> groupInstanceId,
                                      Optional<String> rackId,
@@ -152,7 +158,8 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
                                      BackgroundEventHandler backgroundEventHandler,
                                      Time time,
                                      Metrics metrics,
-                                     boolean autoCommitEnabled) {
+                                     boolean autoCommitEnabled,
+                                     long autoOffsetResetLatestMaxAgeMs) {
         this(groupId,
             groupInstanceId,
             rackId,
@@ -165,10 +172,12 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
             backgroundEventHandler,
             time,
             new ConsumerRebalanceMetricsManager(metrics, subscriptions),
-            autoCommitEnabled);
+            autoCommitEnabled,
+            autoOffsetResetLatestMaxAgeMs);
     }
 
     // Visible for testing
+    @SuppressWarnings("checkstyle:ParameterNumber")
     ConsumerMembershipManager(String groupId,
                               Optional<String> groupInstanceId,
                               Optional<String> rackId,
@@ -181,7 +190,8 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
                               BackgroundEventHandler backgroundEventHandler,
                               Time time,
                               RebalanceMetricsManager metricsManager,
-                              boolean autoCommitEnabled) {
+                              boolean autoCommitEnabled,
+                              long autoOffsetResetLatestMaxAgeMs) {
         super(groupId,
             subscriptions,
             metadata,
@@ -195,6 +205,20 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
         this.serverAssignor = serverAssignor;
         this.commitRequestManager = commitRequestManager;
         this.backgroundEventHandler = backgroundEventHandler;
+        this.autoOffsetResetLatestMaxAgeMs = autoOffsetResetLatestMaxAgeMs;
+    }
+
+    @Override
+    protected void processAssignmentReceived(Map<Uuid, SortedSet<Integer>> assignment) {
+        if (autoOffsetResetLatestMaxAgeMs != -1L) {
+            Set<Uuid> currentTopicIds = currentAssignment().partitions.keySet();
+            boolean hasNewTopics = assignment.keySet().stream()
+                .anyMatch(id -> !currentTopicIds.contains(id));
+            if (hasNewTopics) {
+                metadata().requestUpdate(true);
+            }
+        }
+        super.processAssignmentReceived(assignment);
     }
 
     /**

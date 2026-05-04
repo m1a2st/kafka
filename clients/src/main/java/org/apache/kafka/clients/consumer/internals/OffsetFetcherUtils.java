@@ -27,6 +27,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.ApiVersionsResponseData;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
@@ -62,6 +63,7 @@ class OffsetFetcherUtils {
     private final ApiVersions apiVersions;
     private final PositionsValidator positionsValidator;
     private final Logger log;
+    private final long autoOffsetResetLatestMaxAgeMs;
 
     /**
      * Exception that occurred while resetting positions, that will be propagated on the next
@@ -78,7 +80,8 @@ class OffsetFetcherUtils {
                        ApiVersions apiVersions) {
         this(logContext, metadata, subscriptionState,
             time, retryBackoffMs, apiVersions,
-            new PositionsValidator(logContext, time, subscriptionState, metadata));
+            new PositionsValidator(logContext, time, subscriptionState, metadata),
+            -1L);
     }
 
     OffsetFetcherUtils(LogContext logContext,
@@ -88,6 +91,18 @@ class OffsetFetcherUtils {
                        long retryBackoffMs,
                        ApiVersions apiVersions,
                        PositionsValidator positionsValidator) {
+        this(logContext, metadata, subscriptionState,
+            time, retryBackoffMs, apiVersions, positionsValidator, -1L);
+    }
+
+    OffsetFetcherUtils(LogContext logContext,
+                       ConsumerMetadata metadata,
+                       SubscriptionState subscriptionState,
+                       Time time,
+                       long retryBackoffMs,
+                       ApiVersions apiVersions,
+                       PositionsValidator positionsValidator,
+                       long autoOffsetResetLatestMaxAgeMs) {
         this.log = logContext.logger(getClass());
         this.metadata = metadata;
         this.subscriptionState = subscriptionState;
@@ -95,6 +110,7 @@ class OffsetFetcherUtils {
         this.retryBackoffMs = retryBackoffMs;
         this.apiVersions = apiVersions;
         this.positionsValidator = positionsValidator;
+        this.autoOffsetResetLatestMaxAgeMs = autoOffsetResetLatestMaxAgeMs;
     }
 
     /**
@@ -198,6 +214,18 @@ class OffsetFetcherUtils {
         positionsValidator.validatePositionsOnMetadataChange(apiVersions);
     }
 
+    private void maybeCheckBrokerSupport() {
+        if (autoOffsetResetLatestMaxAgeMs == -1L) return;
+        apiVersions.all().forEach((nodeId, nodeVersions) -> {
+            ApiVersionsResponseData.ApiVersion metaVer = nodeVersions.apiVersion(ApiKeys.METADATA);
+            if (metaVer != null && metaVer.maxVersion() < 14) {
+                throw new UnsupportedVersionException(
+                    "auto.offset.reset.latest.max.age requires MetadataResponse v14, but broker " + nodeId +
+                    " only supports up to v" + metaVer.maxVersion());
+            }
+        });
+    }
+
     /**
      * get OffsetResetStrategy for all assigned partitions
      */
@@ -207,10 +235,20 @@ class OffsetFetcherUtils {
         if (exception != null)
             throw exception;
 
+        maybeCheckBrokerSupport();
+
         Set<TopicPartition> partitions = subscriptionState.partitionsNeedingReset(time.milliseconds());
         final Map<TopicPartition, AutoOffsetResetStrategy> partitionAutoOffsetResetStrategyMap = new HashMap<>();
         for (final TopicPartition partition : partitions) {
-            partitionAutoOffsetResetStrategyMap.put(partition, offsetResetStrategyWithValidTimestamp(partition));
+            AutoOffsetResetStrategy strategy = offsetResetStrategyWithValidTimestamp(partition);
+            if (autoOffsetResetLatestMaxAgeMs != -1L
+                    && strategy.type() == AutoOffsetResetStrategy.StrategyType.LATEST) {
+                long partitionAgeMs = metadata.partitionAgeMs(partition);
+                if (partitionAgeMs != -1L && partitionAgeMs <= autoOffsetResetLatestMaxAgeMs) {
+                    strategy = AutoOffsetResetStrategy.EARLIEST;
+                }
+            }
+            partitionAutoOffsetResetStrategyMap.put(partition, strategy);
         }
 
         return partitionAutoOffsetResetStrategyMap;

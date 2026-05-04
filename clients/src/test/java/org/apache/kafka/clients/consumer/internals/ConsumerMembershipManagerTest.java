@@ -145,7 +145,7 @@ public class ConsumerMembershipManagerTest {
         ConsumerMembershipManager manager = spy(new ConsumerMembershipManager(
             GROUP_ID, Optional.ofNullable(groupInstanceId), Optional.empty(), REBALANCE_TIMEOUT, Optional.empty(),
             subscriptionState, commitRequestManager, metadata, LOG_CONTEXT,
-            backgroundEventHandler, time, rebalanceMetricsManager, true));
+            backgroundEventHandler, time, rebalanceMetricsManager, true, -1L));
         assertMemberIdIsGenerated(manager.memberId());
         return manager;
     }
@@ -158,7 +158,7 @@ public class ConsumerMembershipManagerTest {
         ConsumerMembershipManager manager = spy(new ConsumerMembershipManager(
                 GROUP_ID, Optional.ofNullable(groupInstanceId), Optional.ofNullable(rackId), REBALANCE_TIMEOUT,
                 Optional.ofNullable(serverAssignor), subscriptionState, commitRequestManager,
-                metadata, LOG_CONTEXT, backgroundEventHandler, time, rebalanceMetricsManager, true));
+                metadata, LOG_CONTEXT, backgroundEventHandler, time, rebalanceMetricsManager, true, -1L));
         assertMemberIdIsGenerated(manager.memberId());
         manager.transitionToJoining();
         return manager;
@@ -255,7 +255,7 @@ public class ConsumerMembershipManagerTest {
         ConsumerMembershipManager membershipManager = new ConsumerMembershipManager(
                 GROUP_ID, Optional.empty(), Optional.empty(), REBALANCE_TIMEOUT, Optional.empty(),
                 subscriptionState, commitRequestManager, metadata, LOG_CONTEXT,
-            backgroundEventHandler, time, rebalanceMetricsManager, true);
+            backgroundEventHandler, time, rebalanceMetricsManager, true, -1L);
         assertEquals(MemberState.UNSUBSCRIBED, membershipManager.state());
         membershipManager.transitionToJoining();
 

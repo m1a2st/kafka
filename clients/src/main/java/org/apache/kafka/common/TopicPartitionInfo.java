@@ -20,6 +20,7 @@ package org.apache.kafka.common;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +33,7 @@ public class TopicPartitionInfo {
     private final List<Node> isr;
     private final List<Node> elr;
     private final List<Node> lastKnownElr;
+    private final OptionalLong creationTimeMs;
 
     /**
      * Create an instance of this class with the provided parameters.
@@ -58,6 +60,36 @@ public class TopicPartitionInfo {
         this.isr = Collections.unmodifiableList(isr);
         this.elr = Collections.unmodifiableList(elr);
         this.lastKnownElr = Collections.unmodifiableList(lastKnownElr);
+        this.creationTimeMs = OptionalLong.empty();
+    }
+
+    /**
+     * Create an instance of this class with the provided parameters.
+     *
+     * @param partition the partition id
+     * @param leader the leader of the partition or null if there is none.
+     * @param replicas the replicas of the partition in the same order as the replica assignment
+     * @param isr the in-sync replicas
+     * @param elr the eligible leader replicas
+     * @param lastKnownElr the last known eligible leader replicas
+     * @param creationTimeMs the creation time of this partition in milliseconds, or empty if unknown
+     */
+    public TopicPartitionInfo(
+        int partition,
+        Node leader,
+        List<Node> replicas,
+        List<Node> isr,
+        List<Node> elr,
+        List<Node> lastKnownElr,
+        OptionalLong creationTimeMs
+    ) {
+        this.partition = partition;
+        this.leader = leader;
+        this.replicas = Collections.unmodifiableList(replicas);
+        this.isr = Collections.unmodifiableList(isr);
+        this.elr = Collections.unmodifiableList(elr);
+        this.lastKnownElr = Collections.unmodifiableList(lastKnownElr);
+        this.creationTimeMs = creationTimeMs;
     }
 
     public TopicPartitionInfo(int partition, Node leader, List<Node> replicas, List<Node> isr) {
@@ -67,6 +99,7 @@ public class TopicPartitionInfo {
         this.isr = Collections.unmodifiableList(isr);
         this.elr = null;
         this.lastKnownElr = null;
+        this.creationTimeMs = OptionalLong.empty();
     }
 
     /**
@@ -114,12 +147,19 @@ public class TopicPartitionInfo {
         return lastKnownElr;
     }
 
+    /**
+     * Return the time in milliseconds when this partition was first created, or empty if unknown.
+     */
+    public OptionalLong creationTimeMs() {
+        return creationTimeMs;
+    }
+
     public String toString() {
         String elrString = elr != null ? elr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         String lastKnownElrString = lastKnownElr != null ? lastKnownElr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         return "(partition=" + partition + ", leader=" + leader + ", replicas=" +
             replicas.stream().map(Node::toString).collect(Collectors.joining(", ")) + ", isr=" + isr.stream().map(Node::toString).collect(Collectors.joining(", ")) +
-            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString + ")";
+            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString + ", creationTimeMs=" + creationTimeMs + ")";
     }
 
     @Override
@@ -134,7 +174,8 @@ public class TopicPartitionInfo {
             Objects.equals(replicas, that.replicas) &&
             Objects.equals(isr, that.isr) &&
             Objects.equals(elr, that.elr) &&
-            Objects.equals(lastKnownElr, that.lastKnownElr);
+            Objects.equals(lastKnownElr, that.lastKnownElr) &&
+            Objects.equals(creationTimeMs, that.creationTimeMs);
     }
 
     @Override
@@ -145,6 +186,7 @@ public class TopicPartitionInfo {
         result = 31 * result + (isr != null ? isr.hashCode() : 0);
         result = 31 * result + (elr != null ? elr.hashCode() : 0);
         result = 31 * result + (lastKnownElr != null ? lastKnownElr.hashCode() : 0);
+        result = 31 * result + creationTimeMs.hashCode();
         return result;
     }
 }

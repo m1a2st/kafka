@@ -260,7 +260,8 @@ public class RequestManagers implements Closeable {
                             backgroundEventHandler,
                             time,
                             metrics,
-                            config.getBoolean(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
+                            config.getBoolean(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG),
+                            config.getLong(ConsumerConfig.AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG));
 
                         // Update the group member ID label in the client telemetry reporter.
                         // According to KIP-1082, the consumer will generate the member ID as the incarnation ID of the process.
@@ -295,6 +296,7 @@ public class RequestManagers implements Closeable {
                     networkClientDelegate,
                     commitRequestManager,
                     positionsValidator,
+                    config.getLong(ConsumerConfig.AUTO_OFFSET_RESET_LATEST_MAX_AGE_CONFIG),
                     logContext);
 
                 return new RequestManagers(
