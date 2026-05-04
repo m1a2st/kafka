@@ -1391,13 +1391,12 @@ kafka.server.AutoTopicCreationManagerTest:
 - testTopicsInBackoffAreNotRetried
 - testTopicsOutOfBackoffCanBeRetried
 kafka.server.BrokerLifecycleManagerTest:
-- testAlwaysSendsAccumulatedCordonedDirs
 - testAlwaysSendsAccumulatedOfflineDirs
 - testControlledShutdown
+- testCordonedLogDirs
 - testCreateAndClose
 - testCreateStartAndClose
 - testKraftJBODMetadataVersionUpdateEvent
-- testRegistrationIncludesCordonedDirs
 - testRegistrationIncludesDirs
 - testRegistrationTimeout
 - testSuccessfulRegistration
@@ -1613,11 +1612,6 @@ kafka.server.ControllerRegistrationManagerTest:
 - testRetransmitRegistration
 - testRetransmitRegistrationAfterTimeout
 - testWrongIncarnationId
-kafka.server.DefaultApiVersionManagerTest:
-- testApiScope
-- testControllerApiIntersection
-- testDisabledApis
-- testEnvelopeDisabledForKRaftBroker
 kafka.server.DelayedFetchTest:
 - testDelayedFetchWithMessageOnlyHighWatermark
 - testDivergingEpoch

@@ -119,11 +119,18 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithPropertiesDeletion
 org.apache.kafka.server.CordonedLogDirsIntegrationTest:
 - testCordonUncordonLogDirs
+- testCordonUnknownLogDirs
 - testDecommissionBroker
 - testFeatureNotEnabled
 - testFeatureNotEnabledStaticConfig
 - testReassignWithCordonedLogDirs
 - testStaticCordonUncordonLogDirs
+- testUpdateCordonedDirsViaController
+org.apache.kafka.server.DefaultApiVersionManagerTest:
+- testApiScope
+- testControllerApiIntersection
+- testDisabledApis
+- testEnvelopeDisabledForKRaftBroker
 org.apache.kafka.server.EligibleLeaderReplicasIntegrationTest:
 - testElrMemberCanBeElected
 - testElrMemberShouldBeKickOutWhenUncleanShutdown
