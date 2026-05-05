@@ -244,7 +244,12 @@ class OffsetFetcherUtils {
             if (autoOffsetResetLatestMaxAgeMs != -1L
                     && strategy.type() == AutoOffsetResetStrategy.StrategyType.LATEST) {
                 long partitionAgeMs = metadata.partitionAgeMs(partition);
-                if (partitionAgeMs != -1L && partitionAgeMs <= autoOffsetResetLatestMaxAgeMs) {
+                if (partitionAgeMs == -1L) {
+                    // Age not yet available; defer until a fresh metadata response populates partitionAgeMs.
+                    metadata.requestUpdate(false);
+                    continue;
+                }
+                if (partitionAgeMs <= autoOffsetResetLatestMaxAgeMs) {
                     strategy = AutoOffsetResetStrategy.EARLIEST;
                 }
             }
@@ -385,9 +390,15 @@ class OffsetFetcherUtils {
         for (Map.Entry<TopicPartition, ListOffsetData> fetchedOffset : result.fetchedOffsets.entrySet()) {
             TopicPartition partition = fetchedOffset.getKey();
             ListOffsetData offsetData = fetchedOffset.getValue();
+            // Use the subscription state's current reset strategy (the original configured strategy)
+            // as the safety check in maybeSeekUnvalidated. When KIP-1327 promotes LATEST to EARLIEST
+            // for a hot partition, partitionAutoOffsetResetStrategyMap contains EARLIEST but the
+            // subscription state still records LATEST, causing a false mismatch. Using the
+            // subscription state's strategy ensures the check correctly detects concurrent resets
+            // without blocking the KIP-1327 promotion.
             resetPositionIfNeeded(
                     partition,
-                    partitionAutoOffsetResetStrategyMap.get(partition),
+                    subscriptionState.resetStrategy(partition),
                     offsetData);
         }
     }

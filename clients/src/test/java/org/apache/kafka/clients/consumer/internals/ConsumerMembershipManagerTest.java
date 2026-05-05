@@ -3233,4 +3233,84 @@ public class ConsumerMembershipManagerTest {
             sleepMs = 0;
         }
     }
+
+    @Test
+    public void testMetadataRefreshWhenNewTopicAssigned() {
+        // Create a manager with feature enabled (autoOffsetResetLatestMaxAgeMs = 5000)
+        ConsumerMembershipManager membershipManager = createMembershipManagerWithMaxAge(5000L);
+        membershipManager.transitionToJoining();
+        when(subscriptionState.hasAutoAssignedPartitions()).thenReturn(true);
+        when(subscriptionState.rebalanceListener()).thenReturn(Optional.empty());
+
+        // Manager starts with no assignment - transition to STABLE first
+        ConsumerGroupHeartbeatResponse emptyResponse = createConsumerGroupHeartbeatResponse(
+            new Assignment(), membershipManager.memberId());
+        membershipManager.onHeartbeatSuccess(emptyResponse);
+        assertEquals(MemberState.RECONCILING, membershipManager.state());
+
+        // Clear any requestUpdate calls from initial setup
+        clearInvocations(metadata);
+
+        // Receive assignment with a new topic UUID
+        Uuid topicId = Uuid.randomUuid();
+        receiveAssignment(topicId, Arrays.asList(0, 1), membershipManager);
+
+        // Assert metadata refresh was triggered for the new topic
+        verify(metadata).requestUpdate(true);
+    }
+
+    @Test
+    public void testNoMetadataRefreshWhenFeatureDisabled() {
+        // Create a manager with feature disabled (autoOffsetResetLatestMaxAgeMs = -1)
+        ConsumerMembershipManager membershipManager = createMembershipManagerWithMaxAge(-1L);
+        membershipManager.transitionToJoining();
+        when(subscriptionState.hasAutoAssignedPartitions()).thenReturn(true);
+        when(subscriptionState.rebalanceListener()).thenReturn(Optional.empty());
+
+        // Manager starts with no assignment
+        ConsumerGroupHeartbeatResponse emptyResponse = createConsumerGroupHeartbeatResponse(
+            new Assignment(), membershipManager.memberId());
+        membershipManager.onHeartbeatSuccess(emptyResponse);
+
+        // Clear any requestUpdate calls from initial setup
+        clearInvocations(metadata);
+
+        // Receive assignment with a new topic UUID
+        Uuid topicId = Uuid.randomUuid();
+        receiveAssignment(topicId, Arrays.asList(0, 1), membershipManager);
+
+        // Assert no metadata refresh was triggered (feature disabled)
+        verify(metadata, never()).requestUpdate(true);
+    }
+
+    @Test
+    public void testNoMetadataRefreshWhenSameTopicsReassigned() {
+        // Create a manager with feature enabled
+        ConsumerMembershipManager membershipManager = createMembershipManagerWithMaxAge(5000L);
+        membershipManager.transitionToJoining();
+        when(subscriptionState.hasAutoAssignedPartitions()).thenReturn(true);
+        when(subscriptionState.rebalanceListener()).thenReturn(Optional.empty());
+
+        // Establish an initial current assignment with topicId A
+        Uuid topicIdA = Uuid.randomUuid();
+        membershipManager.updateAssignment(Map.of(topicIdA, new TreeSet<>(Arrays.asList(0, 1))));
+
+        // Clear any requestUpdate calls from setup
+        clearInvocations(metadata);
+
+        // Receive new assignment that contains only topicId A (same topic, different partitions)
+        receiveAssignment(topicIdA, Arrays.asList(0, 1, 2), membershipManager);
+
+        // Assert no metadata refresh was triggered (no new topics)
+        verify(metadata, never()).requestUpdate(true);
+    }
+
+    private ConsumerMembershipManager createMembershipManagerWithMaxAge(long maxAgeMs) {
+        ConsumerMembershipManager manager = spy(new ConsumerMembershipManager(
+            GROUP_ID, Optional.empty(), Optional.empty(), REBALANCE_TIMEOUT, Optional.empty(),
+            subscriptionState, commitRequestManager, metadata, LOG_CONTEXT,
+            backgroundEventHandler, time, rebalanceMetricsManager, true, maxAgeMs));
+        assertMemberIdIsGenerated(manager.memberId());
+        return manager;
+    }
 }

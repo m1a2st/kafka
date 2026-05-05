@@ -866,6 +866,7 @@ public class ReplicationControlManager {
             PartitionRegistration info = partEntry.getValue();
             records.add(info.toRecord(topicId, partitionIndex, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                 setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
+                setPartitionCreationTimestampSupported(featureControl.metadataVersionOrThrow().isPartitionCreationTimestampSupported()).
                 build()));
         }
         return ApiError.NONE;
@@ -2011,6 +2012,7 @@ public class ReplicationControlManager {
             records.add(buildPartitionRegistration(partitionAssignment, isr, time.milliseconds())
                 .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
+                        setPartitionCreationTimestampSupported(featureControl.metadataVersionOrThrow().isPartitionCreationTimestampSupported()).
                         build()));
             partitionId++;
         }
