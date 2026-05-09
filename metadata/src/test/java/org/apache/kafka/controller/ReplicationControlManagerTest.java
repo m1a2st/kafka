@@ -275,6 +275,7 @@ public class ReplicationControlManagerTest {
                 setClusterControl(clusterControl).
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
+                setTime(time).
                 build();
             clusterControl.activate();
         }
@@ -3524,5 +3525,43 @@ public class ReplicationControlManagerTest {
         int partitionEpoch = ctx.replicationControl.getPartition(fooId, 0).partitionEpoch;
         ctx.replay(List.of(new ApiMessageAndVersion(new ClearElrRecord(), CLEAR_ELR_RECORD.highestSupportedVersion())));
         assertEquals(partitionEpoch, ctx.replicationControl.getPartition(fooId, 0).partitionEpoch);
+    }
+
+    @Test
+    public void testCreateTopicSetsCreationTimeMs() {
+        long expectedCreationTimeMs = 12345L;
+        MockTime mockTime = new MockTime(0, expectedCreationTimeMs, 0);
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setMockTime(mockTime)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        CreatableTopicResult result = ctx.createTestTopic("foo", new int[][]{{0, 1, 2}});
+        PartitionRegistration partition = ctx.replicationControl.getPartition(result.topicId(), 0);
+        assertNotNull(partition);
+        assertEquals(expectedCreationTimeMs, partition.creationTimeMs);
+    }
+
+    @Test
+    public void testCreatePartitionsSetsCreationTimeMs() {
+        long topicCreationTimeMs = 1000L;
+        long partitionCreationTimeMs = 9000L;
+        MockTime mockTime = new MockTime(0, topicCreationTimeMs, 0);
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+            .setMockTime(mockTime)
+            .build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        CreatableTopicResult result = ctx.createTestTopic("foo", 1, (short) 3, (short) 0);
+        Uuid topicId = result.topicId();
+        assertEquals(topicCreationTimeMs, ctx.replicationControl.getPartition(topicId, 0).creationTimeMs);
+
+        mockTime.sleep(partitionCreationTimeMs - topicCreationTimeMs);
+        ctx.createPartitions(2, "foo", new int[][]{{1, 2, 0}}, (short) 0);
+        PartitionRegistration newPartition = ctx.replicationControl.getPartition(topicId, 1);
+        assertNotNull(newPartition);
+        assertEquals(partitionCreationTimeMs, newPartition.creationTimeMs);
     }
 }

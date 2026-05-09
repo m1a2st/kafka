@@ -35,6 +35,7 @@ import org.apache.kafka.common.message.MetadataResponseData.MetadataResponseTopi
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.internals.LogContext;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.TopicImage;
@@ -65,6 +66,7 @@ import java.util.stream.Stream;
 public class KRaftMetadataCache implements MetadataCache {
     private final Logger log;
     private final Supplier<KRaftVersion> kraftVersionSupplier;
+    private final Time time;
 
     // This is the cache state. Every MetadataImage instance is immutable, and updates
     // replace this value with a completely new one. This means reads (which are not under
@@ -74,7 +76,13 @@ public class KRaftMetadataCache implements MetadataCache {
     private volatile MetadataImage currentImage = MetadataImage.EMPTY;
 
     public KRaftMetadataCache(int brokerId, Supplier<KRaftVersion> kraftVersionSupplier) {
+        this(brokerId, kraftVersionSupplier, Time.SYSTEM);
+    }
+
+    // Package-private for testing 
+    KRaftMetadataCache(int brokerId, Supplier<KRaftVersion> kraftVersionSupplier, Time time) {
         this.kraftVersionSupplier = kraftVersionSupplier;
+        this.time = time;
         this.log = new LogContext("[MetadataCache brokerId=" + brokerId + "] ").logger(KRaftMetadataCache.class);
     }
 
@@ -134,6 +142,8 @@ public class KRaftMetadataCache implements MetadataCache {
         return topicImage.partitions().entrySet().stream().map(entry -> {
             int partitionId = entry.getKey();
             PartitionRegistration partition = entry.getValue();
+            long ageMs = partition.creationTimeMs == -1L ? -1L
+                : Math.max(0L, time.milliseconds() - partition.creationTimeMs);
             List<Integer> filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas, listenerName, errorUnavailableEndpoints);
             List<Integer> filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName, errorUnavailableEndpoints);
             List<Integer> offlineReplicas = getOfflineReplicas(image, partition, listenerName);
@@ -154,7 +164,8 @@ public class KRaftMetadataCache implements MetadataCache {
                     .setLeaderEpoch(partition.leaderEpoch)
                     .setReplicaNodes(filteredReplicas)
                     .setIsrNodes(filteredIsr)
-                    .setOfflineReplicas(offlineReplicas);
+                    .setOfflineReplicas(offlineReplicas)
+                    .setPartitionAgeMs(ageMs);
             } else {
                 if (filteredReplicas.size() < partition.replicas.length) {
                     log.debug("Error while fetching metadata for {}-{}: replica information not available for following brokers {}", topicName, partitionId, Arrays.stream(partition.replicas).filter(b -> !filteredReplicas.contains(b)).mapToObj(String::valueOf).collect(Collectors.joining(",")));
@@ -172,7 +183,8 @@ public class KRaftMetadataCache implements MetadataCache {
                     .setLeaderEpoch(partition.leaderEpoch)
                     .setReplicaNodes(filteredReplicas)
                     .setIsrNodes(filteredIsr)
-                    .setOfflineReplicas(offlineReplicas);
+                    .setOfflineReplicas(offlineReplicas)
+                    .setPartitionAgeMs(ageMs);
             }
         }).toList();
     }
@@ -219,7 +231,8 @@ public class KRaftMetadataCache implements MetadataCache {
                 .setIsrNodes(filteredIsr)
                 .setOfflineReplicas(offlineReplicas)
                 .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
-                .setLastKnownElr(Replicas.toList(partition.lastKnownElr)));
+                .setLastKnownElr(Replicas.toList(partition.lastKnownElr))
+                .setCreationTimeMs(partition.creationTimeMs));
         }
         return Map.entry(Optional.of(result), (upperIndex < partitions.size()) ? upperIndex : -1);
     }
