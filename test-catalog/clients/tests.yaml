@@ -152,15 +152,6 @@ org.apache.kafka.clients.NodeApiVersionsTest:
 org.apache.kafka.clients.admin.AdminClientConfigTest:
 - testDefaultMetadataRecoveryStrategy
 - testInvalidMetadataRecoveryStrategy
-org.apache.kafka.clients.admin.ConfigTest:
-- shouldGetAllEntries
-- shouldGetEntry
-- shouldImplementEqualsProperly
-- shouldImplementHashCodeProperly
-- shouldImplementToStringProperly
-- shouldReturnNullOnGetUnknownEntry
-- testEquals
-- testHashCodeAndEqualsWithNull
 org.apache.kafka.clients.admin.ConsumerGroupDescriptionTest:
 - testGroupState
 org.apache.kafka.clients.admin.ConsumerGroupListingTest:
@@ -4593,6 +4584,13 @@ org.apache.kafka.common.requests.SyncGroupRequestTest:
 - testRequestVersionCompatibilityFailBuild
 org.apache.kafka.common.requests.TxnOffsetCommitRequestTest:
 - testConstructor
+- testForTopicIdsOrNamesCapsAtTransactionV1WhenTransactionV2IsDisabled
+- testForTopicIdsOrNamesUsesLatestStableVersionWhenUnstableIsDisabled
+- testForTopicIdsOrNamesUsesLatestUnstableVersionWhenUnstableIsEnabled
+- testForTopicIdsOrNamesWithTopicIdOnly
+- testForTopicIdsOrNamesWithTopicNameOnly
+- testForTopicNamesCapsAtTransactionV1WhenTransactionV2IsDisabled
+- testForTopicNamesCapsAtV5WhenTransactionV2IsEnabled
 - testGetErrorResponse
 - testVersionSupportForGroupInstanceId
 - testVersionSupportForGroupMetadata
@@ -4602,9 +4600,9 @@ org.apache.kafka.common.requests.TxnOffsetCommitResponseTest:
 - testBuilderMergeAddsNewTopic
 - testBuilderMergeAppendsToExistingTopic
 - testBuilderMergeIntoEmpty
+- testBuilderRejectsNullKey
 - testConstructorWithErrorResponse
 - testParse
-- testTopicNameBuilderRejectsNullTopicName
 org.apache.kafka.common.requests.UpdateFeaturesRequestTest:
 - testGetErrorResponse
 - testUpdateFeaturesV0
