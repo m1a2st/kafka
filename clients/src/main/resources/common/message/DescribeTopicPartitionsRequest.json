@@ -18,7 +18,7 @@
   "type": "request",
   "listeners": ["broker"],
   "name": "DescribeTopicPartitionsRequest",
-  "validVersions": "0",
+  "validVersions": "0-1",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "Topics", "type": "[]TopicRequest", "versions": "0+",
