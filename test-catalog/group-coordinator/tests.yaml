@@ -2,6 +2,12 @@ org.apache.kafka.coordinator.group.GroupConfigManagerTest:
 - testClampWithCustomBrokerBounds
 - testGetNonExistentGroupConfig
 - testGroupIsRemovedWhenDynamicConfigsAreRemoved
+- testIsDlqAutoTopicCreateEnabledDefault
+- testIsDlqAutoTopicCreateEnabledFalse
+- testIsDlqAutoTopicCreateEnabledTrue
+- testShareGroupDlqTopicPrefixCustom
+- testShareGroupDlqTopicPrefixDefault
+- testShareGroupDlqTopicPrefixEmpty
 - testUpdateConfigWithInvalidGroupId
 - testUpdateConfigWithNullGroupId
 - testUpdateGroupConfig
@@ -724,7 +730,6 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testConsumerGroupTransactionalOffsetCommitResolvesTopicId
 - testConsumerGroupTransactionalOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupTransactionalOffsetCommitWithUnknownMemberId
-- testConsumerGroupTransactionalOffsetCommitWithUnresolvedTopicId
 - testDeleteGroupAllOffsets
 - testDeleteGroupAllOffsetsWithPendingTransactionalOffsets
 - testFetchAllOffsetsAtDifferentCommittedOffset

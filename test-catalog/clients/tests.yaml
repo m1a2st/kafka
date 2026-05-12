@@ -1210,6 +1210,7 @@ org.apache.kafka.clients.consumer.internals.AsyncKafkaConsumerTest:
 - testOffsetsForTimesWithZeroTimeout
 - testPartitionsAssignedEventSendsErrorWhenApplyAssignmentFails
 - testPollDoesNotAddNewAsyncPollEventWhenOneIsAlreadyInFlight
+- testPollDoesNotWaitForReconciliationCheckIfNoPendingReconciliation
 - testPollThrowsInterruptExceptionIfInterrupted
 - testPollWaitsForReconciliationCheckComplete
 - testPollWithManualAssignmentDoesNotBusyLoop
@@ -3222,6 +3223,7 @@ org.apache.kafka.clients.producer.internals.TransactionManagerTest:
 - testForegroundInvalidStateTransitionIsRecoverable
 - testGroupAuthorizationFailureInFindCoordinator
 - testGroupAuthorizationFailureInTxnOffsetCommit
+- testGroupMetadataMismatchErrorInTxnOffsetCommit
 - testHandlingOfCoordinatorLoadingErrorOnTxnOffsetCommit
 - testHandlingOfInvalidProducerEpochErrorOnTxnOffsetCommit
 - testHandlingOfNetworkExceptionOnTxnOffsetCommit
