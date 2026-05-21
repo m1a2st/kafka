@@ -42,6 +42,7 @@ public class LogManagerBuilder {
     private LogConfig initialDefaultConfig = null;
     private CleanerConfig cleanerConfig = null;
     private int recoveryThreadsPerDataDir = 1;
+    private int segmentLoadingThreadsPerDataDir = ServerLogConfigs.NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DEFAULT;
     private long flushCheckMs = 1000L;
     private long flushRecoveryOffsetCheckpointMs = 10000L;
     private long flushStartOffsetCheckpointMs = 10000L;
@@ -82,6 +83,11 @@ public class LogManagerBuilder {
 
     public LogManagerBuilder setRecoveryThreadsPerDataDir(int recoveryThreadsPerDataDir) {
         this.recoveryThreadsPerDataDir = recoveryThreadsPerDataDir;
+        return this;
+    }
+
+    public LogManagerBuilder setSegmentLoadingThreadsPerDataDir(int segmentLoadingThreadsPerDataDir) {
+        this.segmentLoadingThreadsPerDataDir = segmentLoadingThreadsPerDataDir;
         return this;
     }
 
@@ -159,6 +165,7 @@ public class LogManagerBuilder {
                               initialDefaultConfig,
                               cleanerConfig,
                               recoveryThreadsPerDataDir,
+                              segmentLoadingThreadsPerDataDir,
                               flushCheckMs,
                               flushRecoveryOffsetCheckpointMs,
                               flushStartOffsetCheckpointMs,

@@ -138,6 +138,7 @@ public class LogManager {
     private volatile Set<String> cordonedLogDirs = new HashSet<>();
     private volatile LogConfig currentDefaultConfig;
     private volatile int numRecoveryThreadsPerDataDir;
+    private final int numSegmentLoadingThreadsPerDataDir;
     private volatile Map<File, OffsetCheckpointFile> recoveryPointCheckpoints;
     private volatile Map<File, OffsetCheckpointFile> logStartOffsetCheckpoints;
     private volatile LogCleaner cleaner;
@@ -193,6 +194,7 @@ public class LogManager {
                       LogConfig initialDefaultConfig,
                       CleanerConfig cleanerConfig,
                       int numRecoveryThreadsPerDataDir,
+                      int numSegmentLoadingThreadsPerDataDir,
                       long flushCheckMs,
                       long flushRecoveryOffsetCheckpointMs,
                       long flushStartOffsetCheckpointMs,
@@ -212,6 +214,7 @@ public class LogManager {
         this.initialDefaultConfig = initialDefaultConfig;
         this.cleanerConfig = cleanerConfig;
         this.numRecoveryThreadsPerDataDir = numRecoveryThreadsPerDataDir;
+        this.numSegmentLoadingThreadsPerDataDir = numSegmentLoadingThreadsPerDataDir;
         this.flushCheckMs = flushCheckMs;
         this.flushRecoveryOffsetCheckpointMs = flushRecoveryOffsetCheckpointMs;
         this.flushStartOffsetCheckpointMs = flushStartOffsetCheckpointMs;
@@ -516,6 +519,19 @@ public class LogManager {
                                Map<String, LogConfig> topicConfigOverrides,
                                ConcurrentMap<String, Integer> numRemainingSegments,
                                Function<UnifiedLog, Boolean> isStray) throws IOException {
+        return loadLog(logDir, hadCleanShutdown, recoveryPoints, logStartOffsets, defaultConfig,
+                topicConfigOverrides, numRemainingSegments, isStray, null);
+    }
+
+    public UnifiedLog loadLog(File logDir,
+                               boolean hadCleanShutdown,
+                               Map<TopicPartition, Long> recoveryPoints,
+                               Map<TopicPartition, Long> logStartOffsets,
+                               LogConfig defaultConfig,
+                               Map<String, LogConfig> topicConfigOverrides,
+                               ConcurrentMap<String, Integer> numRemainingSegments,
+                               Function<UnifiedLog, Boolean> isStray,
+                               ExecutorService segmentLoadingExecutor) throws IOException {
         TopicPartition topicPartition = UnifiedLog.parseTopicPartitionName(logDir);
         LogConfig config = topicConfigOverrides.getOrDefault(topicPartition.topic(), defaultConfig);
         long logRecoveryPoint = recoveryPoints.getOrDefault(topicPartition, 0L);
@@ -537,7 +553,8 @@ public class LogManager {
             Optional.empty(),
             numRemainingSegments,
             remoteStorageSystemEnable,
-            LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+            LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+            segmentLoadingExecutor);
 
         if (logDir.getName().endsWith(UnifiedLog.DELETE_DIR_SUFFIX)) {
             addLogToBeDeleted(log);
@@ -586,9 +603,30 @@ public class LogManager {
         }
     }
 
+    // factory class for naming the log segment loading threads
+    private static class LogSegmentLoadingThreadFactory implements ThreadFactory {
+
+        String dirPath;
+        AtomicInteger threadNum = new AtomicInteger(0);
+
+        LogSegmentLoadingThreadFactory(String dirPath) {
+            this.dirPath = dirPath;
+        }
+
+        @Override
+        public Thread newThread(Runnable runnable) {
+            return KafkaThread.nonDaemon(logSegmentLoadingThreadName(dirPath, threadNum.getAndIncrement()), runnable);
+        }
+    }
+
     // create a unique log recovery thread name for each log dir as the format: prefix-dirPath-threadNum, ex: "log-recovery-/tmp/kafkaLogs-0"
     private static String logRecoveryThreadName(String dirPath, int threadNum) {
         return "log-recovery" + "-" + dirPath + "-" + threadNum;
+    }
+
+    // create a unique log segment loading thread name for each log dir as the format: prefix-dirPath-threadNum, ex: "log-segment-loading-/tmp/kafkaLogs-0"
+    private static String logSegmentLoadingThreadName(String dirPath, int threadNum) {
+        return "log-segment-loading" + "-" + dirPath + "-" + threadNum;
     }
 
     // Visible for testing
@@ -625,6 +663,13 @@ public class LogManager {
                 ExecutorService pool = Executors.newFixedThreadPool(numRecoveryThreadsPerDataDir,
                         new LogRecoveryThreadFactory(logDirAbsolutePath));
                 threadPools.add(pool);
+                final ExecutorService segmentLoadingExecutor = numSegmentLoadingThreadsPerDataDir > 1
+                        ? Executors.newFixedThreadPool(numSegmentLoadingThreadsPerDataDir,
+                                new LogSegmentLoadingThreadFactory(logDirAbsolutePath))
+                        : null;
+                if (segmentLoadingExecutor != null) {
+                    threadPools.add(segmentLoadingExecutor);
+                }
 
                 CleanShutdownFileHandler cleanShutdownFileHandler = new CleanShutdownFileHandler(dir.getPath());
                 if (cleanShutdownFileHandler.exists()) {
@@ -678,7 +723,7 @@ public class LogManager {
                     long logLoadStartMs = time.hiResClockMs();
                     try {
                         log = Optional.of(loadLog(logDir, hadCleanShutdown.get(), recoveryPoints, logStartOffsets,
-                                defaultConfig, topicConfigOverrides, numRemainingSegments, isStray));
+                                defaultConfig, topicConfigOverrides, numRemainingSegments, isStray, segmentLoadingExecutor));
                     } catch (IOException ioe) {
                         handleIOException(offlineDirs, logDirAbsolutePath, ioe);
                     } catch (KafkaStorageException kse) {
@@ -750,6 +795,11 @@ public class LogManager {
                 tags.put("threadNum", String.valueOf(i));
                 metricsGroup.newGauge("remainingSegmentsToRecover", () -> numRemainingSegments.get(threadName), tags);
             }
+            if (numSegmentLoadingThreadsPerDataDir > 1) {
+                metricsGroup.newGauge("remainingSegmentsToLoad",
+                        () -> numRemainingSegments.getOrDefault(dir.getAbsolutePath(), 0),
+                        Map.of("dir", dir.getAbsolutePath()));
+            }
         }
     }
 
@@ -763,6 +813,9 @@ public class LogManager {
                 tags.put("dir", dir.getAbsolutePath());
                 tags.put("threadNum", String.valueOf(i));
                 metricsGroup.removeMetric("remainingSegmentsToRecover", tags);
+            }
+            if (numSegmentLoadingThreadsPerDataDir > 1) {
+                metricsGroup.removeMetric("remainingSegmentsToLoad", Map.of("dir", dir.getAbsolutePath()));
             }
         }
     }
@@ -1355,7 +1408,8 @@ public class LogManager {
                 topicId,
                 new ConcurrentHashMap<>(),
                 remoteStorageSystemEnable,
-                LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+                LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+                null);
 
         if (isFuture) {
             futureLogs.put(topicPartition, newLog);

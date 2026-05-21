@@ -33,6 +33,7 @@ import org.apache.kafka.metadata.properties.MetaProperties;
 import org.apache.kafka.metadata.properties.MetaPropertiesEnsemble;
 import org.apache.kafka.metadata.properties.MetaPropertiesVersion;
 import org.apache.kafka.metadata.properties.PropertiesUtils;
+import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.FileLock;
@@ -316,7 +317,7 @@ public class LogManagerTest {
             loadLogCalled.incrementAndGet();
             return invocation.callRealMethod();
         }).when(logManager).loadLog(any(File.class), any(Boolean.class), anyMap(), anyMap(),
-            any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class));
+            any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class), any());
 
         Thread t = new Thread(() -> {
             try {
@@ -1088,10 +1089,11 @@ public class LogManagerTest {
                     Optional.empty(),
                     realMap, // Pass the real map so UnifiedLog updates it and the gauges can read from it
                     false,
-                    LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+                    LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+                    null);
 
         }).when(spyLogManager).loadLog(any(File.class), any(Boolean.class), anyMap(), any(),
-            any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class));
+            any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class), any());
 
         // do nothing for removeLogRecoveryMetrics for metrics verification
         doNothing().when(spyLogManager).removeLogRecoveryMetrics();
@@ -1104,7 +1106,7 @@ public class LogManagerTest {
         verify(spyLogManager, times(1)).removeLogRecoveryMetrics();
         // Verify loadLog was called for all 4 partitions
         verify(spyLogManager, times(4)).loadLog(any(File.class), any(Boolean.class), anyMap(), any(),
-                any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class));
+                any(LogConfig.class), anyMap(), any(ConcurrentMap.class), any(Function.class), any());
 
         // expected 2 logs in each log dir since we created 4 partitions (2 per dir)
         Map<String, Integer> expectedRemainingLogsParams = Map.of(
@@ -1468,6 +1470,7 @@ public class LogManagerTest {
                 new LogConfig(tmpProperties),
                 new CleanerConfig(false),
                 1,
+                ServerLogConfigs.NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DEFAULT,
                 1000L,
                 10000L,
                 10000L,

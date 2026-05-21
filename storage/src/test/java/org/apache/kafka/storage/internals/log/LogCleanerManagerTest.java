@@ -190,7 +190,7 @@ class LogCleanerManagerTest {
         ProducerStateManager producerStateManager = new ProducerStateManager(TOPIC_PARTITION, tpDir, 5 * 60 * 1000,
             PRODUCER_STATE_MANAGER_CONFIG, TIME);
         LoadedLogOffsets offsets = new LogLoader(tpDir, tp, config, TIME.scheduler, TIME, logDirFailureChannel, true,
-            segments, 0L, 0L, leaderEpochCache, producerStateManager, new ConcurrentHashMap<>(), false).load();
+            segments, 0L, 0L, leaderEpochCache, producerStateManager, new ConcurrentHashMap<>(), false, null).load();
         LocalLog localLog = new LocalLog(tpDir, config, segments, offsets.recoveryPoint(), offsets.nextOffsetMetadata(),
             TIME.scheduler, TIME, tp, logDirFailureChannel);
         UnifiedLog log = new LogMock(offsets.logStartOffset(), localLog, new BrokerTopicStats(), PRODUCER_ID_EXPIRATION_CHECK_INTERVAL_MS_DEFAULT,

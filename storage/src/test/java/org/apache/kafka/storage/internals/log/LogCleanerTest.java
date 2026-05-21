@@ -264,7 +264,8 @@ public class LogCleanerTest {
             leaderEpochCache,
             producerStateManager,
             new ConcurrentHashMap<>(),
-            false
+            false,
+            null
         ).load();
         var localLog = new LocalLog(dir, config, logSegments, offsets.recoveryPoint(),
             offsets.nextOffsetMetadata(), time.scheduler, time, topicPartition, logDirFailureChannel);

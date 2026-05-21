@@ -81,6 +81,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -285,7 +286,8 @@ public class UnifiedLog implements AutoCloseable {
                 topicId,
                 new ConcurrentHashMap<>(),
                 false,
-                LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+                LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+                null);
     }
 
     /**
@@ -306,6 +308,7 @@ public class UnifiedLog implements AutoCloseable {
      * @param numRemainingSegments The remaining segments to be recovered in this log keyed by recovery thread name
      * @param remoteStorageSystemEnable Boolean flag to indicate whether the system level remote log storage is enabled or not.
      * @param logOffsetsListener listener invoked when the high watermark is updated
+     * @param segmentLoadingExecutor Executor used to parallelize segment file loading, or {@code null} to load sequentially
      * @throws IOException if an I/O error occurs
      */
     public static UnifiedLog create(File dir,
@@ -323,7 +326,8 @@ public class UnifiedLog implements AutoCloseable {
                                     Optional<Uuid> topicId,
                                     ConcurrentMap<String, Integer> numRemainingSegments,
                                     boolean remoteStorageSystemEnable,
-                                    LogOffsetsListener logOffsetsListener) throws IOException {
+                                    LogOffsetsListener logOffsetsListener,
+                                    ExecutorService segmentLoadingExecutor) throws IOException {
         // create the log directory if it doesn't exist
         Files.createDirectories(dir.toPath());
         TopicPartition topicPartition = UnifiedLog.parseTopicPartitionName(dir);
@@ -358,7 +362,8 @@ public class UnifiedLog implements AutoCloseable {
                 leaderEpochCache,
                 producerStateManager,
                 numRemainingSegments,
-                isRemoteLogEnabled
+                isRemoteLogEnabled,
+                segmentLoadingExecutor
                 ).load();
         LocalLog localLog = new LocalLog(
                 dir,

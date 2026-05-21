@@ -54,6 +54,7 @@ object LogManager {
       defaultLogConfig,
       cleanerConfig,
       config.numRecoveryThreadsPerDataDir,
+      config.numSegmentLoadingThreadsPerDataDir,
       config.logFlushSchedulerIntervalMs,
       config.logFlushOffsetCheckpointIntervalMs,
       config.logFlushStartOffsetCheckpointIntervalMs,

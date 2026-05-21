@@ -2529,7 +2529,8 @@ class ReplicaManagerTest {
       leaderEpochCache,
       producerStateManager,
       new ConcurrentHashMap[String, Integer],
-      false
+      false,
+      null
     ).load()
     val localLog = new LocalLog(logDir, logConfig, segments, offsets.recoveryPoint,
       offsets.nextOffsetMetadata, mockScheduler, time, tp, mockLogDirFailureChannel)

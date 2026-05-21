@@ -38,8 +38,14 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 public class LogLoader {
@@ -60,6 +66,7 @@ public class LogLoader {
     private final ProducerStateManager producerStateManager;
     private final ConcurrentMap<String, Integer> numRemainingSegments;
     private final boolean isRemoteLogEnabled;
+    private final ExecutorService segmentLoadingExecutor;
     private final Logger logger;
     private final String logPrefix;
 
@@ -78,6 +85,7 @@ public class LogLoader {
      * @param producerStateManager The {@link ProducerStateManager} instance to be updated during recovery
      * @param numRemainingSegments The remaining segments to be recovered in this log keyed by recovery thread name
      * @param isRemoteLogEnabled Boolean flag to indicate whether the remote storage is enabled or not
+     * @param segmentLoadingExecutor Executor used to parallelize segment file loading, or {@code null} to load sequentially
      */
     public LogLoader(
             File dir,
@@ -93,7 +101,8 @@ public class LogLoader {
             LeaderEpochFileCache leaderEpochCache,
             ProducerStateManager producerStateManager,
             ConcurrentMap<String, Integer> numRemainingSegments,
-            boolean isRemoteLogEnabled) {
+            boolean isRemoteLogEnabled,
+            ExecutorService segmentLoadingExecutor) {
         this.dir = dir;
         this.topicPartition = topicPartition;
         this.config = config;
@@ -108,6 +117,7 @@ public class LogLoader {
         this.producerStateManager = producerStateManager;
         this.numRemainingSegments = numRemainingSegments;
         this.isRemoteLogEnabled = isRemoteLogEnabled;
+        this.segmentLoadingExecutor = segmentLoadingExecutor;
         this.logPrefix = "[LogLoader partition=" + topicPartition + ", dir=" + dir.getParent() + "] ";
         this.logger = new LogContext(logPrefix).logger(LogLoader.class);
     }
@@ -343,6 +353,8 @@ public class LogLoader {
         }
     }
 
+    private record SegmentToRecover(LogSegment segment, Exception cause) { }
+
     /**
      * Loads segments from disk.
      * <br/>
@@ -351,15 +363,28 @@ public class LogLoader {
      * which case the {@link LogSegmentOffsetOverflowException} will be thrown. Note that any segments that were opened
      * before we encountered the exception will remain open and the caller is responsible for closing them
      * appropriately, if needed.
+     * <br/>
+     * When a {@link ExecutorService} is provided via the constructor, segment files are opened and sanity-checked in
+     * parallel. Orphaned index files and segments requiring recovery are collected and handled sequentially afterward
+     * to preserve correctness (recovery mutates shared state such as {@link LeaderEpochFileCache}).
      *
      * @throws LogSegmentOffsetOverflowException if the log directory contains a segment with messages that overflow the index offset
      */
     private void loadSegmentFiles() throws IOException {
-        // load segments in ascending order because transactional data from one segment may depend on the
-        // segments that come before it
         File[] files = dir.listFiles();
         if (files == null) files = new File[0];
         List<File> sortedFiles = Arrays.stream(files).filter(File::isFile).sorted().toList();
+
+        if (segmentLoadingExecutor == null) {
+            loadSegmentFilesSequentially(sortedFiles);
+        } else {
+            loadSegmentFilesInParallel(sortedFiles);
+        }
+    }
+
+    private void loadSegmentFilesSequentially(List<File> sortedFiles) throws IOException {
+        // load segments in ascending order because transactional data from one segment may depend on the
+        // segments that come before it
         for (File file : sortedFiles) {
             if (LogFileUtils.isIndexFile(file)) {
                 // if it is an index file, make sure it has a corresponding .log file
@@ -387,6 +412,80 @@ public class LogLoader {
                 }
                 segments.add(segment);
             }
+        }
+    }
+
+    private void loadSegmentFilesInParallel(List<File> sortedFiles) throws IOException {
+        Queue<File> orphanedIndexFiles = new ConcurrentLinkedQueue<>();
+        Queue<SegmentToRecover> segmentsToRecover = new ConcurrentLinkedQueue<>();
+
+        int totalLogFiles = (int) sortedFiles.stream().filter(LogFileUtils::isLogFile).count();
+        AtomicInteger remaining = new AtomicInteger(totalLogFiles);
+        String loadingKey = dir.getAbsolutePath();
+        numRemainingSegments.put(loadingKey, totalLogFiles);
+
+        // Phase 1: open and sanity-check all segment files in parallel. Happy-path segments are
+        // added directly to the thread-safe LogSegments map. Files needing sequential handling
+        // (orphaned indexes, corrupted segments) are collected for Phase 2.
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (File file : sortedFiles) {
+            if (LogFileUtils.isIndexFile(file)) {
+                futures.add(CompletableFuture.runAsync(() -> {
+                    long offset = LogFileUtils.offsetFromFile(file);
+                    File logFile = LogFileUtils.logFile(dir, offset);
+                    if (!logFile.exists()) {
+                        orphanedIndexFiles.add(file);
+                    }
+                }, segmentLoadingExecutor));
+            } else if (LogFileUtils.isLogFile(file)) {
+                futures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        long baseOffset = LogFileUtils.offsetFromFile(file);
+                        boolean timeIndexFileNewlyCreated = !LogFileUtils.timeIndexFile(dir, baseOffset).exists();
+                        LogSegment segment = LogSegment.open(dir, baseOffset, config, time, true, 0, false, "");
+                        try {
+                            segment.sanityCheck(timeIndexFileNewlyCreated);
+                            segments.add(segment);
+                        } catch (NoSuchFileException | CorruptIndexException e) {
+                            segmentsToRecover.add(new SegmentToRecover(segment, e));
+                        }
+                    } catch (IOException e) {
+                        throw new CompletionException(e);
+                    } finally {
+                        numRemainingSegments.put(loadingKey, remaining.decrementAndGet());
+                    }
+                }, segmentLoadingExecutor));
+            }
+        }
+
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0])).join();
+        } catch (CompletionException ce) {
+            Throwable cause = ce.getCause();
+            if (cause instanceof LogSegmentOffsetOverflowException e) throw e;
+            if (cause instanceof IOException e) throw e;
+            throw new IOException("Unexpected error during parallel segment loading", cause);
+        }
+
+        // Phase 2: handle orphaned index files and corrupted segments sequentially, since recovery
+        // mutates shared state (leaderEpochCache, ProducerStateManager).
+        for (File file : orphanedIndexFiles) {
+            logger.warn("Found an orphaned index file {}, with no corresponding log file.", file.getAbsolutePath());
+            Files.deleteIfExists(file.toPath());
+        }
+
+        for (SegmentToRecover entry : segmentsToRecover) {
+            LogSegment segment = entry.segment();
+            Exception cause = entry.cause();
+            if (cause instanceof NoSuchFileException) {
+                if (hadCleanShutdown || segment.baseOffset() < recoveryPointCheckpoint) {
+                    logger.error("Could not find offset index file corresponding to log file {}, recovering segment and rebuilding index files...", segment.log().file().getAbsolutePath());
+                }
+            } else {
+                logger.warn("Found a corrupted index file corresponding to log file {} due to {}, recovering segment and rebuilding index files...", segment.log().file().getAbsolutePath(), cause.getMessage());
+            }
+            recoverSegment(segment);
+            segments.add(segment);
         }
     }
 

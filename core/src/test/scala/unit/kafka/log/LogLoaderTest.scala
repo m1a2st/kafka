@@ -28,6 +28,7 @@ import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.metadata.MockConfigRepository
 import org.apache.kafka.server.common.TransactionVersion
+import org.apache.kafka.server.config.ServerLogConfigs
 import org.apache.kafka.server.util.{MockTime, Scheduler}
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
 import org.apache.kafka.common.message.AbortedTxn
@@ -117,6 +118,7 @@ class LogLoaderTest {
         logConfig,
         new CleanerConfig(false),
         4,
+        ServerLogConfigs.NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DEFAULT,
         1000L,
         10000L,
         10000L,
@@ -161,7 +163,7 @@ class LogLoaderTest {
             this.maxTransactionTimeoutMs, this.producerStateManagerConfig, time)
           val logLoader = new LogLoader(logDir, topicPartition, config, time.scheduler, time,
             logDirFailureChannel, hadCleanShutdown, segments, logStartOffset, logRecoveryPoint,
-            leaderEpochCache, producerStateManager, new ConcurrentHashMap[String, Integer], false)
+            leaderEpochCache, producerStateManager, new ConcurrentHashMap[String, Integer], false, null)
           val offsets = logLoader.load()
           val localLog = new LocalLog(logDir, logConfig, segments, offsets.recoveryPoint,
             offsets.nextOffsetMetadata, mockTime.scheduler, mockTime, topicPartition,
@@ -317,7 +319,8 @@ class LogLoaderTest {
         leaderEpochCache,
         producerStateManager,
         new ConcurrentHashMap[String, Integer],
-        false
+        false,
+        null
       )
       val offsets = logLoader.load()
       val localLog = new LocalLog(logDir, logConfig, interceptedLogSegments, offsets.recoveryPoint,
@@ -437,7 +440,8 @@ class LogLoaderTest {
       leaderEpochCache,
       stateManager,
       new ConcurrentHashMap[String, Integer],
-      false
+      false,
+      null
     ).load()
     val localLog = new LocalLog(logDir, config, segments, offsets.recoveryPoint,
       offsets.nextOffsetMetadata, mockTime.scheduler, mockTime, topicPartition,
@@ -548,7 +552,8 @@ class LogLoaderTest {
       leaderEpochCache,
       stateManager,
       new ConcurrentHashMap[String, Integer],
-      false
+      false,
+      null
     ).load()
     val localLog = new LocalLog(logDir, config, segments, offsets.recoveryPoint,
       offsets.nextOffsetMetadata, mockTime.scheduler, mockTime, topicPartition,
@@ -1640,7 +1645,8 @@ class LogLoaderTest {
       leaderEpochCache,
       stateManager,
       new ConcurrentHashMap[String, Integer],
-      isRemoteLogEnabled
+      isRemoteLogEnabled,
+      null
     ).load()
     assertEquals(expectedLogStartOffset, offsets.logStartOffset)
   }

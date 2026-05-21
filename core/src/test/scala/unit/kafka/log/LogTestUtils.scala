@@ -125,7 +125,8 @@ object LogTestUtils {
       topicId.toJava,
       numRemainingSegments,
       remoteStorageSystemEnable,
-      logOffsetsListener
+      logOffsetsListener,
+      null
     )
   }
 

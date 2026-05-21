@@ -2429,7 +2429,7 @@ public class UnifiedLogTest {
                 3600000, producerStateManagerConfig,
                 TransactionLogConfig.PRODUCER_ID_EXPIRATION_CHECK_INTERVAL_MS_DEFAULT,
                 new LogDirFailureChannel(10), true, Optional.empty(), new ConcurrentHashMap<>(),
-                false, logOffsetsListener);
+                false, logOffsetsListener, null);
         logsToClose.add(log);
         return log;
     }
@@ -2440,7 +2440,7 @@ public class UnifiedLogTest {
                 3600000, psmConfig,
                 TransactionLogConfig.PRODUCER_ID_EXPIRATION_CHECK_INTERVAL_MS_DEFAULT,
                 new LogDirFailureChannel(10), true, Optional.empty(), new ConcurrentHashMap<>(),
-                false, LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+                false, LogOffsetsListener.NO_OP_OFFSETS_LISTENER, null);
         logsToClose.add(log);
         return log;
     }
@@ -2492,7 +2492,8 @@ public class UnifiedLogTest {
                 topicId,
                 new ConcurrentHashMap<>(),
                 remoteStorageSystemEnable,
-                LogOffsetsListener.NO_OP_OFFSETS_LISTENER
+                LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+                null
         );
 
         logsToClose.add(log);

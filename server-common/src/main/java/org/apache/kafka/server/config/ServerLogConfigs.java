@@ -147,6 +147,12 @@ public class ServerLogConfigs {
     public static final int NUM_RECOVERY_THREADS_PER_DATA_DIR_DEFAULT = 2;
     public static final String NUM_RECOVERY_THREADS_PER_DATA_DIR_DOC = "The number of threads per data directory to be used for log recovery at startup and flushing at shutdown";
 
+    public static final String NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_CONFIG = "num.segment.loading.threads.per.data.dir";
+    public static final int NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DEFAULT = 1;
+    public static final String NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DOC = "The number of threads per data directory to be used for loading log segments in parallel during broker startup. " +
+            "A value of 1 disables parallel loading and processes segments sequentially (the default behavior). " +
+            "Values greater than 1 enable parallel segment loading, which can speed up startup when partitions have many segments.";
+
     public static final String AUTO_CREATE_TOPICS_ENABLE_CONFIG = "auto.create.topics.enable";
     public static final boolean AUTO_CREATE_TOPICS_ENABLE_DEFAULT = true;
     public static final String AUTO_CREATE_TOPICS_ENABLE_DOC = "Enable auto creation of topic on the server.";

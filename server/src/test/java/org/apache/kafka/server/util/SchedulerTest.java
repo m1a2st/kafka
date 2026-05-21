@@ -176,7 +176,7 @@ public class SchedulerTest {
                 0L,
                 leaderEpochCache,
                 producerStateManager,
-                new ConcurrentHashMap<>(), false).load();
+                new ConcurrentHashMap<>(), false, null).load();
         LocalLog localLog = new LocalLog(logDir, logConfig, segments, offsets.recoveryPoint(),
                 offsets.nextOffsetMetadata(), scheduler, mockTime, topicPartition, logDirFailureChannel);
         UnifiedLog log = new UnifiedLog(offsets.logStartOffset(),

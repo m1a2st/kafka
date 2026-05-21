@@ -323,7 +323,8 @@ class PartitionLockTest extends Logging {
           leaderEpochCache,
           producerStateManager,
           new ConcurrentHashMap[String, Integer],
-          false
+          false,
+          null
         ).load()
         val localLog = new LocalLog(log.dir, log.config, segments, offsets.recoveryPoint,
           offsets.nextOffsetMetadata, mockTime.scheduler, mockTime, log.topicPartition,

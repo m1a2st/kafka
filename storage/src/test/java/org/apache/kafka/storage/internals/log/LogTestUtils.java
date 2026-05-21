@@ -330,7 +330,8 @@ public class LogTestUtils {
             Optional.empty(),
             new ConcurrentHashMap<>(),
             false,
-            LogOffsetsListener.NO_OP_OFFSETS_LISTENER
+            LogOffsetsListener.NO_OP_OFFSETS_LISTENER,
+            null
         );
     }
 
@@ -491,6 +492,7 @@ public class LogTestUtils {
                 defaultConfig,
                 cleanerConfig,
                 recoveryThreadsPerDataDir,
+                ServerLogConfigs.NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_DEFAULT,
                 1000L,
                 10000L,
                 10000L,

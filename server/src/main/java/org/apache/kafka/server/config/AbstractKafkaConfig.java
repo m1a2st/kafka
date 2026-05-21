@@ -125,6 +125,10 @@ public abstract class AbstractKafkaConfig extends AbstractConfig {
         return getInt(ServerLogConfigs.NUM_RECOVERY_THREADS_PER_DATA_DIR_CONFIG);
     }
 
+    public int numSegmentLoadingThreadsPerDataDir() {
+        return getInt(ServerLogConfigs.NUM_SEGMENT_LOADING_THREADS_PER_DATA_DIR_CONFIG);
+    }
+
     public int backgroundThreads() {
         return getInt(ServerConfigs.BACKGROUND_THREADS_CONFIG);
     }
