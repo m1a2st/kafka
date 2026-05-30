@@ -2875,6 +2875,9 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldReturnNullIfProducerTelemetryDisabled
 - shouldReturnNullIfRestoreConsumerTelemetryDisabled
 - shouldReturnStandbyTaskMetadataWhileRunningState
+- shouldRouteDefaultToConsumerDefaultForStreamsProtocol
+- shouldRouteDefaultToRemainInGroupForClassicProtocol
+- shouldRouteRemainInGroupToRemainInGroupForStreamsProtocol
 - shouldShutdownTaskManagerOnClose
 - shouldShutdownTaskManagerOnCloseWithoutStart
 - shouldThrowTaskMigratedExceptionHandlingRevocation
@@ -4095,6 +4098,18 @@ org.apache.kafka.streams.state.internals.CachingPersistentSessionStoreTest:
 - shouldPutFetchFromCache
 - shouldPutFetchRangeFromCache
 - shouldQueryItemsInCacheAndStore
+- shouldReadCommittedBypassesCache
+- shouldReadUncommittedViewBackwardFetchRangeMergesCacheAndStore
+- shouldReadUncommittedViewBackwardFetchSingleKeyMergesCacheAndStore
+- shouldReadUncommittedViewBackwardFindSessionsMergesCacheAndStore
+- shouldReadUncommittedViewBackwardFindSessionsRangeMergesCacheAndStore
+- shouldReadUncommittedViewFetchRangeMergesCacheAndStore
+- shouldReadUncommittedViewFetchRangeWithNullBounds
+- shouldReadUncommittedViewFetchSession
+- shouldReadUncommittedViewFetchSessionReturnsNullForCachedTombstone
+- shouldReadUncommittedViewFetchSingleKeyMergesCacheAndStore
+- shouldReadUncommittedViewFindSessionsMergesCacheAndStore
+- shouldReadUncommittedViewFindSessionsRangeMergesCacheAndStore
 - shouldRemove
 - shouldReturnSameResultsForSingleKeyFindSessionsAndEqualKeyRangeFindSessions
 - shouldReturnSameResultsForSingleKeyFindSessionsBackwardsAndEqualKeyRangeFindSessions
@@ -4157,6 +4172,8 @@ org.apache.kafka.streams.state.internals.CachingPersistentWindowStoreTest:
 - shouldThrowNullPointerExceptionOnPutNullKey
 org.apache.kafka.streams.state.internals.ChangeLoggingKeyValueBytesStoreTest:
 - shouldDelegateInit
+- shouldDelegateReadOnlyCommittedToInner
+- shouldDelegateReadOnlyUncommittedToInner
 - shouldGetRecordsWithPrefixKey
 - shouldLogKeyNullOnDelete
 - shouldLogPositionOnPut
@@ -4176,6 +4193,8 @@ org.apache.kafka.streams.state.internals.ChangeLoggingSessionBytesStoreTest:
 - shouldCloseUnderlyingStore
 - shouldCommitUnderlyingStore
 - shouldDelegateInit
+- shouldDelegateReadOnlyCommittedToInner
+- shouldDelegateReadOnlyUncommittedToInner
 - shouldDelegateToUnderlyingStoreWhenBackwardFetching
 - shouldDelegateToUnderlyingStoreWhenBackwardFetchingRange
 - shouldDelegateToUnderlyingStoreWhenBackwardFindingSessionRange
@@ -4260,6 +4279,8 @@ org.apache.kafka.streams.state.internals.ChangeLoggingVersionedKeyValueBytesStor
 - shouldThrowIfInnerIsNotVersioned
 org.apache.kafka.streams.state.internals.ChangeLoggingWindowBytesStoreTest:
 - shouldDelegateInit
+- shouldDelegateReadOnlyCommittedToInner
+- shouldDelegateReadOnlyUncommittedToInner
 - shouldDelegateToUnderlyingStoreWhenBackwardFetching
 - shouldDelegateToUnderlyingStoreWhenBackwardFetchingRange
 - shouldDelegateToUnderlyingStoreWhenFetching
