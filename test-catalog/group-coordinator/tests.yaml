@@ -638,12 +638,15 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupDynamicConfigs
 - testStreamsGroupEndpointInformationIncludesNewMember
 - testStreamsGroupEndpointInformationOnlyWhenEpochGreater
-- testStreamsGroupEpochIncreaseWithAssignmentConfigChanges
+- testStreamsGroupEpochIncreaseWithNumStandbyReplicasConfigChanges
+- testStreamsGroupEpochShouldNotIncreaseWithAcceptableRecoveryLagConfigChange
 - testStreamsGroupEvaluatedConfigs
 - testStreamsGroupHeartbeatAlwaysSetsStatus
 - testStreamsGroupHeartbeatOnConsumerGroup
 - testStreamsGroupHeartbeatOnShareGroup
 - testStreamsGroupHeartbeatPartialResponseWhenNothingChanges
+- testStreamsGroupHeartbeatResponseVersion0
+- testStreamsGroupHeartbeatResponseVersion1
 - testStreamsGroupHeartbeatWithEmptyClassicGroup
 - testStreamsGroupHeartbeatWithNonEmptyClassicGroup
 - testStreamsGroupMemberCanRejoinWithEpochZero
@@ -1117,6 +1120,8 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProviderTest:
 - testPartitionMaxRecordLocksOrDefaultWithoutGroupConfig
 - testRecordLockDurationMsOrDefaultWithGroupConfig
 - testRecordLockDurationMsOrDefaultWithoutGroupConfig
+- testShareGroupDLQTopicWithGroupConfig
+- testShareGroupDLQTopicWithoutGroupConfig
 org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigTest:
 - testConfigs
 - testInvalidConfigs

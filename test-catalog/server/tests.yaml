@@ -193,6 +193,12 @@ org.apache.kafka.server.EligibleLeaderReplicasIntegrationTest:
 - testElrMemberShouldBeKickOutWhenUncleanShutdown
 - testHighWatermarkShouldNotAdvanceIfUnderMinIsr
 - testLastKnownLeaderShouldBeElectedIfEmptyElr
+org.apache.kafka.server.EnvelopeUtilsTest:
+- testHandleEnvelopeRequestBuildsForwardedRequest
+- testInvalidForwardedClientAddressIsRejected
+- testMissingPrincipalSerdeIsRejected
+- testNonForwardableApiIsRejected
+- testPrincipalDeserializationFailureIsRejected
 org.apache.kafka.server.ExpiringErrorCacheTest:
 - testCapacityEnforcement
 - testCapacityWithDifferentTTLs
@@ -341,6 +347,8 @@ org.apache.kafka.server.ReconfigurableQuorumIntegrationTest:
 - testRemoveAndAddVoterWithInconsistentClusterId
 - testRemoveAndAddVoterWithValidClusterId
 - testRemoveController
+org.apache.kafka.server.SimpleApiVersionManagerTest:
+- testUnknownFeaturesHasNoMetadataVersion
 org.apache.kafka.server.UncleanLeaderElectionTest:
 - testTopicUncleanLeaderElectionEnableWithAlterTopicConfigsClassic
 - testTopicUncleanLeaderElectionEnableWithAlterTopicConfigsConsumer
@@ -479,8 +487,14 @@ org.apache.kafka.server.requests.ProduceRequestTest:
 org.apache.kafka.server.share.CachedSharePartitionTest:
 - testCachedSharePartitionEqualsAndHashCode
 org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
+- testCoalesceProduceRequestsKeepsDifferentDlqTopicsSeparate
+- testCoalesceProduceRequestsMergesPartitionsForSameDlqTopic
+- testCoalesceProduceRequestsSkipsHandlerWhoseTopicProduceDataThrows
+- testCoalesceProduceRequestsWithEmptyHandlerListProducesEmptyRequest
+- testCoalesceProduceRequestsWithSingleHandlerProducesOneTopicOnePartition
 - testConstructorRejectsNullCacheHelper
 - testConstructorRejectsNullClient
+- testConstructorRejectsNullShareGroupMetrics
 - testConstructorRejectsNullTime
 - testConstructorRejectsNullTimer
 - testDlqCreateTopicFatalErrorFailsFuture
@@ -491,9 +505,11 @@ org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
 - testDlqEmptyTopicNameFailsValidation
 - testDlqExistingTopicWithoutDlqConfigFailsValidation
 - testDlqHappyPathExistingTopic
+- testDlqMultipleGroupsWithMixedOutcomes
 - testDlqProduceDisconnectIsRetriedNotImmediatelyFailed
 - testDlqProduceEmptyResponseFailsFuture
 - testDlqProduceFatalErrorFailsFuture
+- testDlqProduceNotLeaderOrFollowerExhaustsAndRecordsFailure
 - testDlqProducePartialFailuresThenSucceeds
 - testDlqProduceRetriesExhaustedFailsWithNetworkException
 - testDlqResolvesSourceTopicNameViaCacheHelperWhenMissing
@@ -503,6 +519,7 @@ org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
 - testDlqTopicStartingWithUnderscoreFailsValidation
 - testDlqTwoEnqueuedRecordsBothComplete
 - testDlqValidationFailureCompletesFutureBeforeStart
+- testMultipleAccumulatedHandlersInNodeRPCMap
 - testStartIsIdempotent
 - testStopWithoutStartIsNoOp
 org.apache.kafka.server.share.fetch.DelayedShareFetchKeyTest:

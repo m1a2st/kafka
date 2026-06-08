@@ -690,6 +690,10 @@ kafka.coordinator.group.CoordinatorPartitionWriterTest:
 - testConfig
 - testDeleteRecordsResponseContainsError
 - testDeleteRecordsSuccess
+- testListenerAdapterPropagatesHighWatermarkUpdates
+- testListenerAdapterStopsPropagatingAfterBecomingFollower
+- testListenerAdapterStopsPropagatingAfterDeleted
+- testListenerAdapterStopsPropagatingAfterFailed
 - testMaybeStartTransactionVerification
 - testRegisterDeregisterListener
 - testWriteRecords
@@ -1198,6 +1202,8 @@ kafka.server.AlterUserScramCredentialsRequestTest:
 kafka.server.ApiVersionsRequestTest:
 - testApiVersionsRequest
 - testApiVersionsRequestIncludesUnreleasedApis
+- testApiVersionsRequestMetadataClusterCheckFail
+- testApiVersionsRequestMetadataClusterCheckPass
 - testApiVersionsRequestThroughControllerListener
 - testApiVersionsRequestValidationV0
 - testApiVersionsRequestValidationV0ThroughControllerListener
@@ -2211,6 +2217,7 @@ kafka.server.ReplicaManagerTest:
 - testOldFollowerLosesMetricsWhenReassignPartitions
 - testOldLeaderLosesMetricsWhenReassignPartitions
 - testPartitionListener
+- testPartitionListenerWhenPartitionBecomesFollower
 - testPartitionMarkedOfflineIfLogCantBeCreated
 - testPartitionMetadataFile
 - testPartitionMetadataFileCreated
@@ -2605,6 +2612,7 @@ kafka.server.share.SharePartitionTest:
 - testAcknowledgePerOffsetRejectWithDlqEnabled
 - testAcknowledgeRejectWithDlqDisabled
 - testAcknowledgeRejectWithDlqEnabled
+- testAcknowledgeRejectWithDlqSupplierEnabledButNoDlqTopicConfigured
 - testAcknowledgeRollbackWithFullBatchError
 - testAcknowledgeRollbackWithSubsetError
 - testAcknowledgeSingleRecordBatch
@@ -2831,6 +2839,7 @@ kafka.server.share.SharePartitionTest:
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovementToStartOfBatch
 - testReleaseAcquiredRecordsDoNotDecreaseDeliveryCount
 - testReleaseAcquiredRecordsForEmptyCachedData
+- testReleaseAcquiredRecordsMaxDeliveryWithDlqSupplierEnabledButNoDlqTopicConfigured
 - testReleaseAcquiredRecordsPerOffsetWithDifferentMemberId
 - testReleaseAcquiredRecordsSubsetWithAnotherMember
 - testReleaseAcquiredRecordsWithAnotherMember

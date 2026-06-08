@@ -124,6 +124,7 @@ org.apache.kafka.clients.NetworkClientTest:
 - testLeastLoadedNode
 - testLeastLoadedNodeConsidersThrottledConnections
 - testLeastLoadedNodeProvideDisconnectedNodesPrioritizedByLastConnectionTimestamp
+- testMetadataClusterCheckFailureCausesRebootstrap
 - testRebootstrap
 - testReconnectAfterAddressChange
 - testRequestTimeout
@@ -1419,6 +1420,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerMembershipManagerTest:
 - testOnPartitionsLostNoError
 - testOnSubscriptionUpdatedDoesNotTransitionToJoiningIfInGroup
 - testOnSubscriptionUpdatedTransitionsToJoiningOnPollIfNotInGroup
+- testPartialAckNotRepeatedOnBackgroundReconcileWhenMetadataMissing
 - testPollMustCallsMaybeReconcileWithFalse
 - testRebalanceMetricsForMultipleReconciliations
 - testRebalanceMetricsOnFailedRebalance
@@ -3329,6 +3331,9 @@ org.apache.kafka.clients.producer.internals.TransactionManagerTest:
 - testTransitionToAbortableErrorOnBatchExpiry
 - testTransitionToAbortableErrorOnMultipleBatchExpiry
 - testTransitionToFatalErrorWhenRetriedBatchIsExpired
+- testTxnOffsetCommitDowngradesToV5WhenAnyTopicIdIsMissing
+- testTxnOffsetCommitNegotiatesV6WhenAllTopicIdsAreAvailable
+- testTxnOffsetCommitRetriesOnUnknownTopicIdAtV6
 - testUnknownMemberIdInTxnOffsetCommitByGroupMetadata
 - testUnsupportedFindCoordinator
 - testUnsupportedForMessageFormatInTxnOffsetCommit
@@ -3810,6 +3815,9 @@ org.apache.kafka.common.metrics.KafkaMetricTest:
 - testIsMeasurableWithGaugeProvider
 - testKafkaMetricAcceptsNonMeasurableNonGaugeProvider
 - testMeasurableValueReturnsZeroWhenNotMeasurable
+- testToStringWithAnonymousClassProvider
+- testToStringWithLambdaProvider
+- testToStringWithStatProvider
 org.apache.kafka.common.metrics.KafkaMetricsContextTest:
 - testCreationWithNullNamespaceAndLabels
 - testCreationWithValidNamespaceAndLabels
@@ -4572,6 +4580,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testCreateTopicRequestV0FailsIfValidateOnly
 - testCreateTopicRequestV3FailsIfNoPartitionsOrReplicas
 - testDeletableTopicResultErrorMessageIsNullByDefault
+- testDeleteGroupsResponseV3PreservesErrorMessage
 - testErrorCountsIncludesNone
 - testFetchRequestIsolationLevel
 - testFetchRequestWithMetadata
@@ -4594,12 +4603,18 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testSerializeWithInconsistentHeaderApiKey
 - testSerializeWithInconsistentHeaderVersion
 - testShareFetchResponseShouldNotHaveNullRecords
+- testStreamsGroupDescribeRequestV0RejectsIncludeTopologyDescription
+- testStreamsGroupDescribeResponseV0RejectsTopologyDescriptionFields
 - testUnregisterBrokerResponseWithUnknownServerError
 - testValidApiVersionsRequest
 - testValidTaggedFieldsWithSaslAuthenticateRequest
 - verifyFetchResponseFullWrites
 org.apache.kafka.common.requests.RequestUtilsTest:
 - testIsFatalException
+org.apache.kafka.common.requests.StreamsGroupHeartbeatResponseTest:
+- testAcceptableRecoveryLagFieldVersionCompatibility
+- testAcceptableRecoveryLagWithMaxValue
+- testAcceptableRecoveryLagWithZeroValue
 org.apache.kafka.common.requests.SyncGroupRequestTest:
 - testRequestVersionCompatibilityFailBuild
 org.apache.kafka.common.requests.TxnOffsetCommitRequestTest:
@@ -5237,6 +5252,12 @@ org.apache.kafka.common.security.ssl.Tls13SslFactoryTest:
 - testUsedConfigs
 org.apache.kafka.common.serialization.ListDeserializerTest:
 - shouldPassHeadersToUnderlyingDeserializer
+- shouldThrowOnNegativeEntrySize
+- shouldThrowOnNegativeLength
+- shouldThrowOnNegativeNullEntryLength
+- shouldThrowOnTooLargeEntrySize
+- shouldThrowOnTooLargeLength
+- shouldThrowOnTooLargeNullEntryLength
 - testListKeyDeserializerNoArgConstructorsShouldThrowConfigExceptionDueInnerSerdeClassNotFound
 - testListKeyDeserializerNoArgConstructorsShouldThrowConfigExceptionDueListClassNotFound
 - testListKeyDeserializerNoArgConstructorsShouldThrowConfigExceptionDueMissingInnerClassProp
