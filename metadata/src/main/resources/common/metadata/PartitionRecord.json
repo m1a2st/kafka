@@ -19,7 +19,7 @@
   "name": "PartitionRecord",
   // Version 1 adds Directories for KIP-858
   // Version 2 implements Eligible Leader Replicas and LastKnownElr as described in KIP-966.
-  // Version 0+ tagged field CreationTimeMs added for KIP-1327 (partition creation timestamp).
+  // Tagged field CreationTimeMs added for KIP-1327 (partition creation timestamp).
   "validVersions": "0-2",
   "flexibleVersions": "0+",
   "fields": [
