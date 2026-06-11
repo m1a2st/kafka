@@ -139,11 +139,12 @@ public class KRaftMetadataCache implements MetadataCache {
     ) {
         TopicImage topicImage = image.topics().getTopic(topicName);
         if (topicImage == null) return List.of();
+        long nowMs = time.milliseconds();
         return topicImage.partitions().entrySet().stream().map(entry -> {
             int partitionId = entry.getKey();
             PartitionRegistration partition = entry.getValue();
             long ageMs = partition.creationTimeMs == -1L ? -1L
-                : Math.max(0L, time.milliseconds() - partition.creationTimeMs);
+                : Math.max(0L, nowMs - partition.creationTimeMs);
             List<Integer> filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas, listenerName, errorUnavailableEndpoints);
             List<Integer> filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName, errorUnavailableEndpoints);
             List<Integer> offlineReplicas = getOfflineReplicas(image, partition, listenerName);
