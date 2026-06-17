@@ -397,8 +397,6 @@ kafka.api.PlaintextConsumerAssignorsTest:
 - testRemoteAssignorInvalid
 - testRemoteAssignorRange
 - testRoundRobinAssignment
-kafka.api.PlaintextConsumerTest:
-- testCloseLeavesGroupOnInterrupt
 kafka.api.PlaintextEndToEndAuthorizationTest:
 - testListenerName
 - testNoConsumeWithDescribeAclViaAssign
@@ -1595,15 +1593,6 @@ kafka.server.FetchRequestTest:
 - testLastFetchedEpochValidationV12
 - testZStdCompressedRecords
 - testZStdCompressedTopic
-kafka.server.ForwardingManagerTest:
-- testFailedAuthentication
-- testForwardingManagerMetricsOnComplete
-- testForwardingManagerMetricsOnTimeout
-- testForwardingTimeoutAfterRetry
-- testForwardingTimeoutWaitingForControllerDiscovery
-- testResponseCorrelationIdMismatch
-- testUnsupportedVersionFromNetworkClient
-- testUnsupportedVersions
 kafka.server.GssapiAuthenticationTest:
 - testLoginFailure
 - testReLogin
