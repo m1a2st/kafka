@@ -814,23 +814,25 @@ class ConsumerProtocolMigrationTest(cluster: ClusterInstance) extends GroupCoord
 
     // The joining request with a consumer group member 2 is accepted.
     val memberId2 = Uuid.randomUuid.toString
+    val member2HeartbeatResponse = consumerGroupHeartbeat(
+      groupId = groupId,
+      memberId = memberId2,
+      instanceId = if (useStaticMembers) instanceId2 else null,
+      rebalanceTimeoutMs = 5 * 60 * 1000,
+      subscribedTopicNames = List("foo"),
+      topicPartitions = List.empty,
+      expectedError = Errors.NONE
+    )
     assertEquals(
       new ConsumerGroupHeartbeatResponseData()
         .setErrorCode(Errors.NONE.code)
         .setMemberId(memberId2)
         .setMemberEpoch(2)
         .setHeartbeatIntervalMs(5000)
+        .setGroupCreationTimeMs(member2HeartbeatResponse.groupCreationTimeMs)
         .setAssignment(new ConsumerGroupHeartbeatResponseData.Assignment()
           .setTopicPartitions(List.empty.asJava)),
-      consumerGroupHeartbeat(
-        groupId = groupId,
-        memberId = memberId2,
-        instanceId = if (useStaticMembers) instanceId2 else null,
-        rebalanceTimeoutMs = 5 * 60 * 1000,
-        subscribedTopicNames = List("foo"),
-        topicPartitions = List.empty,
-        expectedError = Errors.NONE
-      )
+      member2HeartbeatResponse
     )
 
     // The group has become a consumer group.
@@ -1173,23 +1175,25 @@ class ConsumerProtocolMigrationTest(cluster: ClusterInstance) extends GroupCoord
 
     // The joining request with a consumer group member 2 is accepted.
     val memberId2 = Uuid.randomUuid.toString
+    val member2HeartbeatResponse = consumerGroupHeartbeat(
+      groupId = groupId,
+      memberId = memberId2,
+      instanceId = if (useStaticMembers) instanceId2 else null,
+      rebalanceTimeoutMs = 5 * 60 * 1000,
+      subscribedTopicNames = List("foo"),
+      topicPartitions = List.empty,
+      expectedError = Errors.NONE
+    )
     assertEquals(
       new ConsumerGroupHeartbeatResponseData()
         .setErrorCode(Errors.NONE.code)
         .setMemberId(memberId2)
         .setMemberEpoch(2)
         .setHeartbeatIntervalMs(5000)
+        .setGroupCreationTimeMs(member2HeartbeatResponse.groupCreationTimeMs)
         .setAssignment(new ConsumerGroupHeartbeatResponseData.Assignment()
           .setTopicPartitions(List.empty.asJava)),
-      consumerGroupHeartbeat(
-        groupId = groupId,
-        memberId = memberId2,
-        instanceId = if (useStaticMembers) instanceId2 else null,
-        rebalanceTimeoutMs = 5 * 60 * 1000,
-        subscribedTopicNames = List("foo"),
-        topicPartitions = List.empty,
-        expectedError = Errors.NONE
-      )
+      member2HeartbeatResponse
     )
 
     // The group has become a consumer group.

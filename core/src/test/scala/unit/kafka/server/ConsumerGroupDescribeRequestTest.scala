@@ -204,6 +204,10 @@ class ConsumerGroupDescribeRequestTest(cluster: ClusterInstance) extends GroupCo
         version = version.toShort,
       )
 
+      // groupCreationTimeMs is set by the server at group creation time.
+      expected.zip(actual).foreach { case (exp, act) =>
+        exp.setGroupCreationTimeMs(act.groupCreationTimeMs)
+      }
       assertEquals(expected, actual)
 
       val unknownGroupResponse = consumerGroupDescribe(
@@ -437,6 +441,10 @@ class ConsumerGroupDescribeRequestTest(cluster: ClusterInstance) extends GroupCo
       version = ApiKeys.CONSUMER_GROUP_DESCRIBE.latestVersion(isUnstableApiEnabled),
     )
 
+    // groupCreationTimeMs is set by the server at group creation time.
+    expected.zip(actual).foreach { case (exp, act) =>
+      exp.setGroupCreationTimeMs(act.groupCreationTimeMs)
+    }
     Assertions.assertResponseEquals(
       new ConsumerGroupDescribeResponseData().setGroups(expected.asJava),
       new ConsumerGroupDescribeResponseData().setGroups(actual.asJava)
