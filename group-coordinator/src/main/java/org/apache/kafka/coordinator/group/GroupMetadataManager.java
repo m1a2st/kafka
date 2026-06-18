@@ -859,10 +859,10 @@ public class GroupMetadataManager {
         }
 
         if (group == null) {
-            return new ConsumerGroup(logContext, snapshotRegistry, groupId);
+            return new ConsumerGroup(logContext, snapshotRegistry, groupId, time.milliseconds());
         } else if (createIfNotExists && maybeDeleteEmptyClassicGroup(group, records)) {
             log.info("[GroupId {}] Converted the empty classic group to a consumer group.", groupId);
-            return new ConsumerGroup(logContext, snapshotRegistry, groupId);
+            return new ConsumerGroup(logContext, snapshotRegistry, groupId, time.milliseconds());
         } else {
             if (group.type() == CONSUMER) {
                 return (ConsumerGroup) group;
@@ -1442,6 +1442,7 @@ public class GroupMetadataManager {
                     "Please refer to the documentation or switch to a default assignor before re-attempting the upgrade.", classicGroup.groupId())
             );
         }
+        consumerGroup.setCreationTimeMs(time.milliseconds());
         consumerGroup.createConsumerGroupRecords(records);
 
         // Create the session timeouts for the new members. If the conversion fails, the group will remain a
@@ -2569,7 +2570,8 @@ public class GroupMetadataManager {
         ConsumerGroupHeartbeatResponseData response = new ConsumerGroupHeartbeatResponseData()
             .setMemberId(updatedMember.memberId())
             .setMemberEpoch(updatedMember.memberEpoch())
-            .setHeartbeatIntervalMs(consumerGroupHeartbeatIntervalMs(groupId));
+            .setHeartbeatIntervalMs(consumerGroupHeartbeatIntervalMs(groupId))
+            .setGroupCreationTimeMs(group.creationTimeMs());
 
         // The assignment is only provided in the following cases:
         // 1. The member sent a full request. It does so when joining or rejoining the group with zero
@@ -3668,7 +3670,7 @@ public class GroupMetadataManager {
 
             if (bumpGroupEpoch) {
                 int groupEpoch = group.groupEpoch() + 1;
-                records.add(newConsumerGroupEpochRecord(groupId, groupEpoch, groupMetadataHash));
+                records.add(newConsumerGroupEpochRecord(groupId, groupEpoch, groupMetadataHash, group.creationTimeMs()));
                 log.info("[GroupId {}] Bumped group epoch to {} with metadata hash {}.", groupId, groupEpoch, groupMetadataHash);
                 metrics.record(CONSUMER_GROUP_REBALANCES_SENSOR_NAME);
                 group.setMetadataRefreshDeadline(
@@ -4007,7 +4009,7 @@ public class GroupMetadataManager {
 
         if (bumpGroupEpoch) {
             groupEpoch += 1;
-            records.add(newConsumerGroupEpochRecord(groupId, groupEpoch, groupMetadataHash));
+            records.add(newConsumerGroupEpochRecord(groupId, groupEpoch, groupMetadataHash, group.creationTimeMs()));
             log.info("[GroupId {}] Bumped group epoch to {} with metadata hash {}.", groupId, groupEpoch, groupMetadataHash);
             metrics.record(CONSUMER_GROUP_REBALANCES_SENSOR_NAME);
         }
@@ -4397,7 +4399,8 @@ public class GroupMetadataManager {
         ConsumerGroup group = consumerGroup(groupId);
         ConsumerGroupHeartbeatResponseData response = new ConsumerGroupHeartbeatResponseData()
             .setMemberId(memberId)
-            .setMemberEpoch(memberEpoch);
+            .setMemberEpoch(memberEpoch)
+            .setGroupCreationTimeMs(group.creationTimeMs());
 
         if (instanceId == null) {
             ConsumerGroupMember member = group.getOrMaybeCreateMember(memberId, false);
@@ -4494,6 +4497,7 @@ public class GroupMetadataManager {
             new ConsumerGroupHeartbeatResponseData()
                 .setMemberId(member.memberId())
                 .setMemberEpoch(LEAVE_GROUP_STATIC_MEMBER_EPOCH)
+                .setGroupCreationTimeMs(group.creationTimeMs())
         );
     }
 
@@ -4635,7 +4639,7 @@ public class GroupMetadataManager {
 
             // We bump the group epoch.
             int groupEpoch = group.groupEpoch() + 1;
-            records.add(newConsumerGroupEpochRecord(group.groupId(), groupEpoch, groupMetadataHash));
+            records.add(newConsumerGroupEpochRecord(group.groupId(), groupEpoch, groupMetadataHash, group.creationTimeMs()));
             log.info("[GroupId {}] Bumped group epoch to {} with metadata hash {}.", group.groupId(), groupEpoch, groupMetadataHash);
 
             // If all members are being fenced, the group becomes empty so
@@ -5713,6 +5717,7 @@ public class GroupMetadataManager {
             ConsumerGroup consumerGroup = getOrMaybeCreatePersistedConsumerGroup(groupId, true);
             consumerGroup.setGroupEpoch(value.epoch());
             consumerGroup.setMetadataHash(value.metadataHash());
+            consumerGroup.setCreationTimeMs(value.creationTimeMs());
         } else {
             ConsumerGroup consumerGroup;
             try {

@@ -139,7 +139,8 @@ public class GroupCoordinatorRecordHelpers {
     }
 
     /**
-     * Creates a ConsumerGroupMetadata record.
+     * Creates a ConsumerGroupMetadata record without a creation time (defaults to -1).
+     * Production code should use the 4-arg overload with an explicit creationTimeMs.
      *
      * @param groupId       The consumer group id.
      * @param newGroupEpoch The consumer group epoch.
@@ -151,13 +152,32 @@ public class GroupCoordinatorRecordHelpers {
         int newGroupEpoch,
         long metadataHash
     ) {
+        return newConsumerGroupEpochRecord(groupId, newGroupEpoch, metadataHash, -1L);
+    }
+
+    /**
+     * Creates a ConsumerGroupMetadataValue record with creation time.
+     *
+     * @param groupId        The consumer group id.
+     * @param newGroupEpoch  The consumer group epoch.
+     * @param metadataHash   The consumer group metadata hash.
+     * @param creationTimeMs The creation time of the group in milliseconds, or -1 if unknown.
+     * @return The record.
+     */
+    public static CoordinatorRecord newConsumerGroupEpochRecord(
+        String groupId,
+        int newGroupEpoch,
+        long metadataHash,
+        long creationTimeMs
+    ) {
         return CoordinatorRecord.record(
             new ConsumerGroupMetadataKey()
                 .setGroupId(groupId),
             new ApiMessageAndVersion(
                 new ConsumerGroupMetadataValue()
                     .setEpoch(newGroupEpoch)
-                    .setMetadataHash(metadataHash),
+                    .setMetadataHash(metadataHash)
+                    .setCreationTimeMs(creationTimeMs),
                 (short) 0
             )
         );

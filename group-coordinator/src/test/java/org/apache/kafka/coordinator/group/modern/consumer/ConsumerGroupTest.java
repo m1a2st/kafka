@@ -1262,6 +1262,25 @@ public class ConsumerGroupTest {
     }
 
     @Test
+    public void testAsDescribedGroupWithCreationTimeMs() {
+        SnapshotRegistry snapshotRegistry = new SnapshotRegistry(new LogContext());
+        long expectedCreationTimeMs = 1234567890L;
+        ConsumerGroup group = new ConsumerGroup(new LogContext(), snapshotRegistry, "group-id-1", expectedCreationTimeMs);
+        snapshotRegistry.idempotentCreateSnapshot(0);
+
+        group.updateMember(new ConsumerGroupMember.Builder("member1")
+                .setMemberEpoch(1)
+                .setSubscribedTopicNames(List.of("foo"))
+                .build());
+        snapshotRegistry.idempotentCreateSnapshot(1);
+
+        ConsumerGroupDescribeResponseData.DescribedGroup actual = group.asDescribedGroup(1, "",
+            new KRaftCoordinatorMetadataImage(new MetadataImageBuilder().build()));
+
+        assertEquals(expectedCreationTimeMs, actual.groupCreationTimeMs());
+    }
+
+    @Test
     public void testIsInStatesCaseInsensitive() {
         SnapshotRegistry snapshotRegistry = new SnapshotRegistry(new LogContext());
         ConsumerGroup group = new ConsumerGroup(new LogContext(), snapshotRegistry, "group-foo");

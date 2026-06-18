@@ -74,8 +74,8 @@ public class MetadataResponseTest {
     }
 
     @Test
-    void testPartitionAgeMsOmittedInVersion13() {
-        // Build a MetadataResponseData with PartitionAgeMs set
+    void testCreationTimeMsOmittedInVersion13() {
+        // Build a MetadataResponseData with CreationTimeMs set
         MetadataResponseData data = new MetadataResponseData();
         MetadataResponseTopic topic = new MetadataResponseTopic()
             .setName("test")
@@ -89,22 +89,22 @@ public class MetadataResponseTest {
             .setReplicaNodes(List.of(0))
             .setIsrNodes(List.of(0))
             .setOfflineReplicas(List.of())
-            .setPartitionAgeMs(5000L));
+            .setCreationTimeMs(5000L));
         data.topics().add(topic);
 
-        // Serialize at v13 (pre-KIP-1327) and deserialize — PartitionAgeMs should be default (-1)
+        // Serialize at v13 (pre-KIP-1327) and deserialize — CreationTimeMs should be default (-1)
         short v13 = 13;
         MetadataResponseData deserializedV13 = new MetadataResponseData(
             MessageUtil.toByteBufferAccessor(data, v13), v13);
-        assertEquals(-1L, deserializedV13.topics().iterator().next().partitions().get(0).partitionAgeMs(),
-            "PartitionAgeMs should be -1 (default) when serialized at version 13");
+        assertEquals(-1L, deserializedV13.topics().iterator().next().partitions().get(0).creationTimeMs(),
+            "CreationTimeMs should be -1 (default) when serialized at version 13");
 
-        // Serialize at v14 (KIP-1327) and deserialize — PartitionAgeMs should be preserved
+        // Serialize at v14 (KIP-1327) and deserialize — CreationTimeMs should be preserved
         short v14 = 14;
         MetadataResponseData deserializedV14 = new MetadataResponseData(
             MessageUtil.toByteBufferAccessor(data, v14), v14);
-        assertEquals(5000L, deserializedV14.topics().iterator().next().partitions().get(0).partitionAgeMs(),
-            "PartitionAgeMs should be preserved when serialized at version 14");
+        assertEquals(5000L, deserializedV14.topics().iterator().next().partitions().get(0).creationTimeMs(),
+            "CreationTimeMs should be preserved when serialized at version 14");
     }
 
     @Test
