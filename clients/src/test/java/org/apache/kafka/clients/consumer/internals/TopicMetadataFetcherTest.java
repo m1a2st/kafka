@@ -188,7 +188,8 @@ public class TopicMetadataFetcherTest {
                     Optional.empty(),
                     p.replicaIds,
                     p.inSyncReplicaIds,
-                    p.offlineReplicaIds
+                    p.offlineReplicaIds,
+                    p.creationTimeMs
                 ));
             }
             MetadataResponse.TopicMetadata alteredTopic = new MetadataResponse.TopicMetadata(

@@ -2375,13 +2375,13 @@ public class RequestResponseTest {
         allTopicMetadata.add(new MetadataResponse.TopicMetadata(Errors.NONE, "__consumer_offsets", true,
                 singletonList(new MetadataResponse.PartitionMetadata(Errors.NONE,
                         new TopicPartition("__consumer_offsets", 1),
-                        Optional.of(node.id()), Optional.of(5), replicas, isr, offlineReplicas))));
+                        Optional.of(node.id()), Optional.of(5), replicas, isr, offlineReplicas, -1L))));
         allTopicMetadata.add(new MetadataResponse.TopicMetadata(Errors.LEADER_NOT_AVAILABLE, "topic2", false,
                 emptyList()));
         allTopicMetadata.add(new MetadataResponse.TopicMetadata(Errors.NONE, "topic3", false,
                 singletonList(new MetadataResponse.PartitionMetadata(Errors.LEADER_NOT_AVAILABLE,
                     new TopicPartition("topic3", 0), Optional.empty(),
-                    Optional.empty(), replicas, isr, offlineReplicas))));
+                    Optional.empty(), replicas, isr, offlineReplicas, -1L))));
 
         return RequestTestUtils.metadataResponse(singletonList(node), null, MetadataResponse.NO_CONTROLLER_ID, allTopicMetadata);
     }

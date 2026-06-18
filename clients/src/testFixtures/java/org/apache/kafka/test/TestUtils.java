@@ -147,7 +147,7 @@ public class TestUtils {
             for (int i = 0; i < partitions; i++) {
                 TopicPartition tp = new TopicPartition(topic, partitions);
                 Node node = ns[i % ns.length];
-                partsMetadatas.add(new PartitionMetadata(Errors.NONE, tp, Optional.of(node.id()), Optional.empty(), null, null, null));
+                partsMetadatas.add(new PartitionMetadata(Errors.NONE, tp, Optional.of(node.id()), Optional.empty(), null, null, null, -1L));
             }
         }
         return new MetadataSnapshot("kafka-cluster", nodesById, partsMetadatas, Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap());

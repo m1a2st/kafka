@@ -1026,7 +1026,9 @@ public class GroupMetadataManager {
         }
 
         if (group == null) {
-            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId);
+            // -1L placeholder; the real timestamp is filled in from the persisted
+            // ConsumerGroupMetadataValue.CreationTimeMs when the metadata record is replayed.
+            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId, -1L);
             groups.put(groupId, consumerGroup);
             return consumerGroup;
         } else if (group.type() == CONSUMER) {
@@ -1036,7 +1038,7 @@ public class GroupMetadataManager {
             // offsets if no group existed. Simple classic groups are not backed by any records
             // in the __consumer_offsets topic hence we can safely replace it here. Without this,
             // replaying consumer group records after offset commit records would not work.
-            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId);
+            ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId, -1L);
             groups.put(groupId, consumerGroup);
             return consumerGroup;
         } else {

@@ -166,14 +166,6 @@ public class ConsumerGroup extends ModernGroup<ConsumerGroupMember> {
     public ConsumerGroup(
         LogContext logContext,
         SnapshotRegistry snapshotRegistry,
-        String groupId
-    ) {
-        this(logContext, snapshotRegistry, groupId, -1L);
-    }
-
-    public ConsumerGroup(
-        LogContext logContext,
-        SnapshotRegistry snapshotRegistry,
         String groupId,
         long creationTimeMs
     ) {
@@ -1262,7 +1254,8 @@ public class ConsumerGroup extends ModernGroup<ConsumerGroupMember> {
         CoordinatorMetadataImage metadataImage
     ) {
         String groupId = classicGroup.groupId();
-        ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId);
+        // -1L placeholder; the caller stamps the real timestamp via setCreationTimeMs after upgrade.
+        ConsumerGroup consumerGroup = new ConsumerGroup(logContext, snapshotRegistry, groupId, -1L);
         consumerGroup.setGroupEpoch(classicGroup.generationId());
         consumerGroup.setTargetAssignmentMetadata(classicGroup.generationId(), 0L);
 

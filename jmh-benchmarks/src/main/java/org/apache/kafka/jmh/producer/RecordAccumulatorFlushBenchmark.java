@@ -115,7 +115,8 @@ public class RecordAccumulatorFlushBenchmark {
             Optional.empty(),
             null,
             null,
-            null
+            null,
+            -1L
         );
 
         Map<Integer, Node> nodes = Stream.of(node).collect(Collectors.toMap(Node::id, Function.identity()));

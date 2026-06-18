@@ -1389,7 +1389,11 @@ public class OffsetFetcherTest {
         // Inject an older version of the metadata response
         final short responseVersion = 8;
         metadata.updateWithCurrentRequestVersion(RequestTestUtils.metadataUpdateWith("dummy", 1,
-            Collections.emptyMap(), partitionCounts, tp -> null, MetadataResponse.PartitionMetadata::new, responseVersion, topicIds), false, 0L);
+            Collections.emptyMap(), partitionCounts,
+            tp -> null,
+            (error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas) ->
+                new MetadataResponse.PartitionMetadata(error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas, -1L),
+            responseVersion, topicIds), false, 0L);
         offsetFetcher.validatePositionsIfNeeded();
         // Offset validation is skipped
         assertFalse(subscriptions.awaitingValidation(tp0));

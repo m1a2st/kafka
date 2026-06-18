@@ -66,7 +66,8 @@ public class MetadataResponseBenchmark {
                 Optional.of(42),
                 IntStream.range(0, nodes).boxed().toList(),
                 IntStream.range(0, nodes).filter(i1 -> i1 % 3 != 0).boxed().toList(),
-                IntStream.range(0, nodes).filter(i2 -> i2 % 3 == 0).boxed().toList());
+                IntStream.range(0, nodes).filter(i2 -> i2 % 3 == 0).boxed().toList(),
+                -1L);
         nodesById = new HashMap<>(nodes);
         for (int i = 0; i < nodes; i++) {
             nodesById.put(i, new Node(i, "localhost", 1234));

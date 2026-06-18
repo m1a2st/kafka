@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
 
@@ -78,7 +79,7 @@ public class WorkerUtilsTest {
             new TopicDescription(
                 TEST_TOPIC, false,
                 List.of(
-                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of()))),
+                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of(), OptionalLong.empty()))),
             adminClient.describeTopics(
                 Set.of(TEST_TOPIC)).topicNameValues().get(TEST_TOPIC).get()
         );
@@ -95,7 +96,7 @@ public class WorkerUtilsTest {
             new TopicDescription(
                 TEST_TOPIC, false,
                 List.of(
-                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of()))),
+                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of(), OptionalLong.empty()))),
             adminClient.describeTopics(
                 Set.of(TEST_TOPIC)).topicNameValues().get(TEST_TOPIC).get()
         );
@@ -175,7 +176,7 @@ public class WorkerUtilsTest {
             new TopicDescription(
                 TEST_TOPIC, false,
                 List.of(
-                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of()))),
+                    new TopicPartitionInfo(0, broker1, singleReplica, List.of(), List.of(), List.of(), OptionalLong.empty()))),
             adminClient.describeTopics(Set.of(TEST_TOPIC)).topicNameValues().get(TEST_TOPIC).get()
         );
     }

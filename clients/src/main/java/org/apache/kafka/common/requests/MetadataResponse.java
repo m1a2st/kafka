@@ -390,23 +390,6 @@ public class MetadataResponse extends AbstractResponse {
                                  Optional<Integer> leaderEpoch,
                                  List<Integer> replicaIds,
                                  List<Integer> inSyncReplicaIds,
-                                 List<Integer> offlineReplicaIds) {
-            this.error = error;
-            this.topicPartition = topicPartition;
-            this.leaderId = leaderId;
-            this.leaderEpoch = leaderEpoch;
-            this.replicaIds = replicaIds;
-            this.inSyncReplicaIds = inSyncReplicaIds;
-            this.offlineReplicaIds = offlineReplicaIds;
-            this.creationTimeMs = -1L;
-        }
-
-        public PartitionMetadata(Errors error,
-                                 TopicPartition topicPartition,
-                                 Optional<Integer> leaderId,
-                                 Optional<Integer> leaderEpoch,
-                                 List<Integer> replicaIds,
-                                 List<Integer> inSyncReplicaIds,
                                  List<Integer> offlineReplicaIds,
                                  long creationTimeMs) {
             this.error = error;

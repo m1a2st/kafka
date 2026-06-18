@@ -258,7 +258,7 @@ public class ConsumerMetadataTest {
     private MetadataResponse.TopicMetadata topicMetadata(String topic, boolean isInternal) {
         MetadataResponse.PartitionMetadata partitionMetadata = new MetadataResponse.PartitionMetadata(Errors.NONE,
                 new TopicPartition(topic, 0), Optional.of(node.id()), Optional.of(5),
-                singletonList(node.id()), singletonList(node.id()), singletonList(node.id()));
+                singletonList(node.id()), singletonList(node.id()), singletonList(node.id()), -1L);
         return new MetadataResponse.TopicMetadata(Errors.NONE, topic, isInternal, singletonList(partitionMetadata));
     }
 
@@ -331,7 +331,7 @@ public class ConsumerMetadataTest {
         assertEquals(new HashSet<>(originalNodes), new HashSet<>(updatedCluster.nodes()));
         verify(mockListener, times(1)).onUpdate(any());
         validateForUpdatePartitionLeadership(metadata,
-                new MetadataResponse.PartitionMetadata(Errors.NONE, tp11, Optional.of(newLeaderId), Optional.of(newLeaderEpoch), Arrays.asList(1, 2), Arrays.asList(1, 2), Collections.singletonList(3)),
+                new MetadataResponse.PartitionMetadata(Errors.NONE, tp11, Optional.of(newLeaderId), Optional.of(newLeaderEpoch), Arrays.asList(1, 2), Arrays.asList(1, 2), Collections.singletonList(3), -1L),
                 metadataSupplier(Errors.NONE, new TopicPartition("topic2", 0), Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1)),
                 metadataSupplier(Errors.NONE, new TopicPartition("topic1", 1), Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1)),
                 metadataSupplier(Errors.NONE, new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, 0), Optional.of(2), Optional.of(300), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1)),
@@ -399,13 +399,13 @@ public class ConsumerMetadataTest {
 
     private MetadataResponse.PartitionMetadata metadataSupplier(Errors error, TopicPartition partition, Optional<Integer> leaderId, Optional<Integer> leaderEpoch, List<Integer> replicas, List<Integer> isr, List<Integer> offlineReplicas) {
         if ("topic1".equals(partition.topic()) && partition.partition() == 0)
-            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(1), Optional.of(100), Arrays.asList(1, 2), Arrays.asList(1, 2), Collections.singletonList(3));
+            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(1), Optional.of(100), Arrays.asList(1, 2), Arrays.asList(1, 2), Collections.singletonList(3), -1L);
         else if ("topic1".equals(partition.topic()) && partition.partition() == 1)
-            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1));
+            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1), -1L);
         else if ("topic2".equals(partition.topic()) && partition.partition() == 0)
-            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1));
+            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(200), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1), -1L);
         else if (Topic.GROUP_METADATA_TOPIC_NAME.equals(partition.topic()) && partition.partition() == 0)
-            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(300), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1));
+            return new MetadataResponse.PartitionMetadata(Errors.NONE, partition, Optional.of(2), Optional.of(300), Arrays.asList(2, 3), Arrays.asList(2, 3), Collections.singletonList(1), -1L);
         else throw new RuntimeException("Unexpected partition " + partition);
     }
 

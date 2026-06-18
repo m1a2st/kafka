@@ -31,7 +31,7 @@ import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.coordinator.group.{Assertions, GroupCoordinatorConfig}
 import org.apache.kafka.security.authorizer.AclEntry
 import org.apache.kafka.server.common.Feature
-import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse}
+import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
 
 import java.lang.{Byte => JByte}
 import java.util.Collections
@@ -204,11 +204,13 @@ class ConsumerGroupDescribeRequestTest(cluster: ClusterInstance) extends GroupCo
         version = version.toShort,
       )
 
-      // groupCreationTimeMs is set by the server at group creation time.
-      expected.zip(actual).foreach { case (exp, act) =>
-        exp.setGroupCreationTimeMs(act.groupCreationTimeMs)
-      }
-      assertEquals(expected, actual)
+      // groupCreationTimeMs was added in v2. For v2+ assert it is stamped
+      // by the server; for older versions the field is stripped on the
+      // wire and stays at the -1 default. Normalize it out before the
+      // structured comparison so the rest stays exact.
+      if (version >= 2) actual.foreach { g => assertTrue(g.groupCreationTimeMs > 0) }
+      val normalized = actual.map(g => g.duplicate().setGroupCreationTimeMs(-1L))
+      assertEquals(expected, normalized)
 
       val unknownGroupResponse = consumerGroupDescribe(
         groupIds = List("grp-unknown"),
@@ -441,13 +443,14 @@ class ConsumerGroupDescribeRequestTest(cluster: ClusterInstance) extends GroupCo
       version = ApiKeys.CONSUMER_GROUP_DESCRIBE.latestVersion(isUnstableApiEnabled),
     )
 
-    // groupCreationTimeMs is set by the server at group creation time.
-    expected.zip(actual).foreach { case (exp, act) =>
-      exp.setGroupCreationTimeMs(act.groupCreationTimeMs)
-    }
+    // groupCreationTimeMs is stamped by the server; assert it was set
+    // (not the -1 default), then normalize it out so the rest of the
+    // structured comparison stays exact.
+    actual.foreach { g => assertTrue(g.groupCreationTimeMs > 0) }
+    val normalized = actual.map(g => g.duplicate().setGroupCreationTimeMs(-1L))
     Assertions.assertResponseEquals(
       new ConsumerGroupDescribeResponseData().setGroups(expected.asJava),
-      new ConsumerGroupDescribeResponseData().setGroups(actual.asJava)
+      new ConsumerGroupDescribeResponseData().setGroups(normalized.asJava)
     )
   }
 }

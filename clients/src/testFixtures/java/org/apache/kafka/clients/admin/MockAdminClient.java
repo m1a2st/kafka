@@ -71,6 +71,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -409,7 +410,7 @@ public class MockAdminClient extends AdminClient {
             // Partitions start off on the first log directory of each broker, for now.
             List<String> logDirs = new ArrayList<>(numberOfPartitions);
             for (int i = 0; i < numberOfPartitions; i++) {
-                partitions.add(new TopicPartitionInfo(i, brokers.get(0), replicas, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()));
+                partitions.add(new TopicPartitionInfo(i, brokers.get(0), replicas, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), OptionalLong.empty()));
                 logDirs.add(brokerLogDirs.get(partitions.get(i).leader().id()).get(0));
             }
             Uuid topicId = Uuid.randomUuid();

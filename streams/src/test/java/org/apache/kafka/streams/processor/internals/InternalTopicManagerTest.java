@@ -69,6 +69,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -706,7 +707,7 @@ public class InternalTopicManagerTest {
             new TopicDescription(
                 topic1,
                 false,
-                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()))
+                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), OptionalLong.empty()))
             ),
             mockAdminClient.describeTopics(Collections.singleton(topic1)).topicNameValues().get(topic1).get()
         );
@@ -714,7 +715,7 @@ public class InternalTopicManagerTest {
             new TopicDescription(
                 topic2,
                 false,
-                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()))
+                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), OptionalLong.empty()))
             ),
             mockAdminClient.describeTopics(Collections.singleton(topic2)).topicNameValues().get(topic2).get()
         );
@@ -722,7 +723,7 @@ public class InternalTopicManagerTest {
             new TopicDescription(
                 topic3,
                 false,
-                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()))
+                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), OptionalLong.empty()))
             ),
             mockAdminClient.describeTopics(Collections.singleton(topic3)).topicNameValues().get(topic3).get()
         );
@@ -730,7 +731,7 @@ public class InternalTopicManagerTest {
             new TopicDescription(
                 topic4,
                 false,
-                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList()))
+                List.of(new TopicPartitionInfo(0, broker1, singleReplica, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), OptionalLong.empty()))
             ),
             mockAdminClient.describeTopics(Collections.singleton(topic4)).topicNameValues().get(topic4).get()
         );

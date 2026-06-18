@@ -473,7 +473,7 @@ public class MetadataTest {
             MetadataResponse metadataResponse = RequestTestUtils.metadataUpdateWith("dummy", 1, Collections.emptyMap(), partitionCounts, _tp -> 99,
                 (error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas) ->
                         new MetadataResponse.PartitionMetadata(error, partition, leader,
-                            leaderEpoch, replicas, Collections.emptyList(), offlineReplicas), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
+                            leaderEpoch, replicas, Collections.emptyList(), offlineReplicas, -1L), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
             metadata.updateWithCurrentRequestVersion(metadataResponse, false, 20L);
             assertEquals(1, metadata.fetch().partition(tp).inSyncReplicas().length);
             assertEquals(100, metadata.lastSeenLeaderEpoch(tp).get().longValue());
@@ -484,7 +484,7 @@ public class MetadataTest {
             MetadataResponse metadataResponse = RequestTestUtils.metadataUpdateWith("dummy", 1, Collections.emptyMap(), partitionCounts, _tp -> 100,
                 (error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas) ->
                         new MetadataResponse.PartitionMetadata(error, partition, leader,
-                            leaderEpoch, replicas, Collections.emptyList(), offlineReplicas), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
+                            leaderEpoch, replicas, Collections.emptyList(), offlineReplicas, -1L), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
             metadata.updateWithCurrentRequestVersion(metadataResponse, false, 20L);
             assertEquals(0, metadata.fetch().partition(tp).inSyncReplicas().length);
             assertEquals(100, metadata.lastSeenLeaderEpoch(tp).get().longValue());
@@ -792,7 +792,7 @@ public class MetadataTest {
             (error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas) ->
                 new MetadataResponse.PartitionMetadata(error, partition, Optional.of(node0.id()), leaderEpoch,
                     Collections.singletonList(node0.id()), Collections.emptyList(),
-                        Collections.singletonList(node1.id())), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
+                        Collections.singletonList(node1.id()), -1L), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
         metadata.updateWithCurrentRequestVersion(emptyMetadataResponse(), false, 0L);
         metadata.updateWithCurrentRequestVersion(metadataResponse, false, 10L);
 
@@ -814,7 +814,7 @@ public class MetadataTest {
             (error, partition, leader, leaderEpoch, replicas, isr, offlineReplicas) ->
                 new MetadataResponse.PartitionMetadata(error, partition, Optional.of(node0.id()), leaderEpoch,
                     Collections.singletonList(node0.id()), Collections.emptyList(),
-                        Collections.emptyList()), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
+                        Collections.emptyList(), -1L), ApiKeys.METADATA.latestVersion(), Collections.emptyMap());
         metadata.updateWithCurrentRequestVersion(emptyMetadataResponse(), false, 0L);
         metadata.updateWithCurrentRequestVersion(metadataResponse, false, 10L);
 
@@ -1087,7 +1087,8 @@ public class MetadataTest {
             Optional.of(1),
             Arrays.asList(1, 2),
             Arrays.asList(1, 2),
-            Collections.emptyList()
+            Collections.emptyList(),
+            -1L
         );
         TopicPartition tp1 = new TopicPartition(topic, 1);
         MetadataResponse.PartitionMetadata partition1 =
@@ -1098,7 +1099,8 @@ public class MetadataTest {
             Optional.of(1),
             Arrays.asList(1, 2),
             Arrays.asList(1, 2),
-            Collections.emptyList()
+            Collections.emptyList(),
+            -1L
         );
         MetadataResponse.TopicMetadata topicMetadata = new MetadataResponse.TopicMetadata(
             Errors.NONE,

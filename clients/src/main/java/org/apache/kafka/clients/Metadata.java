@@ -417,7 +417,8 @@ public class Metadata implements Closeable {
                 newLeader.epoch,
                 existingMetadata.replicaIds,
                 existingMetadata.inSyncReplicaIds,
-                existingMetadata.offlineReplicaIds
+                existingMetadata.offlineReplicaIds,
+                existingMetadata.creationTimeMs
             );
             updatePartitionMetadata.add(updatedMetadata);
 

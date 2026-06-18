@@ -57,7 +57,8 @@ public class MetadataSnapshotTest {
                 Optional.of(10),
                 Arrays.asList(5, 6, 7),
                 Arrays.asList(5, 6, 7),
-                Collections.emptyList());
+                Collections.emptyList(),
+                -1L);
 
         Map<Integer, Node> nodesById = new HashMap<>();
         nodesById.put(6, new Node(6, "localhost", 2077));
@@ -98,7 +99,8 @@ public class MetadataSnapshotTest {
             Optional.of(10),
             Arrays.asList(5, 6, 7),
             Arrays.asList(5, 6, 7),
-            Collections.emptyList());
+            Collections.emptyList(),
+            -1L);
 
         Map<Integer, Node> nodesById = new HashMap<>();
         nodesById.put(6, new Node(6, "localhost", 2077));
@@ -133,7 +135,8 @@ public class MetadataSnapshotTest {
             Optional.of(10),
             Arrays.asList(5, 6, 7),
             Arrays.asList(5, 6, 7),
-            Collections.emptyList());
+            Collections.emptyList(),
+            -1L);
         topicsIds = new HashMap<>();
         Uuid topic2Id = Uuid.randomUuid();
         topicsIds.put(topic2Partition.topic(), topic2Id);
@@ -198,7 +201,8 @@ public class MetadataSnapshotTest {
             Optional.of(10),
             Arrays.asList(5, 6, 7),
             Arrays.asList(5, 6, 7),
-            Collections.emptyList());
+            Collections.emptyList(),
+            -1L);
 
         // Setup partition 1 with an unknown leader epoch.
         TopicPartition topicPartition2 = new TopicPartition("topic", 1);
@@ -209,7 +213,8 @@ public class MetadataSnapshotTest {
             Optional.empty(),
             Arrays.asList(5, 6, 7),
             Arrays.asList(5, 6, 7),
-            Collections.emptyList());
+            Collections.emptyList(),
+            -1L);
 
         Map<Integer, Node> nodesById = new HashMap<>();
         nodesById.put(5, new Node(5, "localhost", 2077));

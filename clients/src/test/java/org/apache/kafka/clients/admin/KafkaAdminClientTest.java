@@ -2750,10 +2750,10 @@ public class KafkaAdminClientTest {
             List<MetadataResponse.PartitionMetadata> partitionMetadata = new ArrayList<>();
             partitionMetadata.add(new MetadataResponse.PartitionMetadata(Errors.NONE, tp0,
                     Optional.of(nodes.get(0).id()), Optional.of(5), singletonList(nodes.get(0).id()),
-                    singletonList(nodes.get(0).id()), Collections.emptyList()));
+                    singletonList(nodes.get(0).id()), Collections.emptyList(), -1L));
             partitionMetadata.add(new MetadataResponse.PartitionMetadata(Errors.NONE, tp1,
                     Optional.of(nodes.get(1).id()), Optional.of(5), singletonList(nodes.get(1).id()),
-                    singletonList(nodes.get(1).id()), Collections.emptyList()));
+                    singletonList(nodes.get(1).id()), Collections.emptyList(), -1L));
 
             List<MetadataResponse.TopicMetadata> topicMetadata = new ArrayList<>();
             topicMetadata.add(new MetadataResponse.TopicMetadata(Errors.NONE, topic, false, partitionMetadata));
@@ -2874,7 +2874,8 @@ public class KafkaAdminClientTest {
                     Optional.of(10),
                     singletonList(leader.id()),
                     singletonList(leader.id()),
-                    singletonList(leader.id()));
+                    singletonList(leader.id()),
+                    -1L);
             env.kafkaClient().prepareResponse(RequestTestUtils
                     .metadataResponse(
                             env.cluster().nodes(),

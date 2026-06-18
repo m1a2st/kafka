@@ -40,34 +40,6 @@ public class TopicPartitionInfo {
      *
      * @param partition the partition id
      * @param leader the leader of the partition or null if there is none.
-     * @param replicas the replicas of the partition in the same order as the replica assignment (the preferred replica
-     *                 is the head of the list)
-     * @param isr the in-sync replicas
-     * @param elr the eligible leader replicas
-     * @param lastKnownElr the last known eligible leader replicas.
-     */
-    public TopicPartitionInfo(
-        int partition,
-        Node leader,
-        List<Node> replicas,
-        List<Node> isr,
-        List<Node> elr,
-        List<Node> lastKnownElr
-    ) {
-        this.partition = partition;
-        this.leader = leader;
-        this.replicas = Collections.unmodifiableList(replicas);
-        this.isr = Collections.unmodifiableList(isr);
-        this.elr = Collections.unmodifiableList(elr);
-        this.lastKnownElr = Collections.unmodifiableList(lastKnownElr);
-        this.creationTimeMs = OptionalLong.empty();
-    }
-
-    /**
-     * Create an instance of this class with the provided parameters.
-     *
-     * @param partition the partition id
-     * @param leader the leader of the partition or null if there is none.
      * @param replicas the replicas of the partition in the same order as the replica assignment
      * @param isr the in-sync replicas
      * @param elr the eligible leader replicas

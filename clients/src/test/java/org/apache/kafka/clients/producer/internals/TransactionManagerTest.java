@@ -2884,8 +2884,8 @@ public class TransactionManagerTest {
         Map<Integer, Node> nodesById = new HashMap<>();
         nodesById.put(node1.id(), node1);
         nodesById.put(node2.id(), node2);
-        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp0, Optional.of(node1.id()), Optional.empty(), null, null, null);
-        PartitionMetadata part2Metadata = new PartitionMetadata(Errors.NONE, tp1, Optional.of(node2.id()), Optional.empty(), null, null, null);
+        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp0, Optional.of(node1.id()), Optional.empty(), null, null, null, -1L);
+        PartitionMetadata part2Metadata = new PartitionMetadata(Errors.NONE, tp1, Optional.of(node2.id()), Optional.empty(), null, null, null, -1L);
         MetadataSnapshot metadataCache = new MetadataSnapshot(null, nodesById, Arrays.asList(part1Metadata, part2Metadata), Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap());
         Set<Node> nodes = new HashSet<>();
         nodes.add(node1);
@@ -2916,7 +2916,7 @@ public class TransactionManagerTest {
 
         // Try to drain a message destined for tp1, it should get drained.
         Node node1 = new Node(1, "localhost", 1112);
-        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp1, Optional.of(node1.id()), Optional.empty(), null, null, null);
+        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp1, Optional.of(node1.id()), Optional.empty(), null, null, null, -1L);
         MetadataSnapshot metadataCache = new MetadataSnapshot(null, Collections.singletonMap(node1.id(), node1), singletonList(part1Metadata), Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap());
         appendToAccumulator(tp1);
         Map<Integer, List<ProducerBatch>> drainedBatches = accumulator.drain(metadataCache, Collections.singleton(node1),
@@ -2937,7 +2937,7 @@ public class TransactionManagerTest {
         // Don't execute transactionManager.maybeAddPartitionToTransaction(tp0). This should result in an error on drain.
         appendToAccumulator(tp0);
         Node node1 = new Node(0, "localhost", 1111);
-        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp0, Optional.of(node1.id()), Optional.empty(), null, null, null);
+        PartitionMetadata part1Metadata = new PartitionMetadata(Errors.NONE, tp0, Optional.of(node1.id()), Optional.empty(), null, null, null, -1L);
         MetadataSnapshot metadataCache = new MetadataSnapshot(null, Collections.singletonMap(node1.id(), node1), singletonList(part1Metadata), Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap());
 
         Set<Node> nodes = new HashSet<>();

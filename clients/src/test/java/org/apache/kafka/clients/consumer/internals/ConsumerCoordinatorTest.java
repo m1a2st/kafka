@@ -2230,7 +2230,7 @@ public abstract class ConsumerCoordinatorTest {
             MetadataResponse.PartitionMetadata partitionMetadata =
                 new MetadataResponse.PartitionMetadata(Errors.NONE, new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, 0),
                         Optional.of(node.id()), Optional.empty(), singletonList(node.id()), singletonList(node.id()),
-                        singletonList(node.id()));
+                        singletonList(node.id()), -1L);
             MetadataResponse.TopicMetadata topicMetadata = new MetadataResponse.TopicMetadata(Errors.NONE,
                 Topic.GROUP_METADATA_TOPIC_NAME, true, singletonList(partitionMetadata));
 
@@ -4129,7 +4129,7 @@ public abstract class ConsumerCoordinatorTest {
                 List<Integer> replicaIds = topicPartitionCountEntry.getValue().get(i);
                 partitionMetadata.add(new PartitionMetadata(
                         Errors.NONE, tp, Optional.of(replicaIds.get(0)), Optional.empty(),
-                        replicaIds, replicaIds, Collections.emptyList()));
+                        replicaIds, replicaIds, Collections.emptyList(), -1L));
             }
 
             topicMetadata.add(new MetadataResponse.TopicMetadata(Errors.NONE, topic, Uuid.ZERO_UUID,
