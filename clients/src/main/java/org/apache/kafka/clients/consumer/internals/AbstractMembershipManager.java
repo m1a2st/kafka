@@ -325,6 +325,7 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
         }
 
         updateMemberEpoch(memberEpoch(response));
+        onHeartbeatResponseProcessed(response);
 
         Optional<Map<Uuid, SortedSet<Integer>>> assignment = extractAssignment(response);
         if (assignment.isPresent()) {
@@ -337,6 +338,15 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
             }
             processAssignmentReceived(assignment.get());
         }
+    }
+
+    /**
+     * Hook called after a successful heartbeat response is processed (epoch updated) but before
+     * the assignment is extracted and reconciled. Subclasses can override this to extract
+     * additional data from the response.
+     */
+    protected void onHeartbeatResponseProcessed(R response) {
+        // Default no-op; overridden by subclasses (e.g., ConsumerMembershipManager for KIP-1327).
     }
 
     private void throwIfUnexpectedError(R response) {

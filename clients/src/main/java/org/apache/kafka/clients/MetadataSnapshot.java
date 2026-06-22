@@ -101,7 +101,7 @@ public class MetadataSnapshot {
         }
     }
 
-    Optional<PartitionMetadata> partitionMetadata(TopicPartition topicPartition) {
+    public Optional<PartitionMetadata> partitionMetadata(TopicPartition topicPartition) {
         return Optional.ofNullable(metadataByPartition.get(topicPartition));
     }
 

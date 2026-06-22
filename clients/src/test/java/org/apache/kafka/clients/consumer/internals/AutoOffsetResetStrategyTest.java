@@ -119,4 +119,40 @@ public class AutoOffsetResetStrategyTest {
         assertEquals(byDuration1, byDuration2);
         assertNotEquals(byDuration1, byDuration3);
     }
+
+    @Test
+    public void testNullableValidatorAcceptsNull() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertDoesNotThrow(() -> validator.ensureValid("test", null));
+    }
+
+    @Test
+    public void testNullableValidatorAcceptsEarliest() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertDoesNotThrow(() -> validator.ensureValid("test", "earliest"));
+    }
+
+    @Test
+    public void testNullableValidatorAcceptsLatest() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertDoesNotThrow(() -> validator.ensureValid("test", "latest"));
+    }
+
+    @Test
+    public void testNullableValidatorAcceptsByDuration() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertDoesNotThrow(() -> validator.ensureValid("test", "by_duration:PT1H"));
+    }
+
+    @Test
+    public void testNullableValidatorRejectsNone() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertThrows(ConfigException.class, () -> validator.ensureValid("test", "none"));
+    }
+
+    @Test
+    public void testNullableValidatorRejectsInvalid() {
+        AutoOffsetResetStrategy.NullableValidator validator = new AutoOffsetResetStrategy.NullableValidator();
+        assertThrows(ConfigException.class, () -> validator.ensureValid("test", "invalid_value"));
+    }
 }

@@ -133,7 +133,11 @@ public final class ConsumerUtils {
     public static SubscriptionState createSubscriptionState(ConsumerConfig config, LogContext logContext) {
         String s = config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG);
         AutoOffsetResetStrategy strategy = AutoOffsetResetStrategy.fromString(s);
-        return new SubscriptionState(logContext, strategy);
+        String newPartitionsConfig = config.getString(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG);
+        AutoOffsetResetStrategy newPartitionsStrategy = newPartitionsConfig != null
+                ? AutoOffsetResetStrategy.fromString(newPartitionsConfig)
+                : null;
+        return new SubscriptionState(logContext, strategy, newPartitionsStrategy);
     }
 
     public static Metrics createMetrics(ConsumerConfig config, Time time) {

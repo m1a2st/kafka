@@ -181,6 +181,26 @@ public class ConsumerConfig extends AbstractConfig {
             "producers could start to send messages to newly added partitions (i.e. no initial offsets exist yet) before consumers reset their offsets.";
 
     /**
+     * <code>auto.offset.reset.new.partitions</code>
+     */
+    public static final String AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG = "auto.offset.reset.new.partitions";
+    public static final String AUTO_OFFSET_RESET_NEW_PARTITIONS_DOC = "Specifies the offset reset policy to apply to " +
+            "newly expanded partitions — partitions whose creation timestamp on the broker postdates the consumer group's " +
+            "creation timestamp. When a partition has a committed offset that is out of the available range (e.g., due to " +
+            "log truncation), the consumer applies the base <code>auto.offset.reset</code> policy regardless of the partition's " +
+            "creation timestamp. This config only affects partitions with no committed offset at all." +
+            "<ul><li>If a partition has no committed offset and is classified as newly expanded " +
+            "(partition.creationTime &gt; group.creationTime), the consumer applies this config.</li>" +
+            "<li>If a partition has no committed offset and is classified as pre-existing " +
+            "(partition.creationTime &le; group.creationTime), the consumer applies the base <code>auto.offset.reset</code>.</li>" +
+            "<li>If either the partition creation timestamp or the group creation timestamp is unavailable, " +
+            "the consumer falls back to the base <code>auto.offset.reset</code>.</li></ul>" +
+            "<p>When this config is unset (default null), the consumer applies the base <code>auto.offset.reset</code> " +
+            "uniformly to all partitions without committed offsets.</p>" +
+            "<p>This config requires <code>group.protocol=consumer</code> (KIP-848 modern consumer). " +
+            "Setting it with the classic protocol or in Kafka Streams will result in a ConfigException.</p>";
+
+    /**
      * <code>fetch.min.bytes</code>
      */
     public static final String FETCH_MIN_BYTES_CONFIG = "fetch.min.bytes";
@@ -398,7 +418,8 @@ public class ConsumerConfig extends AbstractConfig {
     private static final List<String> CLASSIC_PROTOCOL_UNSUPPORTED_CONFIGS = List.of(
             GROUP_REMOTE_ASSIGNOR_CONFIG,
             SHARE_ACKNOWLEDGEMENT_MODE_CONFIG,
-            SHARE_ACQUIRE_MODE_CONFIG
+            SHARE_ACQUIRE_MODE_CONFIG,
+            AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG
     );
 
     /**
@@ -547,6 +568,12 @@ public class ConsumerConfig extends AbstractConfig {
                                         new AutoOffsetResetStrategy.Validator(),
                                         Importance.MEDIUM,
                                         AUTO_OFFSET_RESET_DOC)
+                                .define(AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG,
+                                        Type.STRING,
+                                        null,
+                                        new AutoOffsetResetStrategy.NullableValidator(),
+                                        Importance.MEDIUM,
+                                        AUTO_OFFSET_RESET_NEW_PARTITIONS_DOC)
                                 .define(CHECK_CRCS_CONFIG,
                                         Type.BOOLEAN,
                                         true,

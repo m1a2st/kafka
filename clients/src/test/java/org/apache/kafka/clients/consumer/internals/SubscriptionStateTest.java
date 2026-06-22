@@ -20,6 +20,7 @@ import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
+import org.apache.kafka.clients.consumer.NoOffsetForPartitionException;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.SubscriptionPattern;
 import org.apache.kafka.clients.consumer.internals.SubscriptionState.LogTruncation;
@@ -37,8 +38,10 @@ import org.junit.jupiter.api.Test;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -1157,5 +1160,210 @@ public class SubscriptionStateTest {
         fetchablePartitions = state.fetchablePartitions(isBuffered);
         assertTrue(predicateEvaluated.get());
         assertEquals(tp0, fetchablePartitions.get(0));
+    }
+
+    // ==================== KIP-1327 Classification Tests ====================
+
+    @Test
+    public void testResetInitializingPositionsWithNewPartitionsStrategyClassifiesNewPartition() {
+        // When partition.creationTime > group.creationTime, applies newPartitionsResetStrategy (EARLIEST)
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(1000L);
+
+        // Partition was created after the group (creationTime=2000 > groupCreationTime=1000)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(2000L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.EARLIEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsWithNewPartitionsStrategyClassifiesPreExistingPartition() {
+        // When partition.creationTime <= group.creationTime, applies base strategy (LATEST)
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(2000L);
+
+        // Partition was created before the group (creationTime=1000 <= groupCreationTime=2000)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(1000L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsDefersWhenPartitionNotInMetadataCache() {
+        // When partition creation time lookup returns OptionalLong.empty(), the partition should NOT be reset
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(1000L);
+
+        // Partition not in metadata cache
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.empty();
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        // Partition should NOT be reset - remains in shouldInitialize state
+        assertFalse(state.isOffsetResetNeeded(tp0));
+        assertTrue(state.initializingPartitions().contains(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsFallsBackWhenGroupCreationTimeUnknown() {
+        // When groupCreationTimeMs is -1, falls back to base strategy
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        // groupCreationTimeMs defaults to -1, do not set it
+
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(2000L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsFallsBackWhenPartitionCreationTimeIsMinusOne() {
+        // When partition creation time is -1 (pre-upgrade), falls back to base strategy
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(1000L);
+
+        // Partition creation time is -1 (pre-upgrade partition)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(-1L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsDisabledWhenNewPartitionsStrategyNull() {
+        // When newPartitionsResetStrategy is null, uses base strategy for all
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, null);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(1000L);
+
+        // Even though partition.creationTime > group.creationTime, base strategy should be used
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(2000L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testSetGroupCreationTimeMs() {
+        // Tests setter/getter for group creation time
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+
+        // Default value should be -1
+        assertEquals(-1L, state.groupCreationTimeMs());
+
+        // Set a value and verify
+        state.setGroupCreationTimeMs(5000L);
+        assertEquals(5000L, state.groupCreationTimeMs());
+
+        // Update the value
+        state.setGroupCreationTimeMs(10000L);
+        assertEquals(10000L, state.groupCreationTimeMs());
+    }
+
+    @Test
+    public void testNewPartitionsResetStrategyAccessor() {
+        // Tests accessor when strategy is configured
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        assertEquals(AutoOffsetResetStrategy.EARLIEST, state.newPartitionsResetStrategy());
+
+        // Tests accessor when strategy is null (feature disabled)
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, null);
+        assertNull(state.newPartitionsResetStrategy());
+    }
+
+    @Test
+    public void testResetInitializingPositionsEqualTimestampIsPreExisting() {
+        // When partition.creationTime == group.creationTime, should be classified as pre-existing (not new)
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(1000L);
+
+        // Partition creation time equals group creation time
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(1000L);
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+    }
+
+    @Test
+    public void testResetInitializingPositionsMixedClassification() {
+        // Multiple partitions with different classifications in the same call
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0, tp1));
+        state.setGroupCreationTimeMs(1000L);
+
+        // tp0: pre-existing (creationTime=500 < groupCreationTime=1000)
+        // tp1: newly expanded (creationTime=2000 > groupCreationTime=1000)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> {
+            if (tp.equals(tp0)) return OptionalLong.of(500L);
+            else return OptionalLong.of(2000L);
+        };
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        // tp0 should use base strategy (LATEST)
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.LATEST, state.resetStrategy(tp0));
+        // tp1 should use new-partitions strategy (EARLIEST)
+        assertTrue(state.isOffsetResetNeeded(tp1));
+        assertEquals(AutoOffsetResetStrategy.EARLIEST, state.resetStrategy(tp1));
+    }
+
+    @Test
+    public void testResetInitializingPositionsMixedWithDeferral() {
+        // Mix of classified and deferred partitions
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.LATEST, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0, tp1));
+        state.setGroupCreationTimeMs(1000L);
+
+        // tp0: classified as newly expanded (creationTime=2000 > groupCreationTime=1000)
+        // tp1: deferred (not in metadata cache)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> {
+            if (tp.equals(tp0)) return OptionalLong.of(2000L);
+            else return OptionalLong.empty();
+        };
+
+        state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup);
+
+        // tp0 should be reset with new-partitions strategy
+        assertTrue(state.isOffsetResetNeeded(tp0));
+        assertEquals(AutoOffsetResetStrategy.EARLIEST, state.resetStrategy(tp0));
+        // tp1 should remain in initializing state (deferred)
+        assertFalse(state.isOffsetResetNeeded(tp1));
+        assertTrue(state.initializingPartitions().contains(tp1));
+    }
+
+    @Test
+    public void testResetInitializingPositionsBaseStrategyNoneThrowsForPreExisting() {
+        // When base strategy is NONE and partition is classified as pre-existing,
+        // should throw NoOffsetForPartitionException
+        state = new SubscriptionState(new LogContext(), AutoOffsetResetStrategy.NONE, AutoOffsetResetStrategy.EARLIEST);
+        state.assignFromUser(Set.of(tp0));
+        state.setGroupCreationTimeMs(2000L);
+
+        // Partition is pre-existing (creationTime=1000 < groupCreationTime=2000)
+        Function<TopicPartition, OptionalLong> partitionCreationTimeLookup = tp -> OptionalLong.of(1000L);
+
+        assertThrows(NoOffsetForPartitionException.class, () ->
+            state.resetInitializingPositions(tp -> true, partitionCreationTimeLookup));
     }
 }

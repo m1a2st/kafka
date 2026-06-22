@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -337,9 +338,18 @@ public final class OffsetsRequestManager implements RequestManager, ClusterResou
     private CompletableFuture<Void> initWithPartitionOffsetsIfNeeded(Set<TopicPartition> initializingPartitions) {
         CompletableFuture<Void> result = new CompletableFuture<>();
         try {
-            // Mark partitions that need reset, using the configured reset strategy. If no
-            // strategy is defined, this will raise a NoOffsetForPartitionException exception.
-            subscriptionState.resetInitializingPositions(initializingPartitions::contains);
+            if (subscriptionState.newPartitionsResetStrategy() != null) {
+                // KIP-1327: Use per-partition classification based on creation timestamps.
+                // Force metadata refresh for partitions that lack CreationTimeMs in cache.
+                maybeRequestMetadataForPartitionsLackingCreationTime(initializingPartitions);
+                subscriptionState.resetInitializingPositions(
+                        initializingPartitions::contains,
+                        this::partitionCreationTimeMsFromMetadata);
+            } else {
+                // Mark partitions that need reset, using the configured reset strategy. If no
+                // strategy is defined, this will raise a NoOffsetForPartitionException exception.
+                subscriptionState.resetInitializingPositions(initializingPartitions::contains);
+            }
         } catch (Exception e) {
             result.completeExceptionally(e);
             return result;
@@ -348,6 +358,38 @@ public final class OffsetsRequestManager implements RequestManager, ClusterResou
         // For partitions awaiting reset, generate a ListOffset request to retrieve the partition
         // offsets according to the strategy (ex. earliest, latest), and update the positions.
         return resetPositionsIfNeeded();
+    }
+
+    /**
+     * Look up the partition creation time from the metadata cache.
+     * Returns {@link OptionalLong#empty()} if the partition is not in the cache.
+     * Returns an OptionalLong with -1 if the partition is in the cache but has no creation time.
+     */
+    private OptionalLong partitionCreationTimeMsFromMetadata(TopicPartition tp) {
+        return metadata.fetchMetadataSnapshot().partitionMetadata(tp)
+                .map(pm -> OptionalLong.of(pm.creationTimeMs))
+                .orElse(OptionalLong.empty());
+    }
+
+    /**
+     * If auto.offset.reset.new.partitions is configured and any initializing partition lacks
+     * CreationTimeMs in the metadata cache, request a metadata update so that the creation time
+     * will be available on the next poll cycle.
+     */
+    private void maybeRequestMetadataForPartitionsLackingCreationTime(Set<TopicPartition> initializingPartitions) {
+        boolean needsRefresh = false;
+        for (TopicPartition tp : initializingPartitions) {
+            OptionalLong creationTime = partitionCreationTimeMsFromMetadata(tp);
+            if (creationTime.isEmpty()) {
+                log.debug("Partition {} has no creation time in metadata cache; requesting metadata refresh " +
+                        "for new-partition classification (KIP-1327).", tp);
+                needsRefresh = true;
+                break;
+            }
+        }
+        if (needsRefresh) {
+            metadata.requestUpdate(false);
+        }
     }
 
     /**

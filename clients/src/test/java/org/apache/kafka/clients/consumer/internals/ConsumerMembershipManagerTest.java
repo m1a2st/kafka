@@ -3276,4 +3276,37 @@ public class ConsumerMembershipManagerTest {
             sleepMs = 0;
         }
     }
+
+    @Test
+    public void testGroupCreationTimeMsExtractedFromHeartbeatResponse() {
+        ConsumerMembershipManager membershipManager = createMemberInStableState();
+
+        // Build a heartbeat response with GroupCreationTimeMs set to 1000L
+        ConsumerGroupHeartbeatResponse response = new ConsumerGroupHeartbeatResponse(
+                new ConsumerGroupHeartbeatResponseData()
+                        .setErrorCode(Errors.NONE.code())
+                        .setMemberId(membershipManager.memberId())
+                        .setMemberEpoch(MEMBER_EPOCH)
+                        .setGroupCreationTimeMs(1000L));
+
+        membershipManager.onHeartbeatSuccess(response);
+
+        verify(subscriptionState).setGroupCreationTimeMs(1000L);
+    }
+
+    @Test
+    public void testGroupCreationTimeMsDefaultMinusOneWhenNotInResponse() {
+        ConsumerMembershipManager membershipManager = createMemberInStableState();
+
+        // Build a heartbeat response without explicitly setting GroupCreationTimeMs (defaults to -1)
+        ConsumerGroupHeartbeatResponse response = new ConsumerGroupHeartbeatResponse(
+                new ConsumerGroupHeartbeatResponseData()
+                        .setErrorCode(Errors.NONE.code())
+                        .setMemberId(membershipManager.memberId())
+                        .setMemberEpoch(MEMBER_EPOCH));
+
+        membershipManager.onHeartbeatSuccess(response);
+
+        verify(subscriptionState).setGroupCreationTimeMs(-1L);
+    }
 }

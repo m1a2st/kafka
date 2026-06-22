@@ -292,4 +292,49 @@ public class ConsumerConfigTest {
             }
         }
     }
+
+    @Test
+    public void testAutoOffsetResetNewPartitionsDefaultIsNull() {
+        properties.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
+        ConsumerConfig config = new ConsumerConfig(properties);
+        assertNull(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG));
+    }
+
+    @Test
+    public void testAutoOffsetResetNewPartitionsAcceptsValidValues() {
+        properties.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
+
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "earliest");
+        ConsumerConfig config1 = new ConsumerConfig(properties);
+        assertEquals("earliest", config1.getString(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG));
+
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "latest");
+        ConsumerConfig config2 = new ConsumerConfig(properties);
+        assertEquals("latest", config2.getString(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG));
+
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "by_duration:PT1H");
+        ConsumerConfig config3 = new ConsumerConfig(properties);
+        assertEquals("by_duration:PT1H", config3.getString(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG));
+    }
+
+    @Test
+    public void testAutoOffsetResetNewPartitionsRejectsNone() {
+        properties.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "none");
+        assertThrows(ConfigException.class, () -> new ConsumerConfig(properties));
+    }
+
+    @Test
+    public void testAutoOffsetResetNewPartitionsRejectsInvalidValues() {
+        properties.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "invalid");
+        assertThrows(ConfigException.class, () -> new ConsumerConfig(properties));
+    }
+
+    @Test
+    public void testAutoOffsetResetNewPartitionsRejectedWithClassicProtocol() {
+        properties.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "classic");
+        properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_NEW_PARTITIONS_CONFIG, "earliest");
+        assertThrows(ConfigException.class, () -> new ConsumerConfig(properties));
+    }
 }

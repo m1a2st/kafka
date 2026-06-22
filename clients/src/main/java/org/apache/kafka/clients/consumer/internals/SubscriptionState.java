@@ -44,8 +44,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -111,6 +113,12 @@ public class SubscriptionState {
     /* Default offset reset strategy */
     private final AutoOffsetResetStrategy defaultResetStrategy;
 
+    /* Offset reset strategy for newly expanded partitions (KIP-1327). Null means feature disabled. */
+    private final AutoOffsetResetStrategy newPartitionsResetStrategy;
+
+    /* The creation time of the consumer group, as reported by the broker via heartbeat response. -1 if unknown. */
+    private volatile long groupCreationTimeMs = -1;
+
     /* User-provided listener to be invoked when assignment changes */
     private Optional<ConsumerRebalanceListener> rebalanceListener = Optional.empty();
 
@@ -155,8 +163,14 @@ public class SubscriptionState {
     }
 
     public SubscriptionState(LogContext logContext, AutoOffsetResetStrategy defaultResetStrategy) {
+        this(logContext, defaultResetStrategy, null);
+    }
+
+    public SubscriptionState(LogContext logContext, AutoOffsetResetStrategy defaultResetStrategy,
+                             AutoOffsetResetStrategy newPartitionsResetStrategy) {
         this.log = logContext.logger(this.getClass());
         this.defaultResetStrategy = defaultResetStrategy;
+        this.newPartitionsResetStrategy = newPartitionsResetStrategy;
         this.subscription = new TreeSet<>(); // use a sorted set for better logging
         this.assignedTopicIds = new TreeSet<>();
         this.assignment = new PartitionStates<>();
@@ -826,6 +840,29 @@ public class SubscriptionState {
         return defaultResetStrategy != AutoOffsetResetStrategy.NONE;
     }
 
+    /**
+     * Returns the configured new-partitions reset strategy, or null if the feature is disabled.
+     */
+    public AutoOffsetResetStrategy newPartitionsResetStrategy() {
+        return newPartitionsResetStrategy;
+    }
+
+    /**
+     * Sets the group creation time as reported by the broker in the heartbeat response.
+     *
+     * @param groupCreationTimeMs the group creation time in milliseconds, or -1 if unknown.
+     */
+    public void setGroupCreationTimeMs(long groupCreationTimeMs) {
+        this.groupCreationTimeMs = groupCreationTimeMs;
+    }
+
+    /**
+     * Returns the group creation time as reported by the broker, or -1 if unknown.
+     */
+    public long groupCreationTimeMs() {
+        return groupCreationTimeMs;
+    }
+
     public synchronized boolean isOffsetResetNeeded(TopicPartition partition) {
         return assignedState(partition).awaitingReset();
     }
@@ -880,6 +917,107 @@ public class SubscriptionState {
 
         if (!partitionsWithNoOffsets.isEmpty())
             throw new NoOffsetForPartitionException(partitionsWithNoOffsets);
+    }
+
+    /**
+     * Request reset for partitions that require a position, using per-partition classification
+     * based on creation timestamps (KIP-1327).
+     *
+     * <p>If {@code newPartitionsResetStrategy} is configured, partitions are classified as follows:
+     * <ul>
+     *     <li>If the partition is not yet in the metadata cache (creation time lookup returns empty),
+     *         the offset reset decision is deferred until metadata is refreshed.</li>
+     *     <li>If the group creation time is -1 (pre-upgrade group) or the partition creation time
+     *         is -1 (pre-upgrade partition), the base {@code defaultResetStrategy} is applied.</li>
+     *     <li>If {@code partitionCreationTimeMs > groupCreationTimeMs}, the partition is classified
+     *         as newly expanded and {@code newPartitionsResetStrategy} is applied.</li>
+     *     <li>Otherwise, the base {@code defaultResetStrategy} is applied.</li>
+     * </ul>
+     *
+     * @param initPartitionsToInclude Initializing partitions to include in the reset.
+     * @param partitionCreationTimeMsLookup Function to look up partition creation time from metadata.
+     *                                      Returns {@link OptionalLong#empty()} if the partition is not in
+     *                                      the metadata cache (triggers deferral). Returns
+     *                                      {@code OptionalLong.of(-1)} if the partition is in the cache
+     *                                      but has no creation time (pre-upgrade, falls back to base strategy).
+     * @throws NoOffsetForPartitionException If there are partitions assigned that require a position but
+     *                                       there is no reset strategy configured.
+     */
+    public synchronized void resetInitializingPositions(Predicate<TopicPartition> initPartitionsToInclude,
+                                                        Function<TopicPartition, OptionalLong> partitionCreationTimeMsLookup) {
+        if (newPartitionsResetStrategy == null) {
+            // Feature disabled — use existing behavior
+            resetInitializingPositions(initPartitionsToInclude);
+            return;
+        }
+
+        final long cachedGroupCreationTimeMs = this.groupCreationTimeMs;
+        final Set<TopicPartition> partitionsWithNoOffsets = new HashSet<>();
+
+        assignment.forEach((tp, partitionState) -> {
+            if (partitionState.shouldInitialize() && initPartitionsToInclude.test(tp)) {
+                AutoOffsetResetStrategy strategyToApply = classifyPartition(
+                        tp, cachedGroupCreationTimeMs, partitionCreationTimeMsLookup);
+
+                if (strategyToApply == null) {
+                    // Defer: partition not in metadata cache yet. Skip it so it remains in
+                    // shouldInitialize state and will be retried after metadata refresh.
+                    log.debug("Deferring offset reset for partition {} until metadata is refreshed " +
+                            "with CreationTimeMs (KIP-1327).", tp);
+                } else if (strategyToApply == AutoOffsetResetStrategy.NONE) {
+                    partitionsWithNoOffsets.add(tp);
+                } else {
+                    requestOffsetReset(tp, strategyToApply);
+                }
+            }
+        });
+
+        if (!partitionsWithNoOffsets.isEmpty())
+            throw new NoOffsetForPartitionException(partitionsWithNoOffsets);
+    }
+
+    /**
+     * Classify a partition and return the appropriate reset strategy based on KIP-1327 rules.
+     *
+     * @return the strategy to apply, or {@code null} if the offset reset should be deferred
+     *         (partition not yet in metadata cache).
+     */
+    private AutoOffsetResetStrategy classifyPartition(TopicPartition tp,
+                                                      long cachedGroupCreationTimeMs,
+                                                      Function<TopicPartition, OptionalLong> partitionCreationTimeMsLookup) {
+        // If group creation time is unknown (pre-upgrade group), fall back to base strategy
+        if (cachedGroupCreationTimeMs == -1) {
+            log.trace("Group creation time is unknown; applying base auto.offset.reset for partition {}", tp);
+            return defaultResetStrategy;
+        }
+
+        // Look up partition creation time from metadata cache
+        OptionalLong partitionCreationTimeMs = partitionCreationTimeMsLookup.apply(tp);
+
+        // If the partition is not in the metadata cache at all, defer the decision
+        if (partitionCreationTimeMs.isEmpty()) {
+            return null;
+        }
+
+        // If the partition is in the cache but has no creation time (pre-upgrade partition),
+        // fall back to base strategy
+        long creationTime = partitionCreationTimeMs.getAsLong();
+        if (creationTime == -1) {
+            log.trace("Partition creation time is -1 (pre-upgrade) for {}; applying base auto.offset.reset", tp);
+            return defaultResetStrategy;
+        }
+
+        // Classify based on timestamp comparison
+        if (creationTime > cachedGroupCreationTimeMs) {
+            log.debug("Partition {} is classified as newly expanded (partition.creationTime={} > group.creationTime={}); " +
+                    "applying auto.offset.reset.new.partitions={}", tp, creationTime, cachedGroupCreationTimeMs,
+                    newPartitionsResetStrategy);
+            return newPartitionsResetStrategy;
+        } else {
+            log.trace("Partition {} is classified as pre-existing (partition.creationTime={} <= group.creationTime={}); " +
+                    "applying base auto.offset.reset", tp, creationTime, cachedGroupCreationTimeMs);
+            return defaultResetStrategy;
+        }
     }
 
     public synchronized void resetInitializingPositions() {

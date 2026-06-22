@@ -208,6 +208,11 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
         return rackId;
     }
 
+    /**
+     * Whether the one-time WARN log for missing group creation time has been emitted.
+     */
+    private boolean groupCreationTimeWarnLogged = false;
+
     @Override
     protected short errorCode(ConsumerGroupHeartbeatResponse response) {
         return response.data().errorCode();
@@ -216,6 +221,28 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
     @Override
     protected int memberEpoch(ConsumerGroupHeartbeatResponse response) {
         return response.data().memberEpoch();
+    }
+
+    /**
+     * Extract and cache the group creation time from the heartbeat response (KIP-1327).
+     * If auto.offset.reset.new.partitions is configured but the group creation time is unavailable
+     * (pre-upgrade group), emit a one-time WARN log.
+     */
+    @Override
+    protected void onHeartbeatResponseProcessed(ConsumerGroupHeartbeatResponse response) {
+        long groupCreationTimeMs = response.data().groupCreationTimeMs();
+        subscriptions.setGroupCreationTimeMs(groupCreationTimeMs);
+
+        if (!groupCreationTimeWarnLogged
+                && subscriptions.newPartitionsResetStrategy() != null
+                && groupCreationTimeMs == -1) {
+            log.warn("auto.offset.reset.new.partitions is configured, but this consumer group was created " +
+                    "before the broker was upgraded to support KIP-1327, so its creation time is unavailable. " +
+                    "New-partition classification is disabled for this group; the base auto.offset.reset policy " +
+                    "will apply to all partitions without a committed offset. To enable classification, delete " +
+                    "and re-create the consumer group.");
+            groupCreationTimeWarnLogged = true;
+        }
     }
 
     @Override

@@ -179,4 +179,45 @@ public class AutoOffsetResetStrategy {
             return "[" + values + "]";
         }
     }
+
+    /**
+     * Validator that allows null values (for optional configs like auto.offset.reset.new.partitions).
+     * When the value is non-null, it validates the same as {@link Validator} but excludes 'none'
+     * since it is not a valid value for the new-partitions policy.
+     */
+    public static class NullableValidator implements ConfigDef.Validator {
+        @Override
+        public void ensureValid(String name, Object value) {
+            if (value == null) {
+                return;
+            }
+            String offsetStrategy = (String) value;
+            try {
+                AutoOffsetResetStrategy strategy = fromString(offsetStrategy);
+                if (strategy.type() == StrategyType.NONE) {
+                    throw new ConfigException(name, value, "Invalid value `" + offsetStrategy + "` for configuration " +
+                            name + ". The value must be either 'earliest', 'latest', or of the format 'by_duration:<PnDTnHnMn.nS.>'. " +
+                            "'none' is not supported for this configuration.");
+                }
+            } catch (ConfigException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ConfigException(name, value, "Invalid value `" + offsetStrategy + "` for configuration " +
+                        name + ". The value must be either 'earliest', 'latest', or of the format 'by_duration:<PnDTnHnMn.nS.>'.");
+            }
+        }
+
+        @Override
+        public String toString() {
+            String values = Arrays.stream(StrategyType.values())
+                .filter(strategyType -> strategyType != StrategyType.NONE)
+                .map(strategyType -> {
+                    if (strategyType == StrategyType.BY_DURATION) {
+                        return "by_duration:PnDTnHnMn.nS";
+                    }
+                    return strategyType.toString();
+                }).collect(Collectors.joining(", "));
+            return "[null, " + values + "]";
+        }
+    }
 }

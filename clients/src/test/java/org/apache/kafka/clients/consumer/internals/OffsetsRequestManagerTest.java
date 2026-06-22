@@ -19,6 +19,7 @@ package org.apache.kafka.clients.consumer.internals;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.Metadata;
+import org.apache.kafka.clients.MetadataSnapshot;
 import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.Cluster;
@@ -62,6 +63,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -1185,5 +1188,93 @@ public class OffsetsRequestManagerTest {
                 authenticationException,
                 response
         );
+    }
+
+    @Test
+    public void testInitWithPartitionOffsetsUsesClassificationWhenNewPartitionsStrategyConfigured() {
+        TopicPartition tp = new TopicPartition("topic1", 0);
+        Set<TopicPartition> initPartitions = Collections.singleton(tp);
+        Metadata.LeaderAndEpoch leaderAndEpoch = testLeaderEpoch(LEADER_1, Optional.of(1));
+
+        mockAssignedPartitionsMissingPositions(initPartitions, initPartitions, leaderAndEpoch);
+
+        // Configure newPartitionsResetStrategy to be non-null (KIP-1327 enabled)
+        when(subscriptionState.newPartitionsResetStrategy()).thenReturn(AutoOffsetResetStrategy.EARLIEST);
+
+        // Mock metadata snapshot to return a partition metadata so no metadata refresh is needed
+        MetadataSnapshot metadataSnapshot = mock(MetadataSnapshot.class);
+        when(metadata.fetchMetadataSnapshot()).thenReturn(metadataSnapshot);
+        when(metadataSnapshot.partitionMetadata(tp)).thenReturn(Optional.empty());
+
+        long internalFetchCommittedTimeout = time.milliseconds() + DEFAULT_API_TIMEOUT_MS;
+        CompletableFuture<CommitRequestManager.OffsetFetchResult> fetchResult = new CompletableFuture<>();
+        when(commitRequestManager.fetchOffsets(initPartitions, internalFetchCommittedTimeout)).thenReturn(fetchResult);
+
+        requestManager.updateFetchPositions(time.milliseconds());
+
+        // Complete the committed offsets fetch with no committed offsets
+        when(subscriptionState.initializingPartitions()).thenReturn(initPartitions);
+        fetchResult.complete(new CommitRequestManager.OffsetFetchResult(
+                Collections.emptyMap(), Collections.emptyMap()));
+
+        // Verify that the two-argument overload (with Function) was called
+        verify(subscriptionState).resetInitializingPositions(any(Predicate.class), any(Function.class));
+    }
+
+    @Test
+    public void testInitWithPartitionOffsetsUsesDefaultWhenNewPartitionsStrategyNull() {
+        TopicPartition tp = new TopicPartition("topic1", 0);
+        Set<TopicPartition> initPartitions = Collections.singleton(tp);
+        Metadata.LeaderAndEpoch leaderAndEpoch = testLeaderEpoch(LEADER_1, Optional.of(1));
+
+        mockAssignedPartitionsMissingPositions(initPartitions, initPartitions, leaderAndEpoch);
+
+        // Configure newPartitionsResetStrategy to be null (KIP-1327 disabled)
+        when(subscriptionState.newPartitionsResetStrategy()).thenReturn(null);
+
+        long internalFetchCommittedTimeout = time.milliseconds() + DEFAULT_API_TIMEOUT_MS;
+        CompletableFuture<CommitRequestManager.OffsetFetchResult> fetchResult = new CompletableFuture<>();
+        when(commitRequestManager.fetchOffsets(initPartitions, internalFetchCommittedTimeout)).thenReturn(fetchResult);
+
+        requestManager.updateFetchPositions(time.milliseconds());
+
+        // Complete the committed offsets fetch with no committed offsets
+        when(subscriptionState.initializingPartitions()).thenReturn(initPartitions);
+        fetchResult.complete(new CommitRequestManager.OffsetFetchResult(
+                Collections.emptyMap(), Collections.emptyMap()));
+
+        // Verify that the single-argument overload (Predicate only) was called
+        verify(subscriptionState).resetInitializingPositions(any(Predicate.class));
+    }
+
+    @Test
+    public void testMetadataRefreshRequestedWhenPartitionLacksCreationTime() {
+        TopicPartition tp = new TopicPartition("topic1", 0);
+        Set<TopicPartition> initPartitions = Collections.singleton(tp);
+        Metadata.LeaderAndEpoch leaderAndEpoch = testLeaderEpoch(LEADER_1, Optional.of(1));
+
+        mockAssignedPartitionsMissingPositions(initPartitions, initPartitions, leaderAndEpoch);
+
+        // Configure newPartitionsResetStrategy to be non-null (KIP-1327 enabled)
+        when(subscriptionState.newPartitionsResetStrategy()).thenReturn(AutoOffsetResetStrategy.EARLIEST);
+
+        // Mock metadata snapshot where the partition is not present (returns Optional.empty())
+        MetadataSnapshot metadataSnapshot = mock(MetadataSnapshot.class);
+        when(metadata.fetchMetadataSnapshot()).thenReturn(metadataSnapshot);
+        when(metadataSnapshot.partitionMetadata(tp)).thenReturn(Optional.empty());
+
+        long internalFetchCommittedTimeout = time.milliseconds() + DEFAULT_API_TIMEOUT_MS;
+        CompletableFuture<CommitRequestManager.OffsetFetchResult> fetchResult = new CompletableFuture<>();
+        when(commitRequestManager.fetchOffsets(initPartitions, internalFetchCommittedTimeout)).thenReturn(fetchResult);
+
+        requestManager.updateFetchPositions(time.milliseconds());
+
+        // Complete the committed offsets fetch with no committed offsets
+        when(subscriptionState.initializingPartitions()).thenReturn(initPartitions);
+        fetchResult.complete(new CommitRequestManager.OffsetFetchResult(
+                Collections.emptyMap(), Collections.emptyMap()));
+
+        // Verify metadata.requestUpdate(false) was called because partition lacks creation time
+        verify(metadata).requestUpdate(false);
     }
 }
