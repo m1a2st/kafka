@@ -87,6 +87,18 @@ org.apache.kafka.server.AssignmentsManagerTest:
 - testStartAndShutdown
 - testSuccessfulAssignment
 - testUnSuccessfulRequestCausesRetransmission
+org.apache.kafka.server.AuthHelperTest:
+- testAuthorize
+- testComputeDescribeClusterResponseSuccess
+- testComputeDescribeClusterResponseV0WithUnexpectedEndpointType
+- testComputeDescribeClusterResponseV0WithUnknownEndpointType
+- testComputeDescribeClusterResponseV1WithUnexpectedEndpointType
+- testComputeDescribeClusterResponseV1WithUnknownEndpointType
+- testComputeDescribeClusterResponseWhereControllerIsNotFound
+- testFilterByAuthorized
+- testFilterByAuthorizedIsResilientToMismatchedAuthorizeResults
+- testPartitionByAuthorized
+- testPartitionByAuthorizedWithoutAuthorizer
 org.apache.kafka.server.BootstrapControllersIntegrationTest:
 - testAcls
 - testAclsByControllers
@@ -389,6 +401,8 @@ org.apache.kafka.server.config.DynamicConfigTest:
 - testGroupIsRemovedWhenDynamicConfigsAreRemoved
 org.apache.kafka.server.config.MinInSyncReplicasConfigTest:
 - testDefaultKafkaConfig
+org.apache.kafka.server.logger.LoggingControllerTest:
+- testLoggerLevelIsResolved
 org.apache.kafka.server.metrics.BrokerServerMetricsTest:
 - testIgnoredStaticVoters
 - testLastAppliedRecordOffset
@@ -449,6 +463,28 @@ org.apache.kafka.server.partition.AlterPartitionManagerTest:
 - testUnknownTopicPartition
 org.apache.kafka.server.purgatory.DelayedFutureTest:
 - testDelayedFuture
+org.apache.kafka.server.purgatory.DelayedProduceTest:
+- testConstructorMarksPendingPartitionsAsTimedOut
+- testRemovePartitionMetrics
+- testRemovePartitionMetricsForNonExistentPartition
+- testTryCompleteSkipsValidationForNonPendingPartitions
+- testTryCompleteWaitsWhileAnyPartitionPending
+- testTryCompleteWhenAllPartitionsHaveEnoughReplicas
+- testTryCompleteWhenReplicasNotCaughtUp
+- testTryCompleteWhenValidationReturnsError
+org.apache.kafka.server.quota.ClientQuotaManagerTest:
+- testClientIdNotSanitized
+- testExpireQuotaSensors
+- testExpireThrottleTimeSensor
+- testMaxValueInQuotaWindowWithNonDefaultQuotaWindow
+- testQuotaConfigPrecedence
+- testQuotaTypesEnabledUpdatesWithCustomCallback
+- testQuotaTypesEnabledUpdatesWithDefaultCallback
+- testQuotaViolation
+- testSetAndRemoveDefaultUserQuota
+- testSetAndRemoveUserClientQuota
+- testSetAndRemoveUserQuota
+- testUserQuotaParsingWithDefaultClientIdQuota
 org.apache.kafka.server.quota.ClientQuotasRequestTest:
 - testAlterClientQuotasBadIp
 - testAlterClientQuotasInvalidEntityCombination
@@ -462,6 +498,8 @@ org.apache.kafka.server.quota.ClientQuotasRequestTest:
 - testDescribeClientQuotasInvalidFilterCombination
 - testDescribeClientQuotasMatchExact
 - testDescribeClientQuotasMatchPartial
+org.apache.kafka.server.quota.ClientRequestQuotaManagerTest:
+- testRequestPercentageQuotaViolation
 org.apache.kafka.server.quota.ClientSensorsTest:
 - testConstructorPreservesInputOrder
 - testConstructorThrowsExceptionWhenBothSensorsAreNull
@@ -469,6 +507,15 @@ org.apache.kafka.server.quota.ClientSensorsTest:
 - testConstructorThrowsExceptionWhenThrottleTimeSensorIsNull
 - testConstructorWithEmptyMap
 - testConstructorWithValidParameters
+org.apache.kafka.server.quota.ControllerMutationQuotaManagerTest:
+- testControllerMutationQuotaViolation
+- testNewPermissiveQuotaForReturnsStrictQuotaWhenQuotaIsEnabled
+- testNewPermissiveQuotaForReturnsUnboundedQuotaWhenQuotaIsDisabled
+- testNewStrictQuotaForReturnsStrictQuotaWhenQuotaIsEnabled
+- testNewStrictQuotaForReturnsUnboundedQuotaWhenQuotaIsDisabled
+- testPermissiveControllerMutationQuotaViolation
+- testStrictControllerMutationQuotaViolation
+- testThrottleTime
 org.apache.kafka.server.quota.ReplicationQuotaManagerTest:
 - shouldExceedQuotaThenReturnBackBelowBoundAsTimePasses
 - shouldSupportWildcardThrottledReplicas
@@ -498,6 +545,7 @@ org.apache.kafka.server.share.CachedSharePartitionTest:
 org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
 - testCoalesceProduceRequestsKeepsDifferentDlqTopicsSeparate
 - testCoalesceProduceRequestsMergesPartitionsForSameDlqTopic
+- testCoalesceProduceRequestsMergesRecordsForSameDlqPartition
 - testCoalesceProduceRequestsSkipsHandlerWhoseTopicProduceDataThrows
 - testCoalesceProduceRequestsWithEmptyHandlerListProducesEmptyRequest
 - testCoalesceProduceRequestsWithSingleHandlerProducesOneTopicOnePartition
@@ -511,6 +559,8 @@ org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
 - testDLQRecordCopyEnabledWithErrorOnLogRead
 - testDLQRecordCopyEnabledWithMultipleLogReaderIterations
 - testDLQRecordCopyEnabledWithPartialLogReaderRecords
+- testDlqAfterStopFailsWithIllegalState
+- testDlqBeforeStartFailsWithIllegalState
 - testDlqCreateTopicFatalErrorFailsFuture
 - testDlqCreateTopicNoClusterNodesFailsFuture
 - testDlqCreateTopicPartialFailuresThenSucceeds
@@ -532,7 +582,7 @@ org.apache.kafka.server.share.dlq.ShareGroupDLQStateManagerTest:
 - testDlqTopicPrefixMismatchFailsValidation
 - testDlqTopicStartingWithUnderscoreFailsValidation
 - testDlqTwoEnqueuedRecordsBothComplete
-- testDlqValidationFailureCompletesFutureBeforeStart
+- testDlqValidationFailureCompletesFutureSynchronously
 - testMultipleAccumulatedHandlersInNodeRPCMap
 - testStartIsIdempotent
 - testStopWithoutStartIsNoOp

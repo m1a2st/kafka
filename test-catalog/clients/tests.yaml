@@ -474,6 +474,11 @@ org.apache.kafka.clients.admin.MemberDescriptionTest:
 - testEqualsWithGroupInstanceId
 - testEqualsWithoutGroupInstanceId
 - testNonEqual
+org.apache.kafka.clients.admin.MockAdminClientTest:
+- testDescribeStreamsGroupsOmitsTopologyDescriptionWhenNotRequested
+- testDescribeStreamsGroupsReturnsRegisteredDescription
+- testDescribeStreamsGroupsReturnsTopologyDescriptionWhenRequested
+- testDescribeStreamsGroupsUnknownGroupFails
 org.apache.kafka.clients.admin.NewTopicTest:
 - testConfigsNotNull
 - testConfigsNull
@@ -637,6 +642,16 @@ org.apache.kafka.clients.admin.internals.DescribeProducersHandlerTest:
 - testRetriableErrors
 - testUnexpectedError
 - testUnmappedAfterNotLeaderError
+org.apache.kafka.clients.admin.internals.DescribeStreamsGroupsHandlerTest:
+- testAvailableStatusWithMissingTopologyDescriptionFailsOnlyAffectedGroup
+- testBuildRequestSetsIncludeTopologyDescription
+- testGlobalStorePredecessorReconstruction
+- testMalformedGlobalStoreFailsOnlyAffectedGroup
+- testTopologyDescriptionAbsentWhenStatusNotAvailable
+- testTopologyDescriptionNotRequestedByDefault
+- testTopologyDescriptionParsedWhenAvailable
+- testUnknownTopologyDescriptionStatusFailsOnlyAffectedGroup
+- testUnknownTopologyNodeTypeFailsOnlyAffectedGroup
 org.apache.kafka.clients.admin.internals.DescribeTransactionsHandlerTest:
 - testBuildRequest
 - testHandleErrorResponse
@@ -2247,8 +2262,8 @@ org.apache.kafka.clients.consumer.internals.RequestFutureTest:
 - testRuntimeExceptionInComplete
 - testVoidFuture
 org.apache.kafka.clients.consumer.internals.RequestManagersTest:
-- testMemberStateListenerRegistered
-- testStreamMemberStateListenerRegistered
+- testConsumerGroupRequestManagersAndListenersWired
+- testStreamsGroupRequestManagersAndListenersWired
 org.apache.kafka.clients.consumer.internals.RequestStateTest:
 - testRequestStateSimple
 - testTrackInflightOnFailedAttempt
@@ -2511,6 +2526,7 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testCoordinatorDisconnectFailureWhileSending
 - testCoordinatorLoadInProgressErrorResponse
 - testFatalFailureWhileSending
+- testFencedInstanceIdErrorResponse
 - testFencedMemberOrUnknownMemberIdErrorResponse
 - testGroupAuthorizationFailedErrorResponse
 - testKnownFatalErrorResponse
@@ -2527,6 +2543,7 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testOtherErrorResponse
 - testPollOnCloseWhenIsLeaving
 - testPollOnCloseWhenIsNotLeaving
+- testPollOnCloseWhenStaticMemberIsLeaving
 - testPropagateCoordinatorFatalErrorToApplicationThread
 - testResetPollTimer
 - testResetPollTimerWhenExpired
@@ -2540,8 +2557,24 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testSendingLeaveHeartbeatRequestWhenPollTimerExpired
 - testSkipLeaveHeartbeatForRemainInGroupWithDynamicMember
 - testStreamsRebalanceDataHeartbeatIntervalMsUpdatedOnSuccess
+- testStreamsRebalanceDataTopologyPushRequiredNotClearedOnRequiredFalse
+- testStreamsRebalanceDataTopologyPushRequiredSetOnRequiredTrue
 - testTopicAuthorizationFailedErrorResponse
 - testUnsupportedVersionFailureWhileSending
+org.apache.kafka.clients.consumer.internals.StreamsGroupTopologyDescriptionRequestManagerTest:
+- testCoordinatorErrorTriggersRediscovery
+- testCoordinatorLoadInProgressDoesNotTriggerRediscovery
+- testCoordinatorUnknown
+- testFlagClearedOnSuccess
+- testFlagClearedOnUnknownMemberId
+- testMemberIdNull
+- testNetworkExceptionLeavesFlagSetWithBackoff
+- testNoSecondRequestWhileInflight
+- testSendRequestWhenAllPreconditionsMet
+- testTerminalErrorsClearFlag
+- testThrottleDelayBlocksSubsequentRequest
+- testTopologyDescriptionWhenPushFlagNotSet
+- testWireTopologyDescriptionNull
 org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testActiveTasksAreNullInHeartbeatResponse
 - testAssignedPartitionCountMetricRegistered
@@ -2627,6 +2660,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testReconcilingWhenReconciliationAbortedBeforeAssignmentDueToNotInReconciling
 - testReconcilingWhenReconciliationAbortedBeforeAssignmentDueToRejoin
 - testStandbyTasksAreNullInHeartbeatResponse
+- testStaticMemberUsesExpectedLeaveEpochOnClose
 - testTransitionToFatalMarksPendingRevocationBeforeCallback
 - testTransitionToFatalWhenInAcknowledging
 - testTransitionToFatalWhenInJoining
@@ -2650,6 +2684,7 @@ org.apache.kafka.clients.consumer.internals.StreamsRebalanceDataTest:
 - streamsRebalanceDataShouldBeConstructedWithEmptyStatuses
 - streamsRebalanceDataShouldBeConstructedWithHeartbeatIntervalMsSetToMinusOne
 - streamsRebalanceDataShouldBeConstructedWithShutDownRequestedSetFalse
+- streamsRebalanceDataShouldDefaultAndUpdateTopologyPushFields
 - streamsRebalanceDataShouldNotAcceptNullClientTags
 - streamsRebalanceDataShouldNotAcceptNullHostInfo
 - streamsRebalanceDataShouldNotAcceptNullProcessId
@@ -3622,6 +3657,8 @@ org.apache.kafka.common.config.provider.AllowedPathsTest:
 - testNotAllowedPath
 - testNullAllowedPaths
 - testNullAllowedPathsTraversal
+- testSymlinkInsideAllowedDirAllowed
+- testSymlinkOutsideAllowedDirRejected
 org.apache.kafka.common.config.provider.DirectoryConfigProviderTest:
 - testAllowedPath
 - testEmptyPath

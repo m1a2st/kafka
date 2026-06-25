@@ -236,11 +236,13 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldAcceptValidDslStoreFormatDefault
 - shouldAcceptValidDslStoreFormatHeaders
 - shouldAcceptValidInteractiveQueryIsolationLevels
+- shouldAcceptWithValidApplicationServerConfigValue
 - shouldAllowConfiguringProcessorWrapperWithClass
 - shouldAllowConfiguringProcessorWrapperWithClassName
 - shouldAllowMultipleOptimizations
 - shouldAllowSettingConsumerIsolationLevelIfEosDisabled
 - shouldAllowSettingProducerEnableIdempotenceIfEosDisabled
+- shouldAllowStaticMembershipWhenStreamsProtocolUsed
 - shouldAllowToSpecifyMaxInFlightRequestsPerConnectionAsStringIfEosV2Enabled
 - shouldAllowWhitespacesInRackAwareAssignmentTagsList
 - shouldBeSupportNonPrefixedConsumerConfigs
@@ -351,7 +353,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldThrowConfigExceptionWhenMainConsumerMetricsDisabledStreamsMetricsPushEnabled
 - shouldThrowConfigExceptionWhenOptimizationConfigNotValueInRange
 - shouldThrowConfigExceptionWhenStoreTypeConfigNotValueInRange
-- shouldThrowConfigExceptionWhenStreamsProtocolUsedWithStaticMembership
+- shouldThrowConfigExceptionWithInvalidApplicationServerConfigValue
 - shouldThrowExceptionIfApplicationIdIsNotSet
 - shouldThrowExceptionIfBootstrapServersIsNotSet
 - shouldThrowExceptionIfCommitIntervalMsIsNegative
@@ -1811,6 +1813,9 @@ org.apache.kafka.streams.processor.internals.DefaultStateUpdaterTest:
 - shouldPauseActiveTaskAndTransitToUpdateStandby
 - shouldPauseStandbyTask
 - shouldPauseStandbyTaskAndNotTransitToRestoreActive
+- shouldPublishEmptyTaskEndOffsetSumSnapshotBeforeStart
+- shouldPublishTaskEndOffsetSumSnapshotForMultipleRestoringTasks
+- shouldPublishTaskEndOffsetSumSnapshotForRestoringTask
 - shouldRecordMetrics
 - shouldRemoveActiveStatefulTaskFromFailedTasks
 - shouldRemoveActiveStatefulTaskFromRestoredActiveTasks
@@ -1820,6 +1825,8 @@ org.apache.kafka.streams.processor.internals.DefaultStateUpdaterTest:
 - shouldRemoveStatelessTaskFromRestoredActiveTasks
 - shouldRemoveUpdatingActiveStatefulTask
 - shouldRemoveUpdatingStandbyTask
+- shouldReportMaxValueInEndOffsetSnapshotOnOverflow
+- shouldReportMaxValueInEndOffsetSnapshotWhenAnyPartitionIsUnknown
 - shouldRestoreActiveStatefulTaskThenUpdateStandbyTaskAndAgainRestoreActiveStatefulTask
 - shouldRestoreActiveStatefulTasksAndUpdateStandbyTasks
 - shouldRestoreMultipleActiveStatefulTasks
@@ -2686,6 +2693,8 @@ org.apache.kafka.streams.processor.internals.StateRestoreCallbackAdapterTest:
 - shouldThrowOnRestore
 - shouldThrowOnRestoreAll
 org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
+- changelogEndOffsetsShouldFallBackToStoreMetadataWhenLogicalChangelogMetadataIsNull
+- logicalChangelogEndOffsetsShouldReturnNullWhenBothSourcesUnknown
 - shouldCallRecordRestoreTimeAtTheEndOfRestore
 - shouldCheckCompletionIfPositionLargerThanEndOffset
 - shouldInitializeChangelogAndCheckForCompletion
@@ -2860,6 +2869,7 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldNotEnforceRebalanceOnTaskCorruptedExceptionUnderStreamsProtocol
 - shouldNotEnforceRebalanceWhenCurrentlyRebalancing
 - shouldNotEnforceRebalanceWhenTaskCorruptedExceptionIsThrownForAnInactiveTask
+- shouldNotPopulateWireTopologyDescriptionWhenPushDisabled
 - shouldNotProcessWhenPartitionRevoked
 - shouldNotPurgeBeforeThePurgeInterval
 - shouldNotRecordFailedStreamThread
@@ -2867,6 +2877,7 @@ org.apache.kafka.streams.processor.internals.StreamThreadTest:
 - shouldNotThrowWhenStandbyTasksAssignedAndNoStateStoresForTopology
 - shouldOnlyCompleteShutdownAfterRebalanceNotInProgress
 - shouldOnlyShutdownOnce
+- shouldPopulateWireTopologyDescriptionWhenPushEnabled
 - shouldProcessWhenPartitionAssigned
 - shouldProcessWhenRunning
 - shouldProcessWhenStarting
@@ -3319,6 +3330,12 @@ org.apache.kafka.streams.processor.internals.TopicPartitionMetadataTest:
 - shouldGetPartitionTimeAndProcessorMeta
 - shouldReturnUnknownTimestampIfInvalidMetadata
 - shouldReturnUnknownTimestampIfUnknownVersion
+org.apache.kafka.streams.processor.internals.TopologyDescriptionConverterTest:
+- shouldApplyTopicNameDecorator
+- shouldConvertBranchTopology
+- shouldConvertMultipleSubtopologiesWithMultiSourceProcessor
+- shouldConvertSinkWithDynamicTopic
+- shouldConvertTopologyWithStatefulProcessorAndGlobalStore
 org.apache.kafka.streams.processor.internals.TopologyMetadataTest:
 - testPauseResume
 - testSubtopologyCompare
@@ -3860,6 +3877,7 @@ org.apache.kafka.streams.state.HostInfoTest:
 - shouldReturnNullHostInfoForEmptyEndPoint
 - shouldReturnNullHostInfoForNullEndPoint
 - shouldThrowConfigExceptionForNonsenseEndPoint
+- shouldThrowConfigExceptionWithInvalidEndpoint
 org.apache.kafka.streams.state.QueryableStoreTypesWithHeadersTest:
 - shouldAcceptRegularKeyValueStoreForKeyValueStoreType
 - shouldAcceptRegularSessionStoreForSessionStoreType
@@ -3964,14 +3982,18 @@ org.apache.kafka.streams.state.internals.AbstractTransactionBufferTest:
 - commitClearsPendingWritesAndBytes
 - commitFlushesTombstoneToBase
 - commitFlushesWritesToBase
+- concurrentOwnerWritesAndNonOwnerReadsAreConsistent
 - getStagedTombstoneReturnsEmptyOptional
 - getStagedValueReturnsOptionalOfValue
 - getUnstaggedKeyReturnsNull
 - isEmptyAndZeroBytesOnFreshBuffer
 - isNotEmptyAfterStage
 - nonOwnerAllSnapshotsAtCreationTime
+- nonOwnerAllSurvivesConcurrentOwnerCommit
 - nonOwnerRangeSnapshotsAtCreationTime
 - nonOwnerThreadCanReadStagedEntry
+- ownerStageDuringOwnAllIterationDoesNotThrow
+- ownerStageDuringOwnRangeIterationDoesNotThrow
 - rangeExclusiveUpperBound
 - rangeInclusiveUpperBound
 - rangeNullBothBoundsWithReverseReturnsSameAsAllReverse
@@ -6265,6 +6287,7 @@ org.apache.kafka.streams.state.internals.RocksDBTransactionBufferTest:
 - shouldCommitRangeDeleteWithOverridingPut
 - shouldCommitStagedWritesToRocksDB
 - shouldCommitWritesAcrossCFsAtomically
+- shouldHandleConcurrentStageDeleteRangeAndNonOwnerReads
 - shouldHideDeletedRangeFromPointReads
 - shouldHideDeletedRangeFromScans
 - shouldMergeStagedWritesInAllScan
