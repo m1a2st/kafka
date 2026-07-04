@@ -646,6 +646,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDynamicConfigs
 - testShareGroupEvaluatedConfigs
 - testShareGroupHeartbeatDoesNotBumpGroupEpochDuringAssignmentDelay
+- testShareGroupHeartbeatInitializeMixedNewAndExpandedTopics
 - testShareGroupHeartbeatInitializeOnPartitionUpdate
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
@@ -706,6 +707,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStaticMemberRejoinWithUnreleasedInstanceIdFailsWhenConsumerGroupIsFull
 - testStaticMemberRejoinsWithNewSubscribedTopics
 - testStaticMemberRejoinsWithNewSubscribedTopicsAndNoAssignmentChange
+- testStaticMemberRejoinsWithSameMemberIdAndDifferentInstanceId
 - testStaticMemberSyncAsLeaderWithInvalidMemberId
 - testStaticMembersFencedInstanceBatchLeaveGroup
 - testStaticMembersJoinGroupWithMaxSize
@@ -926,6 +928,7 @@ org.apache.kafka.coordinator.group.StreamsGroupStaticMemberGroupMetadataManagerT
 - testStaticMemberRejoinWritesReplacementRecordsInStreamsGroup
 - testStaticMemberRejoinsAfterTemporaryLeave
 - testStaticMemberRejoinsAfterTemporaryLeaveFromUnreleasedState
+- testStaticMemberRejoinsWithSameMemberIdAndDifferentInstanceId
 - testStaticMemberSendHeartbeatWithVariousEpochThenThrowError
 - testStreamsStaticJoinWithNewInstanceAtMaxSizeThrowsGroupMaxSizeReached
 - testStreamsStaticJoinWithUnreleasedInstanceThrowsUnreleasedInstanceIdAtMaxSize
@@ -1645,5 +1648,7 @@ org.apache.kafka.coordinator.group.util.UpdatedMembersAndTargetAssignmentViewTes
 - testRemoveMember
 - testRemoveStaticMember
 - testReplaceMember
+- testReplaceStaticMemberWithDifferentInstanceId
 - testReplaceStaticMemberWithDifferentMemberId
+- testReplaceStaticMemberWithNullInstanceId
 - testReplaceStaticMemberWithSameMemberId
