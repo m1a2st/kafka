@@ -41,6 +41,8 @@ import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
@@ -510,6 +512,32 @@ public class MockController implements Controller {
                 }
             } else {
                 results.add(new CreatePartitionsTopicResult().setName(topic.name()).
+                    setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code()).
+                    setErrorMessage("No such topic as " + topic.name()));
+            }
+        }
+        return CompletableFuture.completedFuture(results);
+    }
+
+    @Override
+    public synchronized CompletableFuture<List<DeletePartitionsTopicResult>> deletePartitions(
+        ControllerRequestContext context,
+        List<DeletePartitionsTopic> topics,
+        boolean validateOnly
+    ) {
+        if (!active) {
+            CompletableFuture<List<DeletePartitionsTopicResult>> future = new CompletableFuture<>();
+            future.completeExceptionally(NOT_CONTROLLER_EXCEPTION);
+            return future;
+        }
+        List<DeletePartitionsTopicResult> results = new ArrayList<>();
+        for (DeletePartitionsTopic topic : topics) {
+            if (topicNameToId.containsKey(topic.name())) {
+                results.add(new DeletePartitionsTopicResult().setName(topic.name()).
+                    setErrorCode(Errors.NONE.code()).
+                    setErrorMessage(null));
+            } else {
+                results.add(new DeletePartitionsTopicResult().setName(topic.name()).
                     setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code()).
                     setErrorMessage("No such topic as " + topic.name()));
             }

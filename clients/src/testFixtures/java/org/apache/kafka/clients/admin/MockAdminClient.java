@@ -630,6 +630,11 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
+    public synchronized DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts, DeletePartitionsOptions options) {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public synchronized DeleteRecordsResult deleteRecords(Map<TopicPartition, RecordsToDelete> recordsToDelete, DeleteRecordsOptions options) {
         Map<TopicPartition, KafkaFuture<DeletedRecords>> deletedRecordsResult = new HashMap<>();
         if (recordsToDelete.isEmpty()) {

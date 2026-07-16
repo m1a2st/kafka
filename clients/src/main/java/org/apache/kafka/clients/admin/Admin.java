@@ -680,6 +680,46 @@ public interface Admin extends AutoCloseable {
                                             CreatePartitionsOptions options);
 
     /**
+     * This is a convenience method for {@link #deletePartitions(Map, DeletePartitionsOptions)} with default options.
+     * See the overload for more details.
+     *
+     * @param partitionCounts A map from topic names to the new (reduced) partition count.
+     * @return The DeletePartitionsResult.
+     */
+    default DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts) {
+        return deletePartitions(partitionCounts, new DeletePartitionsOptions());
+    }
+
+    /**
+     * Reduce the number of partitions for the topics given as the keys of {@code partitionCounts}
+     * to the corresponding values. Partitions are removed from the tail (highest partition IDs first).
+     * <p>
+     * Deleted partitions go through a DRAINING phase where produces are rejected but consumers
+     * can still read existing data. After the drain timeout expires, the partitions are fully removed.
+     * <p>
+     * This operation is not transactional so it may succeed for some topics while fail for others.
+     * <p>
+     * The following exceptions can be anticipated when calling {@code get()} on the futures obtained from the
+     * {@link DeletePartitionsResult#values() values()} method of the returned {@link DeletePartitionsResult}
+     * <ul>
+     * <li>{@link org.apache.kafka.common.errors.AuthorizationException}
+     * if the authenticated user is not authorized to alter the topic</li>
+     * <li>{@link org.apache.kafka.common.errors.TimeoutException}
+     * if the request was not completed in within the given {@link DeletePartitionsOptions#timeoutMs()}.</li>
+     * <li>{@link org.apache.kafka.common.errors.InvalidDeletePartitionCountException}
+     * if the requested partition count is greater than or equal to the current partition count.</li>
+     * <li>{@link org.apache.kafka.common.errors.PartitionOperationInProgressException}
+     * if a partition deletion is already in progress for the topic.</li>
+     * </ul>
+     *
+     * @param partitionCounts A map from topic names to the new (reduced) partition count.
+     * @param options         The options to use when deleting the partitions.
+     * @return The DeletePartitionsResult.
+     */
+    DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts,
+                                            DeletePartitionsOptions options);
+
+    /**
      * Delete records whose offset is smaller than the given offset of the corresponding partition.
      * <p>
      * This is a convenience method for {@link #deleteRecords(Map, DeleteRecordsOptions)} with default options.

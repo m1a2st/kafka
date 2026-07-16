@@ -22,6 +22,7 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
+import org.apache.kafka.clients.admin.DeletePartitionsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
@@ -482,10 +483,54 @@ public abstract class TopicCommand {
 
             if (!topics.isEmpty()) {
                 Map<String, KafkaFuture<org.apache.kafka.clients.admin.TopicDescription>> topicsInfo = adminClient.describeTopics(topics).topicNameValues();
-                Map<String, NewPartitions> newPartitions = topics.stream()
-                    .map(topicName -> topicNewPartitions(topic, topicsInfo, topicName))
-                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-                adminClient.createPartitions(newPartitions, new CreatePartitionsOptions().retryOnQuotaViolation(false)).all().get();
+
+                if (opts.deletePartitions().isPresent()) {
+                    int deleteCount = opts.deletePartitions().get();
+                    if (deleteCount <= 0) {
+                        throw new IllegalArgumentException("--delete-partitions must be a positive integer");
+                    }
+                    Map<String, Integer> decreases = new HashMap<>();
+                    for (String topicName : topics) {
+                        int currentCount;
+                        try {
+                            currentCount = topicsInfo.get(topicName).get().partitions().size();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException(e);
+                        }
+                        int targetCount = currentCount - deleteCount;
+                        if (targetCount < 1) {
+                            throw new IllegalArgumentException("Cannot delete " + deleteCount +
+                                " partitions from topic '" + topicName + "' which only has " + currentCount + " partitions");
+                        }
+                        decreases.put(topicName, targetCount);
+                    }
+                    adminClient.deletePartitions(decreases, new DeletePartitionsOptions()).all().get();
+                } else {
+                    Map<String, NewPartitions> increases = new HashMap<>();
+                    Map<String, Integer> decreases = new HashMap<>();
+
+                    for (String topicName : topics) {
+                        int currentCount;
+                        try {
+                            currentCount = topicsInfo.get(topicName).get().partitions().size();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException(e);
+                        }
+                        int targetCount = topic.partitions.get();
+                        if (targetCount > currentCount) {
+                            increases.put(topicName, topicNewPartitions(topic, topicsInfo, topicName).getValue());
+                        } else if (targetCount < currentCount) {
+                            decreases.put(topicName, targetCount);
+                        }
+                    }
+
+                    if (!increases.isEmpty()) {
+                        adminClient.createPartitions(increases, new CreatePartitionsOptions().retryOnQuotaViolation(false)).all().get();
+                    }
+                    if (!decreases.isEmpty()) {
+                        adminClient.deletePartitions(decreases, new DeletePartitionsOptions()).all().get();
+                    }
+                }
             }
         }
 
@@ -691,6 +736,8 @@ public abstract class TopicCommand {
 
         private final ArgumentAcceptingOptionSpec<Integer> replicationFactorOpt;
 
+        private final ArgumentAcceptingOptionSpec<Integer> deletePartitionsOpt;
+
         private final ArgumentAcceptingOptionSpec<String> replicaAssignmentOpt;
 
         private final OptionSpecBuilder reportUnderReplicatedPartitionsOpt;
@@ -765,6 +812,11 @@ public abstract class TopicCommand {
             replicationFactorOpt = parser.accepts("replication-factor", "The replication factor for each partition in the topic being created. If not supplied, the topic uses the cluster default.")
                 .withRequiredArg()
                 .describedAs("replication factor")
+                .ofType(java.lang.Integer.class);
+            deletePartitionsOpt = parser.accepts("delete-partitions", "The number of partitions to delete from " +
+                    "the tail of a topic. Used with --alter. Mutually exclusive with --partitions.")
+                .withRequiredArg()
+                .describedAs("# of partitions to delete")
                 .ofType(java.lang.Integer.class);
             replicaAssignmentOpt = parser.accepts("replica-assignment", "A list of manual partition-to-broker assignments for the topic being created or altered.")
                     .withRequiredArg()
@@ -852,6 +904,10 @@ public abstract class TopicCommand {
             return valueAsOption(replicationFactorOpt);
         }
 
+        Optional<Integer> deletePartitions() {
+            return valueAsOption(deletePartitionsOpt);
+        }
+
         Optional<Map<Integer, List<Integer>>> replicaAssignment() {
             return has(replicaAssignmentOpt) && !Optional.of(options.valueOf(replicaAssignmentOpt)).orElse("").isEmpty()
                 ? Optional.of(parseReplicaAssignment(options.valueOf(replicaAssignmentOpt)))
@@ -934,7 +990,7 @@ public abstract class TopicCommand {
                 Set<OptionSpec<?>> usedOptions = Set.of(bootstrapServerOpt, configOpt);
                 Set<OptionSpec<?>> invalidOptions = Set.of(alterOpt);
                 CommandLineUtils.checkInvalidArgsSet(parser, options, usedOptions, invalidOptions, Optional.of(KAFKA_CONFIGS_CLI_SUPPORTS_ALTERING_TOPIC_CONFIGS));
-                CommandLineUtils.checkRequiredArgs(parser, options, partitionsOpt);
+                checkAlterPartitionArgs();
             }
         }
 
@@ -942,6 +998,7 @@ public abstract class TopicCommand {
             // check invalid args
             CommandLineUtils.checkInvalidArgs(parser, options, configOpt, invalidOptions(List.of(alterOpt, createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, partitionsOpt, invalidOptions(List.of(alterOpt, createOpt)));
+            CommandLineUtils.checkInvalidArgs(parser, options, deletePartitionsOpt, invalidOptions(List.of(alterOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, replicationFactorOpt, invalidOptions(List.of(createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, replicaAssignmentOpt, invalidOptions(List.of(alterOpt, createOpt)));
             if (options.has(createOpt)) {
@@ -962,6 +1019,15 @@ public abstract class TopicCommand {
                 invalidOptions(List.of(alterOpt, deleteOpt, describeOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, ifNotExistsOpt, invalidOptions(List.of(createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, excludeInternalTopicOpt, invalidOptions(List.of(listOpt, describeOpt)));
+        }
+
+        private void checkAlterPartitionArgs() {
+            if (!has(partitionsOpt) && !has(deletePartitionsOpt)) {
+                CommandLineUtils.printUsageAndExit(parser, "--alter requires either --partitions or --delete-partitions");
+            }
+            if (has(partitionsOpt) && has(deletePartitionsOpt)) {
+                CommandLineUtils.printUsageAndExit(parser, "--partitions and --delete-partitions are mutually exclusive");
+            }
         }
 
         private Set<OptionSpec<?>> invalidOptions(List<OptionSpec<?>> removeOptions) {

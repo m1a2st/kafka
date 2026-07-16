@@ -131,6 +131,10 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopicCollection;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopicCollection;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicCollection;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicConfigs;
@@ -203,6 +207,8 @@ import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
+import org.apache.kafka.common.requests.DeletePartitionsRequest;
+import org.apache.kafka.common.requests.DeletePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
@@ -3277,6 +3283,60 @@ public class KafkaAdminClient extends AdminClient {
                 completeAllExceptionally(futures.values(), throwable);
             }
         };
+    }
+
+    @Override
+    public DeletePartitionsResult deletePartitions(final Map<String, Integer> partitionCounts,
+                                                   final DeletePartitionsOptions options) {
+        final Map<String, KafkaFutureImpl<Void>> futures = new HashMap<>(partitionCounts.size());
+        final DeletePartitionsTopicCollection topics = new DeletePartitionsTopicCollection(partitionCounts.size());
+        for (Map.Entry<String, Integer> entry : partitionCounts.entrySet()) {
+            topics.add(new DeletePartitionsTopic()
+                .setName(entry.getKey())
+                .setCount(entry.getValue()));
+            futures.put(entry.getKey(), new KafkaFutureImpl<>());
+        }
+        if (!topics.isEmpty()) {
+            final long now = time.milliseconds();
+            final long deadline = calcDeadlineMs(now, options.timeoutMs());
+            runnable.call(new Call("deletePartitions", deadline, new ControllerNodeProvider()) {
+                @Override
+                public DeletePartitionsRequest.Builder createRequest(int timeoutMs) {
+                    return new DeletePartitionsRequest.Builder(
+                        new DeletePartitionsRequestData()
+                            .setTopics(topics)
+                            .setValidateOnly(options.validateOnly())
+                            .setTimeoutMs(timeoutMs));
+                }
+
+                @Override
+                public void handleResponse(AbstractResponse abstractResponse) {
+                    handleNotControllerError(abstractResponse);
+                    final DeletePartitionsResponse response = (DeletePartitionsResponse) abstractResponse;
+                    for (DeletePartitionsTopicResult result : response.data().results()) {
+                        KafkaFutureImpl<Void> future = futures.get(result.name());
+                        if (future == null) {
+                            log.warn("Server response mentioned unknown topic {}", result.name());
+                        } else {
+                            ApiError error = new ApiError(result.errorCode(), result.errorMessage());
+                            if (error.isFailure()) {
+                                future.completeExceptionally(error.exception());
+                            } else {
+                                future.complete(null);
+                            }
+                        }
+                    }
+                    completeUnrealizedFutures(futures.entrySet().stream(),
+                        topic -> "The controller response did not contain a result for topic " + topic);
+                }
+
+                @Override
+                void handleFailure(Throwable throwable) {
+                    completeAllExceptionally(futures.values(), throwable);
+                }
+            }, now);
+        }
+        return new DeletePartitionsResult(new HashMap<>(futures));
     }
 
     @Override

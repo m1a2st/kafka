@@ -131,6 +131,11 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
+    public DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts, DeletePartitionsOptions options) {
+        return delegate.deletePartitions(partitionCounts, options);
+    }
+
+    @Override
     public DeleteRecordsResult deleteRecords(Map<TopicPartition, RecordsToDelete> recordsToDelete, DeleteRecordsOptions options) {
         return delegate.deleteRecords(recordsToDelete, options);
     }
