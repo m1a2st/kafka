@@ -22,7 +22,9 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.metadata.Replicas;
@@ -93,6 +95,16 @@ public final class TopicsDelta {
     public void replay(PartitionChangeRecord record) {
         TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
         topicDelta.replay(record);
+    }
+
+    public void replay(PartitionDrainingRecord record) {
+        TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
+        topicDelta.replayPartitionDraining(record.partitionId());
+    }
+
+    public void replay(RemovePartitionRecord record) {
+        TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
+        topicDelta.replayRemovePartition(record.partitionId());
     }
 
     private void maybeReplayClearElrRecord(Uuid topicId) {
@@ -239,6 +251,7 @@ public final class TopicsDelta {
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers = new HashMap<>();
         Map<String, Uuid> topicIds = new HashMap<>();
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
+        Set<TopicPartition> drainingPartitions = new HashSet<>();
 
         for (TopicDelta delta : changedTopics.values()) {
             LocalReplicaChanges changes = delta.localChanges(brokerId);
@@ -249,6 +262,7 @@ public final class TopicsDelta {
             followers.putAll(changes.followers());
             topicIds.putAll(changes.topicIds());
             directoryIds.putAll(changes.directoryIds());
+            drainingPartitions.addAll(changes.drainingPartitions());
         }
 
         // Add all of the removed topic partitions to the set of locally removed partitions
@@ -261,7 +275,7 @@ public final class TopicsDelta {
             });
         });
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds);
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, drainingPartitions);
     }
 
     @Override

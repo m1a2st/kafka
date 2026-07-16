@@ -38,6 +38,8 @@ public final class LocalReplicaChanges {
     private final Map<String, Uuid> topicIds;
     // partitions for which directory id changes or newly added to the broker
     private final Map<TopicIdPartition, Uuid> directoryIds;
+    // partitions that have entered the DRAINING state (produces should be rejected)
+    private final Set<TopicPartition> drainingPartitions;
 
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
@@ -47,12 +49,25 @@ public final class LocalReplicaChanges {
         Map<String, Uuid> topicIds,
         Map<TopicIdPartition, Uuid> directoryIds
     ) {
+        this(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, Set.of());
+    }
+
+    LocalReplicaChanges(
+        Set<TopicPartition> deletes,
+        Map<TopicPartition, PartitionInfo> electedLeaders,
+        Map<TopicPartition, PartitionInfo> leaders,
+        Map<TopicPartition, PartitionInfo> followers,
+        Map<String, Uuid> topicIds,
+        Map<TopicIdPartition, Uuid> directoryIds,
+        Set<TopicPartition> drainingPartitions
+    ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
         this.leaders = leaders;
         this.followers = followers;
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
+        this.drainingPartitions = drainingPartitions;
     }
 
     public Set<TopicPartition> deletes() {
@@ -79,16 +94,21 @@ public final class LocalReplicaChanges {
         return directoryIds;
     }
 
+    public Set<TopicPartition> drainingPartitions() {
+        return drainingPartitions;
+    }
+
     @Override
     public String toString() {
         return String.format(
-            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s)",
+            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, drainingPartitions = %s)",
             deletes,
             electedLeaders,
             leaders,
             followers,
             topicIds,
-            directoryIds
+            directoryIds,
+            drainingPartitions
         );
     }
 

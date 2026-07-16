@@ -27,12 +27,14 @@ import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.ProducerIdsRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.RegisterControllerRecord;
 import org.apache.kafka.common.metadata.RemoveAccessControlEntryRecord;
 import org.apache.kafka.common.metadata.RemoveDelegationTokenRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.RemoveUserScramCredentialRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
@@ -267,6 +269,12 @@ public final class MetadataDelta {
             case REGISTER_CONTROLLER_RECORD:
                 replay((RegisterControllerRecord) record);
                 break;
+            case PARTITION_DRAINING_RECORD:
+                replay((PartitionDrainingRecord) record);
+                break;
+            case REMOVE_PARTITION_RECORD:
+                replay((RemovePartitionRecord) record);
+                break;
             default:
                 throw new RuntimeException("Unknown metadata record type " + type);
         }
@@ -297,6 +305,14 @@ public final class MetadataDelta {
     }
 
     public void replay(PartitionChangeRecord record) {
+        getOrCreateTopicsDelta().replay(record);
+    }
+
+    public void replay(PartitionDrainingRecord record) {
+        getOrCreateTopicsDelta().replay(record);
+    }
+
+    public void replay(RemovePartitionRecord record) {
         getOrCreateTopicsDelta().replay(record);
     }
 

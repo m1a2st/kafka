@@ -39,6 +39,8 @@ import java.util.stream.Collectors;
 public final class TopicDelta {
     private final TopicImage image;
     private final Map<Integer, PartitionRegistration> partitionChanges = new HashMap<>();
+    private final Set<Integer> removedPartitions = new HashSet<>();
+    private final Set<Integer> drainingPartitions = new HashSet<>();
     private final Map<Integer, Integer> partitionToUncleanLeaderElectionCount = new HashMap<>();
     private final Map<Integer, Integer> partitionToElrElectionCount = new HashMap<>();
 
@@ -52,6 +54,24 @@ public final class TopicDelta {
 
     public Map<Integer, PartitionRegistration> partitionChanges() {
         return partitionChanges;
+    }
+
+    public Set<Integer> removedPartitions() {
+        return removedPartitions;
+    }
+
+    public void replayRemovePartition(int partitionId) {
+        partitionChanges.remove(partitionId);
+        removedPartitions.add(partitionId);
+        drainingPartitions.remove(partitionId);
+    }
+
+    public void replayPartitionDraining(int partitionId) {
+        drainingPartitions.add(partitionId);
+    }
+
+    public Set<Integer> drainingPartitions() {
+        return drainingPartitions;
     }
 
     public Map<Integer, PartitionRegistration> newPartitions() {
@@ -139,6 +159,9 @@ public final class TopicDelta {
         Map<Integer, PartitionRegistration> newPartitions = new HashMap<>();
         for (Entry<Integer, PartitionRegistration> entry : image.partitions().entrySet()) {
             int partitionId = entry.getKey();
+            if (removedPartitions.contains(partitionId)) {
+                continue;
+            }
             PartitionRegistration changedPartition = partitionChanges.get(partitionId);
             if (changedPartition == null) {
                 newPartitions.put(partitionId, entry.getValue());
@@ -147,11 +170,14 @@ public final class TopicDelta {
             }
         }
         for (Entry<Integer, PartitionRegistration> entry : partitionChanges.entrySet()) {
-            if (!newPartitions.containsKey(entry.getKey())) {
+            if (!newPartitions.containsKey(entry.getKey()) && !removedPartitions.contains(entry.getKey())) {
                 newPartitions.put(entry.getKey(), entry.getValue());
             }
         }
-        return new TopicImage(image.name(), image.id(), newPartitions);
+        Set<Integer> newDraining = new HashSet<>(image.drainingPartitions());
+        newDraining.addAll(drainingPartitions);
+        newDraining.removeAll(removedPartitions);
+        return new TopicImage(image.name(), image.id(), newPartitions, newDraining);
     }
 
     /**
@@ -172,7 +198,7 @@ public final class TopicDelta {
      * @param brokerId the broker id
      * @return the LocalReplicaChanges that cover changes in the broker
      */
-    @SuppressWarnings("checkstyle:cyclomaticComplexity")
+    @SuppressWarnings({"checkstyle:cyclomaticComplexity", "checkstyle:NPathComplexity"})
     public LocalReplicaChanges localChanges(int brokerId) {
         Set<TopicPartition> deletes = new HashSet<>();
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> electedLeaders = new HashMap<>();
@@ -180,6 +206,13 @@ public final class TopicDelta {
         Map<TopicPartition, LocalReplicaChanges.PartitionInfo> followers = new HashMap<>();
         Map<String, Uuid> topicIds = new HashMap<>();
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
+
+        for (int removedId : removedPartitions) {
+            PartitionRegistration prevPartition = image.partitions().get(removedId);
+            if (prevPartition != null && Replicas.contains(prevPartition.replicas, brokerId)) {
+                deletes.add(new TopicPartition(name(), removedId));
+            }
+        }
 
         for (Entry<Integer, PartitionRegistration> entry : partitionChanges.entrySet()) {
             if (!Replicas.contains(entry.getValue().replicas, brokerId)) {
@@ -222,7 +255,18 @@ public final class TopicDelta {
             }
         }
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds);
+        Set<TopicPartition> draining = new HashSet<>();
+        for (int drainingId : drainingPartitions) {
+            PartitionRegistration partition = partitionChanges.get(drainingId);
+            if (partition == null) {
+                partition = image.partitions().get(drainingId);
+            }
+            if (partition != null && Replicas.contains(partition.replicas, brokerId)) {
+                draining.add(new TopicPartition(name(), drainingId));
+            }
+        }
+
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, draining);
     }
 
     @Override

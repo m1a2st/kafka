@@ -18,6 +18,7 @@
 package org.apache.kafka.image;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.image.node.TopicImageNode;
 import org.apache.kafka.image.writer.ImageWriter;
@@ -27,6 +28,7 @@ import org.apache.kafka.metadata.PartitionRegistration;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 
 /**
@@ -34,9 +36,14 @@ import java.util.Map.Entry;
  *
  * This class is thread-safe.
  */
-public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions) {
+public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions, Set<Integer> drainingPartitions) {
+    public TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions) {
+        this(name, id, partitions, Set.of());
+    }
+
     public TopicImage {
         partitions = Collections.unmodifiableMap(partitions);
+        drainingPartitions = Set.copyOf(drainingPartitions);
     }
 
     public void write(ImageWriter writer, ImageWriterOptions options) {
@@ -47,6 +54,11 @@ public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistratio
             int partitionId = entry.getKey();
             PartitionRegistration partition = entry.getValue();
             writer.write(partition.toRecord(id, partitionId, options));
+        }
+        for (int partitionId : drainingPartitions) {
+            writer.write(0, new PartitionDrainingRecord().
+                setTopicId(id).
+                setPartitionId(partitionId));
         }
     }
 
