@@ -1426,6 +1426,50 @@ public class TopicCommandTest {
         }
     }
 
+    @ClusterTemplate("generate")
+    public void testAlterWithDeletePartitions(ClusterInstance clusterInstance) throws Exception {
+        String testTopicName = TestUtils.randomString(10);
+        try (Admin adminClient = clusterInstance.admin();
+             TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
+            int partition = 4;
+            short replicationFactor = 1;
+            adminClient.createTopics(List.of(new NewTopic(testTopicName, partition, replicationFactor)));
+            clusterInstance.waitTopicCreation(testTopicName, partition);
+
+            topicService.alterTopic(buildTopicCommandOptionsWithBootstrap(clusterInstance, "--alter", "--topic", testTopicName, "--delete-partitions", "2"));
+        }
+    }
+
+    @ClusterTemplate("generate")
+    public void testAlterWithDeletePartitionsInvalidCount(ClusterInstance clusterInstance) throws Exception {
+        String testTopicName = TestUtils.randomString(10);
+        try (Admin adminClient = clusterInstance.admin();
+             TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
+            adminClient.createTopics(List.of(new NewTopic(testTopicName, defaultNumPartitions, defaultReplicationFactor)));
+            clusterInstance.waitTopicCreation(testTopicName, defaultNumPartitions);
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> topicService.alterTopic(buildTopicCommandOptionsWithBootstrap(clusterInstance, "--alter", "--topic", testTopicName, "--delete-partitions", "100")),
+                    "Expected to fail since delete count exceeds partition count");
+        }
+    }
+
+    @ClusterTemplate("generate")
+    public void testAlterWithDeletePartitionsMutuallyExclusiveWithPartitions(ClusterInstance clusterInstance) throws Exception {
+        Exit.setExitProcedure((exitCode, message) -> {
+            assertEquals(1, exitCode);
+            throw new RuntimeException();
+        });
+        try {
+            assertThrows(RuntimeException.class,
+                    () -> buildTopicCommandOptionsWithBootstrap(clusterInstance, "--alter", "--topic", "test",
+                            "--partitions", "5", "--delete-partitions", "2"),
+                    "Expected to fail because --partitions and --delete-partitions are mutually exclusive");
+        } finally {
+            Exit.resetExitProcedure();
+        }
+    }
+
     private void checkReplicaDistribution(Map<Integer, List<Integer>> assignment,
                                           Map<Integer, String> brokerRackMapping,
                                           int numBrokers,

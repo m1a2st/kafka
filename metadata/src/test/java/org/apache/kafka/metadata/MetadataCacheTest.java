@@ -27,6 +27,7 @@ import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.Descr
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
 import org.apache.kafka.common.message.MetadataResponseData;
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord.BrokerEndpoint;
@@ -1105,5 +1106,67 @@ public class MetadataCacheTest {
                 MetadataResponseData.MetadataResponsePartition::partitionIndex,
                 MetadataResponseData.MetadataResponsePartition::offlineReplicas
             ));
+    }
+
+    @Test
+    public void testGetTopicMetadataDrainingPartitionsFilteredForOldVersions() {
+        MetadataCache cache = createCache();
+        Uuid topicId = Uuid.randomUuid();
+
+        List<ApiMessage> records = new ArrayList<>();
+        for (int brokerId = 0; brokerId <= 2; brokerId++) {
+            BrokerEndpointCollection endpoints = new BrokerEndpointCollection(List.of(
+                new BrokerEndpoint()
+                    .setHost("broker-" + brokerId)
+                    .setPort(9092)
+                    .setSecurityProtocol(SecurityProtocol.PLAINTEXT.id)
+                    .setName(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT).value())
+            ));
+            records.add(new RegisterBrokerRecord()
+                .setBrokerId(brokerId)
+                .setEndPoints(endpoints)
+                .setRack("rack1"));
+        }
+        records.add(new TopicRecord().setName("test-topic").setTopicId(topicId));
+        records.add(new PartitionRecord().setTopicId(topicId).setPartitionId(0)
+            .setLeader(0).setLeaderEpoch(0).setIsr(List.of(0, 1, 2)).setReplicas(List.of(0, 1, 2)));
+        records.add(new PartitionRecord().setTopicId(topicId).setPartitionId(1)
+            .setLeader(1).setLeaderEpoch(0).setIsr(List.of(0, 1, 2)).setReplicas(List.of(0, 1, 2)));
+        records.add(new PartitionRecord().setTopicId(topicId).setPartitionId(2)
+            .setLeader(2).setLeaderEpoch(0).setIsr(List.of(0, 1, 2)).setReplicas(List.of(0, 1, 2)));
+        records.add(new PartitionRecord().setTopicId(topicId).setPartitionId(3)
+            .setLeader(0).setLeaderEpoch(0).setIsr(List.of(0, 1, 2)).setReplicas(List.of(0, 1, 2)));
+        records.add(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(2));
+        records.add(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(3));
+        updateCache(cache, records);
+
+        ListenerName listenerName = ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT);
+
+        // Version < 14: draining partitions should be excluded
+        List<MetadataResponseData.MetadataResponseTopic> result =
+            cache.getTopicMetadata(Set.of("test-topic"), listenerName, false, false, (short) 12);
+        assertEquals(1, result.size());
+        assertEquals(2, result.get(0).partitions().size());
+        Set<Integer> partitionIndices = result.get(0).partitions().stream()
+            .map(MetadataResponseData.MetadataResponsePartition::partitionIndex)
+            .collect(Collectors.toSet());
+        assertEquals(Set.of(0, 1), partitionIndices);
+
+        // Version >= 14: draining partitions included with IsDraining=true
+        result = cache.getTopicMetadata(Set.of("test-topic"), listenerName, false, false, (short) 14);
+        assertEquals(1, result.size());
+        assertEquals(4, result.get(0).partitions().size());
+        for (MetadataResponseData.MetadataResponsePartition p : result.get(0).partitions()) {
+            if (p.partitionIndex() == 2 || p.partitionIndex() == 3) {
+                assertTrue(p.isDraining(), "Partition " + p.partitionIndex() + " should be marked as draining");
+            } else {
+                assertFalse(p.isDraining(), "Partition " + p.partitionIndex() + " should not be draining");
+            }
+        }
+
+        // No version specified (-1): all partitions returned without draining flag filtering
+        result = cache.getTopicMetadata(Set.of("test-topic"), listenerName, false, false);
+        assertEquals(1, result.size());
+        assertEquals(4, result.get(0).partitions().size());
     }
 }

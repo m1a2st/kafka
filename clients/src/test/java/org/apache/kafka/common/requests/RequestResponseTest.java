@@ -91,6 +91,11 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopicCollection;
 import org.apache.kafka.common.message.CreatePartitionsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopicCollection;
+import org.apache.kafka.common.message.DeletePartitionsResponseData;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
@@ -1090,6 +1095,7 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsRequest(version);
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateRequest(version);
+            case DELETE_PARTITIONS: return createDeletePartitionsRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1186,6 +1192,7 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsResponse();
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateResponse();
+            case DELETE_PARTITIONS: return createDeletePartitionsResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -3179,6 +3186,29 @@ public class RequestResponseTest {
                 .setThrottleTimeMs(42)
                 .setResults(results);
         return new CreatePartitionsResponse(data);
+    }
+
+    private DeletePartitionsRequest createDeletePartitionsRequest(short version) {
+        DeletePartitionsTopicCollection topics = new DeletePartitionsTopicCollection();
+        topics.add(new DeletePartitionsTopic()
+                .setName("my_topic")
+                .setCount(2));
+        DeletePartitionsRequestData data = new DeletePartitionsRequestData()
+                .setTimeoutMs(10000)
+                .setValidateOnly(false)
+                .setTopics(topics);
+        return new DeletePartitionsRequest(data, version);
+    }
+
+    private DeletePartitionsResponse createDeletePartitionsResponse() {
+        List<DeletePartitionsTopicResult> results = new ArrayList<>();
+        results.add(new DeletePartitionsTopicResult()
+                .setName("my_topic")
+                .setErrorCode(Errors.NONE.code()));
+        DeletePartitionsResponseData data = new DeletePartitionsResponseData()
+                .setThrottleTimeMs(42)
+                .setResults(results);
+        return new DeletePartitionsResponse(data);
     }
 
     private CreateDelegationTokenRequest createCreateTokenRequest(short version) {

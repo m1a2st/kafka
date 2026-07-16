@@ -4960,6 +4960,73 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
       Utils.closeQuietly(producer, "producer")
     }
   }
+
+  @Test
+  def testDeletePartitions(): Unit = {
+    client = createAdminClient
+
+    val topicName = "delete-partitions-topic"
+    createTopic(topicName, numPartitions = 4, replicationFactor = 1)
+
+    // Verify topic starts with 4 partitions
+    val metadata = getTopicMetadata(client, topicName)
+    assertEquals(4, metadata.partitions.size)
+
+    // Delete partitions to reduce from 4 to 2
+    val result = client.deletePartitions(util.Map.of(topicName, Integer.valueOf(2)),
+      new DeletePartitionsOptions())
+    result.all().get()
+
+    // The partitions are in DRAINING state - they're still reported in metadata
+    // but produce should fail for draining partitions with NOT_LEADER_OR_FOLLOWER
+    // (retriable) which causes the producer to refresh metadata and reroute
+    val props = new Properties()
+    props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, "5000")
+    props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, "2000")
+    props.put(ProducerConfig.RETRIES_CONFIG, "1")
+    val producer = createProducer(configOverrides = props)
+    try {
+      // Produce to partition 0 should still work (not draining)
+      producer.send(new ProducerRecord[Array[Byte], Array[Byte]](topicName, 0,
+        "key".getBytes, "value".getBytes)).get()
+
+      // Produce to partition 3 should fail (draining) - producer gets
+      // NOT_LEADER_OR_FOLLOWER which triggers metadata refresh and retry,
+      // but since partition 3 is still draining, retries exhaust
+      val e = assertThrows(classOf[ExecutionException], () =>
+        producer.send(new ProducerRecord[Array[Byte], Array[Byte]](topicName, 3,
+          "key".getBytes, "value".getBytes)).get())
+      assertTrue(e.getCause.isInstanceOf[NotLeaderOrFollowerException] ||
+        e.getCause.isInstanceOf[org.apache.kafka.common.errors.TimeoutException],
+        s"Expected NotLeaderOrFollowerException or TimeoutException but got ${e.getCause.getClass}")
+    } finally {
+      producer.close()
+    }
+  }
+
+  @Test
+  def testDeletePartitionsInvalidCount(): Unit = {
+    client = createAdminClient
+
+    val topicName = "delete-partitions-invalid-topic"
+    createTopic(topicName, numPartitions = 4, replicationFactor = 1)
+
+    // Try to "reduce" to a higher count - should fail
+    val result = client.deletePartitions(util.Map.of(topicName, Integer.valueOf(5)),
+      new DeletePartitionsOptions())
+    val e = assertThrows(classOf[ExecutionException], () => result.values().get(topicName).get())
+    assertInstanceOf(classOf[InvalidDeletePartitionCountException], e.getCause)
+  }
+
+  @Test
+  def testDeletePartitionsUnknownTopic(): Unit = {
+    client = createAdminClient
+
+    val result = client.deletePartitions(util.Map.of("nonexistent-topic", Integer.valueOf(1)),
+      new DeletePartitionsOptions())
+    val e = assertThrows(classOf[ExecutionException], () => result.values().get("nonexistent-topic").get())
+    assertInstanceOf(classOf[UnknownTopicOrPartitionException], e.getCause)
+  }
 }
 
 object PlaintextAdminIntegrationTest {

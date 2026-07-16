@@ -46,6 +46,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsAssignment;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
@@ -67,8 +69,10 @@ import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.ConfigRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -3539,5 +3543,202 @@ public class ReplicationControlManagerTest {
         int partitionEpoch = ctx.replicationControl.getPartition(fooId, 0).partitionEpoch;
         ctx.replay(List.of(new ApiMessageAndVersion(new ClearElrRecord(), CLEAR_ELR_RECORD.highestSupportedVersion())));
         assertEquals(partitionEpoch, ctx.replicationControl.getPartition(fooId, 0).partitionEpoch);
+    }
+
+    @Test
+    public void testDeletePartitions() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        Uuid topicId = ctx.createTestTopic("foo", 4, (short) 3, NONE.code()).topicId();
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("foo").setCount(2));
+
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            ctx.replicationControl.deletePartitions(requestContext, topics);
+
+        // Should produce 2 PartitionDrainingRecord (for partitions 2 and 3)
+        assertEquals(2, result.records().size());
+        assertEquals(NONE.code(), result.response().get(0).errorCode());
+
+        // Replay the records
+        ctx.replay(result.records());
+
+        // All partitions should still exist (they are draining, not removed yet)
+        assertNotNull(ctx.replicationControl.getPartition(topicId, 0));
+        assertNotNull(ctx.replicationControl.getPartition(topicId, 2));
+        assertNotNull(ctx.replicationControl.getPartition(topicId, 3));
+    }
+
+    @Test
+    public void testDeletePartitionsUnknownTopic() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("nonexistent").setCount(1));
+
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            ctx.replicationControl.deletePartitions(requestContext, topics);
+
+        assertEquals(UNKNOWN_TOPIC_OR_PARTITION.code(), result.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testDeletePartitionsInvalidCount() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", 4, (short) 3, NONE.code());
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+
+        // Count >= current should fail
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("foo").setCount(4));
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            ctx.replicationControl.deletePartitions(requestContext, topics);
+        assertEquals(Errors.INVALID_DELETE_PARTITION_COUNT.code(), result.response().get(0).errorCode());
+
+        // Count = 0 should fail
+        topics = List.of(new DeletePartitionsTopic().setName("foo").setCount(0));
+        result = ctx.replicationControl.deletePartitions(requestContext, topics);
+        assertEquals(Errors.INVALID_DELETE_PARTITION_COUNT.code(), result.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testDeletePartitionsAlreadyDraining() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", 4, (short) 3, NONE.code());
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("foo").setCount(2));
+
+        // First call should succeed
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            ctx.replicationControl.deletePartitions(requestContext, topics);
+        assertEquals(NONE.code(), result.response().get(0).errorCode());
+        ctx.replay(result.records());
+
+        // Second call for same range should fail with PARTITION_OPERATION_IN_PROGRESS
+        result = ctx.replicationControl.deletePartitions(requestContext, topics);
+        assertEquals(Errors.PARTITION_OPERATION_IN_PROGRESS.code(), result.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testDeletePartitionsInternalTopic() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("__consumer_offsets", 4, (short) 3, NONE.code());
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("__consumer_offsets").setCount(2));
+
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            ctx.replicationControl.deletePartitions(requestContext, topics);
+
+        assertEquals(Errors.INVALID_REQUEST.code(), result.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testDeletePartitionsDuringReassignment() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replication = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2, 3);
+        ctx.unfenceBrokers(0, 1, 2, 3);
+        ctx.createTestTopic("foo", new int[][] {
+            new int[] {0, 1, 2}, new int[] {0, 1, 2},
+            new int[] {0, 1, 2}, new int[] {0, 1, 2}});
+
+        ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+            replication.alterPartitionReassignments(
+                new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                    new ReassignableTopic().setName("foo").setPartitions(List.of(
+                        new ReassignablePartition().setPartitionIndex(3).
+                            setReplicas(List.of(1, 2, 3)))))));
+        ctx.replay(alterResult.records());
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> topics = List.of(
+            new DeletePartitionsTopic().setName("foo").setCount(2));
+
+        ControllerResult<List<DeletePartitionsTopicResult>> result =
+            replication.deletePartitions(requestContext, topics);
+
+        assertEquals(Errors.PARTITION_OPERATION_IN_PROGRESS.code(), result.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testCreatePartitionsBlockedDuringDraining() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", 4, (short) 3, NONE.code());
+
+        ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.CREATE_PARTITIONS);
+        List<DeletePartitionsTopic> deleteTopics = List.of(
+            new DeletePartitionsTopic().setName("foo").setCount(2));
+
+        ControllerResult<List<DeletePartitionsTopicResult>> deleteResult =
+            ctx.replicationControl.deletePartitions(requestContext, deleteTopics);
+        assertEquals(NONE.code(), deleteResult.response().get(0).errorCode());
+        ctx.replay(deleteResult.records());
+
+        List<CreatePartitionsTopic> createTopics = List.of(
+            new CreatePartitionsTopic().setName("foo").setCount(6).setAssignments(null));
+        ControllerResult<List<CreatePartitionsTopicResult>> createResult =
+            ctx.replicationControl.createPartitions(requestContext, createTopics);
+
+        assertEquals(Errors.PARTITION_OPERATION_IN_PROGRESS.code(),
+            createResult.response().get(0).errorCode());
+    }
+
+    @Test
+    public void testDeletePartitionsDeadlineExpiry() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        Uuid topicId = ctx.createTestTopic("foo", 4, (short) 3, NONE.code()).topicId();
+
+        long expiredDeadlineMs = 1L;
+        ctx.replay(List.of(
+            new ApiMessageAndVersion(new PartitionDrainingRecord().
+                setTopicId(topicId).setPartitionId(2).setDeadlineMs(expiredDeadlineMs), (short) 0),
+            new ApiMessageAndVersion(new PartitionDrainingRecord().
+                setTopicId(topicId).setPartitionId(3).setDeadlineMs(expiredDeadlineMs), (short) 0)
+        ));
+
+        ControllerResult<Boolean> result =
+            ctx.replicationControl.maybeRemoveExpiredDrainingPartitions();
+
+        assertEquals(2, result.records().size());
+        for (ApiMessageAndVersion record : result.records()) {
+            assertInstanceOf(RemovePartitionRecord.class, record.message());
+        }
+
+        Set<Integer> removedPartitions = new HashSet<>();
+        for (ApiMessageAndVersion record : result.records()) {
+            RemovePartitionRecord rpr = (RemovePartitionRecord) record.message();
+            assertEquals(topicId, rpr.topicId());
+            removedPartitions.add(rpr.partitionId());
+        }
+        assertTrue(removedPartitions.contains(2));
+        assertTrue(removedPartitions.contains(3));
+
+        ctx.replay(result.records());
+
+        assertNull(ctx.replicationControl.getPartition(topicId, 2));
+        assertNull(ctx.replicationControl.getPartition(topicId, 3));
+        assertNotNull(ctx.replicationControl.getPartition(topicId, 0));
+        assertNotNull(ctx.replicationControl.getPartition(topicId, 1));
     }
 }

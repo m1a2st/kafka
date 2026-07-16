@@ -6140,6 +6140,58 @@ class ReplicaManagerTest {
     }
   }
 
+  @Test
+  def testProduceToDrainingPartitionRejected(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val partition = replicaManager.createPartition(topicPartition)
+      partition.createLogIfNotExists(isNew = false, isFutureReplica = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), None)
+      val brokerList = java.util.List.of[Integer](0, 1)
+      val delta = createLeaderDelta(topicId, topicPartition, leaderId = 0, replicas = brokerList, isr = brokerList)
+      val leaderMetadataImage = imageFromTopics(delta.apply())
+      replicaManager.applyDelta(delta, leaderMetadataImage)
+
+      // Mark partition as draining
+      replicaManager.drainingPartitions.add(topicPartition)
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("test".getBytes()))
+      val appendResult = appendRecords(replicaManager, topicPartition, records, origin = AppendOrigin.CLIENT)
+      appendResult.onFire { response =>
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, response.error)
+      }
+      assertTrue(appendResult.hasFired)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testCoordinatorOriginBypassesDrainingCheck(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val partition = replicaManager.createPartition(topicPartition)
+      partition.createLogIfNotExists(isNew = false, isFutureReplica = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), None)
+      val brokerList = java.util.List.of[Integer](0)
+      val delta = createLeaderDelta(topicId, topicPartition, leaderId = 0, replicas = brokerList, isr = brokerList)
+      val leaderMetadataImage = imageFromTopics(delta.apply())
+      replicaManager.applyDelta(delta, leaderMetadataImage)
+
+      // Mark partition as draining
+      replicaManager.drainingPartitions.add(topicPartition)
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("test".getBytes()))
+      val appendResult = appendRecords(replicaManager, topicPartition, records, origin = AppendOrigin.COORDINATOR, requiredAcks = 1)
+      appendResult.onFire { response =>
+        assertEquals(Errors.NONE, response.error)
+      }
+      assertTrue(appendResult.hasFired)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   private def readFromLogWithOffsetOutOfRange(tp: TopicPartition): Seq[(TopicIdPartition, LogReadResult)] = {
     val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), aliveBrokerIds = Seq(0, 1, 2), enableRemoteStorage = true, shouldMockLog = true)
     try {

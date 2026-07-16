@@ -58,9 +58,11 @@ import org.apache.kafka.common.errors.FencedInstanceIdException;
 import org.apache.kafka.common.errors.GroupAuthorizationException;
 import org.apache.kafka.common.errors.GroupSubscribedToTopicException;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.common.errors.InvalidDeletePartitionCountException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.InvalidTopicException;
+import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.LogDirNotFoundException;
 import org.apache.kafka.common.errors.MismatchedEndpointTypeException;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
@@ -97,6 +99,8 @@ import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData;
 import org.apache.kafka.common.message.CreateAclsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsResponseData;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResultCollection;
@@ -190,6 +194,7 @@ import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.CreateAclsResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
+import org.apache.kafka.common.requests.DeletePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
@@ -11880,5 +11885,73 @@ public class KafkaAdminClientTest {
 
             TestUtils.assertFutureThrows(OutOfMemoryError.class, result.names());
         }
+    }
+
+    @Test
+    public void testDeletePartitions() throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+
+            env.kafkaClient().prepareResponse(
+                prepareDeletePartitionsResponse(0,
+                    deletePartitionsTopicResult("my_topic", Errors.NONE),
+                    deletePartitionsTopicResult("other_topic", Errors.INVALID_DELETE_PARTITION_COUNT,
+                        "count must be less than current")));
+
+            Map<String, Integer> counts = new HashMap<>();
+            counts.put("my_topic", 2);
+            counts.put("other_topic", 5);
+
+            DeletePartitionsResult results = env.adminClient().deletePartitions(counts);
+            Map<String, KafkaFuture<Void>> values = results.values();
+
+            KafkaFuture<Void> myTopicResult = values.get("my_topic");
+            myTopicResult.get();
+
+            KafkaFuture<Void> otherTopicResult = values.get("other_topic");
+            assertEquals("count must be less than current",
+                assertInstanceOf(InvalidDeletePartitionCountException.class,
+                    assertThrows(ExecutionException.class, otherTopicResult::get).getCause()).getMessage());
+        }
+    }
+
+    @Test
+    public void testDeletePartitionsAlreadyDraining() throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+
+            env.kafkaClient().prepareResponse(
+                prepareDeletePartitionsResponse(0,
+                    deletePartitionsTopicResult("my_topic", Errors.PARTITION_OPERATION_IN_PROGRESS,
+                        "partition is already being drained")));
+
+            Map<String, Integer> counts = new HashMap<>();
+            counts.put("my_topic", 2);
+
+            DeletePartitionsResult results = env.adminClient().deletePartitions(counts);
+            KafkaFuture<Void> myTopicResult = results.values().get("my_topic");
+
+            assertEquals("partition is already being drained",
+                assertInstanceOf(PartitionOperationInProgressException.class,
+                    assertThrows(ExecutionException.class, myTopicResult::get).getCause()).getMessage());
+        }
+    }
+
+    private static DeletePartitionsResponse prepareDeletePartitionsResponse(int throttleTimeMs, DeletePartitionsTopicResult... topics) {
+        DeletePartitionsResponseData data = new DeletePartitionsResponseData()
+            .setThrottleTimeMs(throttleTimeMs)
+            .setResults(asList(topics));
+        return new DeletePartitionsResponse(data);
+    }
+
+    private static DeletePartitionsTopicResult deletePartitionsTopicResult(String name, Errors error) {
+        return deletePartitionsTopicResult(name, error, null);
+    }
+
+    private static DeletePartitionsTopicResult deletePartitionsTopicResult(String name, Errors error, String errorMessage) {
+        return new DeletePartitionsTopicResult()
+            .setName(name)
+            .setErrorCode(error.code())
+            .setErrorMessage(errorMessage);
     }
 }

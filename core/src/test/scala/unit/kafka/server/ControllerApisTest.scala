@@ -31,6 +31,8 @@ import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsRes
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult
 import org.apache.kafka.common.message.CreateTopicsRequestData.{CreatableTopic, CreatableTopicCollection}
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult
 import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState
@@ -1307,6 +1309,42 @@ class ControllerApisTest {
   }
 
   @AfterEach
+  @Test
+  def testDeletePartitionsRequest(): Unit = {
+    val controller = mock(classOf[Controller])
+    controllerApis = createControllerApis(None, controller)
+    val request = new DeletePartitionsRequestData()
+    request.topics().add(new DeletePartitionsTopic().setName("foo").setCount(2))
+    request.topics().add(new DeletePartitionsTopic().setName("bar").setCount(3))
+    request.topics().add(new DeletePartitionsTopic().setName("bar").setCount(3))
+    request.topics().add(new DeletePartitionsTopic().setName("baz").setCount(1))
+    request.setValidateOnly(false)
+
+    when(controller.deletePartitions(
+      any(),
+      ArgumentMatchers.eq(
+        Collections.singletonList(
+          new DeletePartitionsTopic().setName("foo").setCount(2))),
+      ArgumentMatchers.eq(false))).thenReturn(CompletableFuture
+      .completedFuture(Collections.singletonList(
+        new DeletePartitionsTopicResult().setName("foo").
+          setErrorCode(NONE.code()).
+          setErrorMessage(null)
+      )))
+
+    assertEquals(Set(new DeletePartitionsTopicResult().setName("foo").
+      setErrorCode(NONE.code()).
+      setErrorMessage(null),
+      new DeletePartitionsTopicResult().setName("bar").
+        setErrorCode(INVALID_REQUEST.code()).
+        setErrorMessage("Duplicate topic name."),
+      new DeletePartitionsTopicResult().setName("baz").
+        setErrorCode(TOPIC_AUTHORIZATION_FAILED.code()).
+        setErrorMessage(null)),
+      controllerApis.deletePartitions(ANONYMOUS_CONTEXT, request,
+        _ => util.Set.of("foo", "bar")).get().asScala.toSet)
+  }
+
   def tearDown(): Unit = {
     quotasNeverThrottleControllerMutations.shutdown()
     quotasAlwaysThrottleControllerMutations.shutdown()
