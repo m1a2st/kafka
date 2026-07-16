@@ -19,6 +19,7 @@ package org.apache.kafka.clients.consumer;
 import kafka.server.KafkaBroker;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.DeletePartitionsOptions;
 import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.SharePartitionOffsetInfo;
@@ -56,6 +57,7 @@ import org.apache.kafka.common.test.api.ClusterTests;
 import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.share.SharePartitionKey;
 import org.apache.kafka.test.TestUtils;
 
@@ -2091,6 +2093,182 @@ public class ShareConsumerTest extends ShareConsumerTestBase {
                 return receivedValues.size() >= expectedValues.size();
             }, 30000L, 500L, () -> "did not receive all records from the newly added partition");
             assertEquals(expectedValues.size(), receivedValues.size());
+        }
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    public void testShareConsumerCanFetchFromDrainingPartition() throws Exception {
+        String topicName = "share-draining-fetch-test";
+        createTopic(topicName, 4, 1);
+
+        // Produce records to all partitions
+        try (Producer<byte[], byte[]> producer = createProducer()) {
+            for (int partition = 0; partition < 4; partition++) {
+                for (int i = 0; i < 5; i++) {
+                    producer.send(new ProducerRecord<>(topicName, partition, null,
+                        ("key-" + partition + "-" + i).getBytes(),
+                        ("value-" + partition + "-" + i).getBytes())).get();
+                }
+            }
+        }
+
+        // First, verify share consumer can consume from the topic before draining
+        String groupId = "share-draining-group";
+        alterShareAutoOffsetReset(groupId, "earliest");
+        try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer(groupId)) {
+            shareConsumer.subscribe(Set.of(topicName));
+
+            AtomicInteger initialRecords = new AtomicInteger(0);
+            waitForCondition(() -> {
+                ConsumerRecords<byte[], byte[]> records = shareConsumer.poll(Duration.ofMillis(2000));
+                initialRecords.addAndGet(records.count());
+                return initialRecords.get() >= 20;
+            }, DEFAULT_MAX_WAIT_MS, "Share consumer should receive all 20 initial records");
+
+            assertTrue(initialRecords.get() >= 20,
+                "Expected at least 20 records before draining, got " + initialRecords.get());
+        }
+
+        // Now delete partitions to reduce from 4 to 2 (partitions 2,3 become draining)
+        try (Admin admin = createAdminClient()) {
+            admin.deletePartitions(Map.of(topicName, 2), new DeletePartitionsOptions()).all().get();
+        }
+
+        // Produce more records to non-draining partitions only
+        try (Producer<byte[], byte[]> producer = createProducer()) {
+            for (int i = 0; i < 5; i++) {
+                producer.send(new ProducerRecord<>(topicName, 0, null,
+                    ("new-key-" + i).getBytes(), ("new-value-" + i).getBytes())).get();
+                producer.send(new ProducerRecord<>(topicName, 1, null,
+                    ("new-key-" + i).getBytes(), ("new-value-" + i).getBytes())).get();
+            }
+        }
+
+        // A new share consumer group should still receive records from non-draining partitions
+        String groupId2 = "share-draining-group2";
+        alterShareAutoOffsetReset(groupId2, "earliest");
+        try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer(groupId2)) {
+            shareConsumer.subscribe(Set.of(topicName));
+
+            AtomicInteger recordCount = new AtomicInteger(0);
+            waitForCondition(() -> {
+                ConsumerRecords<byte[], byte[]> records = shareConsumer.poll(Duration.ofMillis(2000));
+                recordCount.addAndGet(records.count());
+                return recordCount.get() >= 10;
+            }, DEFAULT_MAX_WAIT_MS, "Share consumer should receive records from non-draining partitions");
+
+            // Should get at least the 10 new records from partitions 0 and 1
+            assertTrue(recordCount.get() >= 10,
+                "Expected at least 10 records from non-draining partitions, got " + recordCount.get());
+        }
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    public void testShareConsumerProduceToDrainingPartitionFails() throws Exception {
+        String topicName = "share-draining-produce-test";
+        createTopic(topicName, 4, 1);
+
+        // Produce initial records
+        try (Producer<byte[], byte[]> producer = createProducer()) {
+            for (int i = 0; i < 5; i++) {
+                producer.send(new ProducerRecord<>(topicName, 0, null,
+                    ("key-" + i).getBytes(), ("value-" + i).getBytes())).get();
+            }
+        }
+
+        // Delete partitions to reduce from 4 to 2 (partitions 2,3 become draining)
+        try (Admin admin = createAdminClient()) {
+            admin.deletePartitions(Map.of(topicName, 2), new DeletePartitionsOptions()).all().get();
+        }
+
+        // Produce to draining partition should fail
+        try (Producer<byte[], byte[]> producer = createProducer(Map.of(
+            ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 5000,
+            ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 2000,
+            ProducerConfig.RETRIES_CONFIG, 1
+        ))) {
+            // Produce to non-draining partition should succeed
+            producer.send(new ProducerRecord<>(topicName, 0, null,
+                "key".getBytes(), "value".getBytes())).get();
+
+            // Produce to draining partition should fail
+            ExecutionException e = assertThrows(ExecutionException.class, () ->
+                producer.send(new ProducerRecord<>(topicName, 2, null,
+                    "key".getBytes(), "value".getBytes())).get());
+            assertTrue(e.getCause() instanceof NotLeaderOrFollowerException ||
+                    e.getCause() instanceof TimeoutException,
+                "Expected NotLeaderOrFollowerException or TimeoutException but got " + e.getCause().getClass());
+        }
+
+        // Share consumer should still work on non-draining partitions
+        String groupId = "share-draining-produce-group";
+        alterShareAutoOffsetReset(groupId, "earliest");
+        try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer(groupId)) {
+            shareConsumer.subscribe(Set.of(topicName));
+
+            AtomicInteger recordCount = new AtomicInteger(0);
+            waitForCondition(() -> {
+                ConsumerRecords<byte[], byte[]> records = shareConsumer.poll(Duration.ofMillis(2000));
+                recordCount.addAndGet(records.count());
+                return recordCount.get() >= 5;
+            }, DEFAULT_MAX_WAIT_MS, "Share consumer should receive records from non-draining partitions");
+
+            assertTrue(recordCount.get() >= 5,
+                "Expected at least 5 records from non-draining partition 0, got " + recordCount.get());
+        }
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    public void testShareConsumerDeletePartitionsSubscriptionAdjusts() throws Exception {
+        String topicName = "share-draining-sub-test";
+        createTopic(topicName, 4, 1);
+
+        // Produce records to partition 0 and 1
+        try (Producer<byte[], byte[]> producer = createProducer()) {
+            for (int i = 0; i < 10; i++) {
+                producer.send(new ProducerRecord<>(topicName, i % 2, null,
+                    ("key-" + i).getBytes(), ("value-" + i).getBytes())).get();
+            }
+        }
+
+        String groupId = "share-draining-sub-group";
+        alterShareAutoOffsetReset(groupId, "earliest");
+
+        // Start share consumer before deleting partitions
+        try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer(groupId)) {
+            shareConsumer.subscribe(Set.of(topicName));
+
+            // Consume some records first
+            AtomicInteger recordCount = new AtomicInteger(0);
+            waitForCondition(() -> {
+                ConsumerRecords<byte[], byte[]> records = shareConsumer.poll(Duration.ofMillis(2000));
+                recordCount.addAndGet(records.count());
+                return recordCount.get() >= 10;
+            }, DEFAULT_MAX_WAIT_MS, "Share consumer should receive initial records");
+
+            // Now delete partitions (reduce 4 -> 2)
+            try (Admin admin = createAdminClient()) {
+                admin.deletePartitions(Map.of(topicName, 2), new DeletePartitionsOptions()).all().get();
+            }
+
+            // Produce more records to non-draining partitions
+            try (Producer<byte[], byte[]> producer = createProducer()) {
+                for (int i = 0; i < 5; i++) {
+                    producer.send(new ProducerRecord<>(topicName, 0, null,
+                        ("new-key-" + i).getBytes(), ("new-value-" + i).getBytes())).get();
+                }
+            }
+
+            // Share consumer should still be able to poll and get new records
+            AtomicInteger newRecordCount = new AtomicInteger(0);
+            waitForCondition(() -> {
+                ConsumerRecords<byte[], byte[]> records = shareConsumer.poll(Duration.ofMillis(2000));
+                newRecordCount.addAndGet(records.count());
+                return newRecordCount.get() >= 5;
+            }, DEFAULT_MAX_WAIT_MS, "Share consumer should receive new records after partition deletion");
+
+            assertTrue(newRecordCount.get() >= 5,
+                "Expected at least 5 new records, got " + newRecordCount.get());
         }
     }
 }
