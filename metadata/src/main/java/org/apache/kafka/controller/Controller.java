@@ -37,6 +37,8 @@ import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
@@ -396,6 +398,21 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<List<CreatePartitionsTopicResult>> createPartitions(
         ControllerRequestContext context,
         List<CreatePartitionsTopic> topics,
+        boolean validateOnly
+    );
+
+    /**
+     * Delete partitions from the tail of topics.
+     *
+     * @param context       The controller request context.
+     * @param topics        The list of topics to delete partitions from.
+     * @param validateOnly  If true, the request is validated, but no partitions will be deleted.
+     *
+     * @return              A future yielding per-topic results.
+     */
+    CompletableFuture<List<DeletePartitionsTopicResult>> deletePartitions(
+        ControllerRequestContext context,
+        List<DeletePartitionsTopic> topics,
         boolean validateOnly
     );
 

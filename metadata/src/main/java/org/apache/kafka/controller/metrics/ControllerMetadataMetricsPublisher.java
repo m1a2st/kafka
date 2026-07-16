@@ -152,6 +152,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setGlobalPartitionCount(totalPartitions);
         metrics.setOfflinePartitionCount(offlinePartitions);
         metrics.setPreferredReplicaImbalanceCount(partitionsWithoutPreferredLeader);
+        metrics.setDrainingPartitionCount(0);
     }
 
     @Override

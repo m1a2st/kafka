@@ -64,6 +64,8 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "KafkaController", "PreferredReplicaImbalanceCount");
     private static final MetricName METADATA_ERROR_COUNT = getMetricName(
         "KafkaController", "MetadataErrorCount");
+    private static final MetricName DRAINING_PARTITION_COUNT = getMetricName(
+        "KafkaController", "DrainingPartitionCount");
     private static final MetricName UNCLEAN_LEADER_ELECTIONS_PER_SEC = getMetricName(
         "ControllerStats", "UncleanLeaderElectionsPerSec");
     private static final MetricName ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC = getMetricName(
@@ -81,6 +83,7 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private final AtomicInteger offlinePartitionCount = new AtomicInteger(0);
     private final AtomicInteger preferredReplicaImbalanceCount = new AtomicInteger(0);
     private final AtomicInteger metadataErrorCount = new AtomicInteger(0);
+    private final AtomicInteger drainingPartitionCount = new AtomicInteger(0);
     private Optional<Meter> uncleanLeaderElectionMeter = Optional.empty();
     private Optional<Meter> electionFromEligibleLeaderReplicasMeter = Optional.empty();
     private final AtomicBoolean ignoredStaticVoters = new AtomicBoolean(false);
@@ -138,6 +141,12 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             @Override
             public Integer value() {
                 return metadataErrorCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DRAINING_PARTITION_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return drainingPartitionCount();
             }
         }));
         registry.ifPresent(r -> uncleanLeaderElectionMeter =
@@ -292,6 +301,18 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     public int metadataErrorCount() {
         return this.metadataErrorCount.get();
     }
+
+    public void setDrainingPartitionCount(int count) {
+        this.drainingPartitionCount.set(count);
+    }
+
+    public void addToDrainingPartitionCount(int delta) {
+        this.drainingPartitionCount.addAndGet(delta);
+    }
+
+    public int drainingPartitionCount() {
+        return this.drainingPartitionCount.get();
+    }
     
     public void updateUncleanLeaderElection(int count) {
         this.uncleanLeaderElectionMeter.ifPresent(m -> m.mark(count));
@@ -320,6 +341,7 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             OFFLINE_PARTITION_COUNT,
             PREFERRED_REPLICA_IMBALANCE_COUNT,
             METADATA_ERROR_COUNT,
+            DRAINING_PARTITION_COUNT,
             UNCLEAN_LEADER_ELECTIONS_PER_SEC,
             ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC,
             IGNORED_STATIC_VOTERS

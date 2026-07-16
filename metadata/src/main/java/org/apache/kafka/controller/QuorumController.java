@@ -45,6 +45,8 @@ import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
@@ -71,12 +73,14 @@ import org.apache.kafka.common.metadata.FenceBrokerRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
 import org.apache.kafka.common.metadata.NoOpRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.ProducerIdsRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.RegisterControllerRecord;
 import org.apache.kafka.common.metadata.RemoveAccessControlEntryRecord;
 import org.apache.kafka.common.metadata.RemoveDelegationTokenRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.RemoveUserScramCredentialRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
@@ -1328,6 +1332,12 @@ public final class QuorumController implements Controller {
             case CLEAR_ELR_RECORD:
                 replicationControl.replay((ClearElrRecord) message);
                 break;
+            case PARTITION_DRAINING_RECORD:
+                replicationControl.replay((PartitionDrainingRecord) message);
+                break;
+            case REMOVE_PARTITION_RECORD:
+                replicationControl.replay((RemovePartitionRecord) message);
+                break;
             default:
                 throw new RuntimeException("Unhandled record type " + type);
         }
@@ -1644,6 +1654,7 @@ public final class QuorumController implements Controller {
         }
         registerElectUnclean(TimeUnit.MILLISECONDS.toNanos(uncleanLeaderElectionCheckIntervalMs));
         registerExpireDelegationTokens(MILLISECONDS.toNanos(delegationTokenExpiryCheckIntervalMs));
+        registerRemoveExpiredDrainingPartitions();
         registerGeneratePeriodicPerformanceMessage();
         // OffsetControlManager must be initialized last, because its constructor will take the
         // initial in-memory snapshot of all extant timeline data structures.
@@ -1757,6 +1768,13 @@ public final class QuorumController implements Controller {
             delegationTokenControlManager::sweepExpiredDelegationTokens,
             checkIntervalNs,
             EnumSet.of(PeriodicTaskFlag.VERBOSE)));
+    }
+
+    private void registerRemoveExpiredDrainingPartitions() {
+        periodicControl.registerTask(new PeriodicTask("removeExpiredDrainingPartitions",
+            replicationControl::maybeRemoveExpiredDrainingPartitions,
+            MILLISECONDS.toNanos(30000),
+            EnumSet.noneOf(PeriodicTaskFlag.class)));
     }
 
     @Override
@@ -2138,6 +2156,29 @@ public final class QuorumController implements Controller {
                 return result.withoutRecords();
             } else {
                 log.debug("CreatePartitions result(s): {}", result.response());
+                return result;
+            }
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<DeletePartitionsTopicResult>> deletePartitions(
+        ControllerRequestContext context,
+        List<DeletePartitionsTopic> topics,
+        boolean validateOnly
+    ) {
+        if (topics.isEmpty()) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+
+        return appendWriteEvent("deletePartitions", context.deadlineNs(), () -> {
+            final ControllerResult<List<DeletePartitionsTopicResult>> result =
+                    replicationControl.deletePartitions(context, topics);
+            if (validateOnly) {
+                log.debug("Validate-only DeletePartitions result(s): {}", result.response());
+                return result.withoutRecords();
+            } else {
+                log.debug("DeletePartitions result(s): {}", result.response());
                 return result;
             }
         });

@@ -23,9 +23,12 @@ import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
+import org.apache.kafka.common.errors.InvalidDeletePartitionCountException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
+import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidReplicationFactorException;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -52,6 +55,8 @@ import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
@@ -71,7 +76,9 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.metadata.BrokerRegistrationChangeRecord;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
@@ -374,6 +381,11 @@ public class ReplicationControlManager {
     private final TimelineHashMap<Uuid, TimelineHashSet<TopicIdPartition>> directoriesToPartitions;
 
     /**
+     * Partitions currently in DRAINING state, mapped to their wall-clock deadline (epoch ms).
+     */
+    private final TimelineHashMap<TopicIdPartition, Long> drainingPartitions;
+
+    /**
      * A ClusterDescriber which supplies cluster information to our ReplicaPlacer.
      */
     final KRaftClusterDescriber clusterDescriber = new KRaftClusterDescriber();
@@ -406,6 +418,7 @@ public class ReplicationControlManager {
         this.reassigningTopics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.imbalancedPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
         this.directoriesToPartitions = new TimelineHashMap<>(snapshotRegistry, 0);
+        this.drainingPartitions = new TimelineHashMap<>(snapshotRegistry, 0);
     }
 
     public void replay(TopicRecord record) {
@@ -549,6 +562,11 @@ public class ReplicationControlManager {
             }
         }
         reassigningTopics.remove(record.topicId());
+
+        // Remove any draining partitions for this topic.
+        for (int partitionId : topic.parts.keySet()) {
+            drainingPartitions.remove(new TopicIdPartition(record.topicId(), partitionId));
+        }
 
         // Delete the configurations associated with this topic.
         configurationControl.deleteTopicConfigs(topic.name);
@@ -1040,6 +1058,134 @@ public class ReplicationControlManager {
         }
         records.add(new ApiMessageAndVersion(new RemoveTopicRecord().
             setTopicId(id), (short) 0));
+    }
+
+    ControllerResult<List<DeletePartitionsTopicResult>> deletePartitions(
+        ControllerRequestContext context,
+        List<DeletePartitionsTopic> topics
+    ) {
+        List<ApiMessageAndVersion> records = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        List<DeletePartitionsTopicResult> results = BoundedList.newArrayBacked(MAX_RECORDS_PER_USER_OP);
+        for (DeletePartitionsTopic topic : topics) {
+            ApiError apiError = ApiError.NONE;
+            try {
+                deletePartitions(context, topic, records);
+            } catch (ApiException e) {
+                apiError = ApiError.fromThrowable(e);
+            } catch (Exception e) {
+                log.error("Unexpected deletePartitions error for {}", topic, e);
+                apiError = ApiError.fromThrowable(e);
+            }
+            results.add(new DeletePartitionsTopicResult().
+                setName(topic.name()).
+                setErrorCode(apiError.error().code()).
+                setErrorMessage(apiError.message()));
+        }
+        return ControllerResult.atomicOf(records, results);
+    }
+
+    void deletePartitions(ControllerRequestContext context,
+                          DeletePartitionsTopic topic,
+                          List<ApiMessageAndVersion> records) {
+        if (!featureControl.metadataVersionOrThrow().isDeletePartitionsSupported()) {
+            throw new UnsupportedVersionException("The cluster does not support " +
+                "partition deletion. Upgrade to the latest MetadataVersion first.");
+        }
+        if (Topic.isInternal(topic.name())) {
+            throw new InvalidRequestException("Cannot delete partitions from internal topic '" +
+                topic.name() + "'.");
+        }
+        Uuid topicId = topicsByName.get(topic.name());
+        if (topicId == null) {
+            throw new UnknownTopicOrPartitionException();
+        }
+        TopicControlInfo topicInfo = this.topics.get(topicId);
+        if (topicInfo == null) {
+            throw new UnknownTopicOrPartitionException();
+        }
+        int currentCount = topicInfo.parts.size();
+        int newCount = topic.count();
+        if (newCount <= 0) {
+            throw new InvalidDeletePartitionCountException("The requested partition count " +
+                newCount + " is not valid. Use DeleteTopics to remove all partitions.");
+        }
+        if (newCount >= currentCount) {
+            throw new InvalidDeletePartitionCountException("The topic " + topic.name() +
+                " currently has " + currentCount + " partition(s); " + newCount +
+                " would not be a decrease.");
+        }
+        int numToDelete = currentCount - newCount;
+        for (int i = newCount; i < currentCount; i++) {
+            TopicIdPartition tp = new TopicIdPartition(topicId, i);
+            if (drainingPartitions.containsKey(tp)) {
+                throw new PartitionOperationInProgressException("Partition " + topic.name() +
+                    "-" + i + " is already being drained.");
+            }
+            PartitionRegistration partition = topicInfo.parts.get(i);
+            if (partition != null && (partition.removingReplicas.length > 0 ||
+                    partition.addingReplicas.length > 0)) {
+                throw new PartitionOperationInProgressException("Partition " + topic.name() +
+                    "-" + i + " is currently being reassigned.");
+            }
+        }
+        try {
+            context.applyPartitionChangeQuota(numToDelete);
+        } catch (ThrottlingQuotaExceededException e) {
+            log.debug("Partition deletion of {} partitions not allowed because quota is violated. Delay time: {}",
+                numToDelete, e.throttleTimeMs());
+            throw e;
+        }
+        long drainTimeoutMs;
+        try {
+            drainTimeoutMs = Long.parseLong(
+                configurationControl.getTopicConfig(topic.name(),
+                    TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_CONFIG).value());
+        } catch (Exception e) {
+            drainTimeoutMs = TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DEFAULT;
+        }
+        long deadlineMs = System.currentTimeMillis() + drainTimeoutMs;
+        for (int i = newCount; i < currentCount; i++) {
+            records.add(new ApiMessageAndVersion(new PartitionDrainingRecord().
+                setTopicId(topicId).
+                setPartitionId(i).
+                setDeadlineMs(deadlineMs), (short) 0));
+        }
+    }
+
+    public void replay(PartitionDrainingRecord record) {
+        TopicControlInfo topicInfo = topics.get(record.topicId());
+        if (topicInfo == null) {
+            throw new RuntimeException("Unable to find topic with ID " + record.topicId() +
+                " for partition draining.");
+        }
+        TopicIdPartition tp = new TopicIdPartition(record.topicId(), record.partitionId());
+        drainingPartitions.put(tp, record.deadlineMs());
+        log.info("Replayed PartitionDrainingRecord for topic {} partition {} with deadline {}.",
+            topicInfo.name, record.partitionId(), record.deadlineMs());
+    }
+
+    public void replay(RemovePartitionRecord record) {
+        TopicControlInfo topicInfo = topics.get(record.topicId());
+        if (topicInfo == null) {
+            throw new RuntimeException("Unable to find topic with ID " + record.topicId() +
+                " for partition removal.");
+        }
+        PartitionRegistration partition = topicInfo.parts.remove(record.partitionId());
+        if (partition == null) {
+            throw new RuntimeException("Unable to find partition " + record.topicId() +
+                ":" + record.partitionId() + " to remove.");
+        }
+        for (int i = 0; i < partition.isr.length; i++) {
+            brokersToIsrs.removeTopicEntryForBroker(record.topicId(), partition.isr[i]);
+        }
+        for (int elrMember : partition.elr) {
+            brokersToElrs.removeTopicEntryForBroker(record.topicId(), elrMember);
+        }
+        TopicIdPartition tp = new TopicIdPartition(record.topicId(), record.partitionId());
+        imbalancedPartitions.remove(tp);
+        drainingPartitions.remove(tp);
+        log.info("Replayed RemovePartitionRecord for topic {} partition {}.",
+            topicInfo.name, record.partitionId());
     }
 
     // VisibleForTesting
@@ -1878,6 +2024,24 @@ public class ReplicationControlManager {
             partition.leaderEpoch);
     }
 
+    ControllerResult<Boolean> maybeRemoveExpiredDrainingPartitions() {
+        long nowMs = System.currentTimeMillis();
+        List<ApiMessageAndVersion> records = new ArrayList<>();
+        Iterator<Map.Entry<TopicIdPartition, Long>> iterator = drainingPartitions.entrySet().iterator();
+        while (iterator.hasNext() && records.size() < MAX_PARTITIONS_PER_BATCH) {
+            Map.Entry<TopicIdPartition, Long> entry = iterator.next();
+            if (entry.getValue() <= nowMs) {
+                records.add(new ApiMessageAndVersion(new RemovePartitionRecord().
+                    setTopicId(entry.getKey().topicId()).
+                    setPartitionId(entry.getKey().partitionId()), (short) 0));
+            }
+        }
+        if (!records.isEmpty()) {
+            log.info("Removing {} expired draining partition(s).", records.size());
+        }
+        return ControllerResult.of(records, records.size() >= MAX_PARTITIONS_PER_BATCH);
+    }
+
     ControllerResult<List<CreatePartitionsTopicResult>> createPartitions(
         ControllerRequestContext context,
         List<CreatePartitionsTopic> topics
@@ -1912,6 +2076,13 @@ public class ReplicationControlManager {
         TopicControlInfo topicInfo = topics.get(topicId);
         if (topicInfo == null) {
             throw new UnknownTopicOrPartitionException();
+        }
+        for (int i = 0; i < topicInfo.parts.size(); i++) {
+            if (drainingPartitions.containsKey(new TopicIdPartition(topicId, i))) {
+                throw new PartitionOperationInProgressException(
+                    "Cannot create partitions while a partition deletion is in progress for topic '" +
+                    topic.name() + "'.");
+            }
         }
         if (topic.count() == topicInfo.parts.size()) {
             throw new InvalidPartitionsException("Topic already has " +
@@ -2183,6 +2354,10 @@ public class ReplicationControlManager {
         if (part == null) {
             throw new UnknownTopicOrPartitionException("Unable to find partition " +
                 topicName + ":" + target.partitionIndex() + ".");
+        }
+        if (drainingPartitions.containsKey(tp)) {
+            throw new PartitionOperationInProgressException("Partition " + topicName +
+                "-" + target.partitionIndex() + " is being drained and cannot be reassigned.");
         }
         Optional<ApiMessageAndVersion> record;
         if (target.replicas() == null) {

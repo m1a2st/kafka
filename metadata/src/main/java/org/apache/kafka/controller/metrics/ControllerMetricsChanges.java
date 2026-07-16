@@ -49,6 +49,7 @@ class ControllerMetricsChanges {
     private int globalPartitionsChange = 0;
     private int offlinePartitionsChange = 0;
     private int partitionsWithoutPreferredLeaderChange = 0;
+    private int drainingPartitionsChange = 0;
     private int uncleanLeaderElection = 0;
     private int electionFromElr = 0;
 
@@ -136,6 +137,8 @@ class ControllerMetricsChanges {
                 handlePartitionChange(prevPartition, nextPartition);
             }
         }
+        drainingPartitionsChange += topicDelta.drainingPartitions().size();
+        drainingPartitionsChange -= topicDelta.removedPartitions().size();
         topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
         topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
     }
@@ -186,6 +189,9 @@ class ControllerMetricsChanges {
         }
         if (partitionsWithoutPreferredLeaderChange != 0) {
             metrics.addToPreferredReplicaImbalanceCount(partitionsWithoutPreferredLeaderChange);
+        }
+        if (drainingPartitionsChange != 0) {
+            metrics.addToDrainingPartitionCount(drainingPartitionsChange);
         }
         if (uncleanLeaderElection > 0) {
             metrics.updateUncleanLeaderElection(uncleanLeaderElection);
