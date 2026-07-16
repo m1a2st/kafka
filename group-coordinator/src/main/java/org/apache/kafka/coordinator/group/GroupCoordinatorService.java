@@ -2892,6 +2892,11 @@ public class GroupCoordinatorService implements GroupCoordinator {
         if (delta.topicsDelta() != null && !delta.topicsDelta().deletedTopicIds().isEmpty()) {
             handleTopicsDeletion(delta.topicsDelta());
         }
+
+        // Handle individual partition removals from the delta.
+        if (delta.topicsDelta() != null) {
+            handlePartitionsDeleted(delta.topicsDelta());
+        }
     }
 
     /**
@@ -2948,6 +2953,32 @@ public class GroupCoordinatorService implements GroupCoordinator {
 
         // Wait for all operations to complete.
         CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0])).join();
+    }
+
+    /**
+     * Handles the removal of individual partitions from topics by scheduling write operations
+     * to delete committed offsets for those partitions.
+     *
+     * @param topicsDelta The topics delta containing changed topics.
+     */
+    private void handlePartitionsDeleted(TopicsDelta topicsDelta) {
+        topicsDelta.changedTopics().forEach((topicId, topicDelta) -> {
+            Set<Integer> removedPartitions = topicDelta.removedPartitions();
+            if (!removedPartitions.isEmpty()) {
+                String topicName = topicDelta.image().name();
+                FutureUtils.mapExceptionally(
+                    runtime.scheduleWriteAllOperation(
+                        "on-partitions-deleted",
+                        coordinator -> coordinator.onPartitionsDeleted(topicName, removedPartitions)
+                    ),
+                    exception -> {
+                        log.error("Could not delete offsets for removed partitions {} of topic {} due to: {}.",
+                            removedPartitions, topicName, exception.getMessage(), exception);
+                        return null;
+                    }
+                );
+            }
+        });
     }
 
     /**

@@ -59,6 +59,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
@@ -1142,6 +1143,38 @@ public class OffsetMetadataManager {
         // Delete the offsets from the main storage.
         delete.accept(offsets);
         // Delete the offsets from the pending transactional offsets.
+        pendingTransactionalOffsets.forEach((__, offsets) -> delete.accept(offsets));
+
+        return records;
+    }
+
+    /**
+     * Remove offsets of the partitions that have been deleted from a topic.
+     *
+     * @param topicName             The topic name.
+     * @param removedPartitionIds   The partition IDs that have been removed.
+     * @return The list of tombstones (offset commit) to append.
+     */
+    public List<CoordinatorRecord> onPartitionsDeleted(
+        String topicName,
+        Set<Integer> removedPartitionIds
+    ) {
+        List<CoordinatorRecord> records = new ArrayList<>();
+
+        Consumer<Offsets> delete = offsetsToClean -> {
+            offsetsToClean.offsetsByGroup.forEach((groupId, topicOffsets) -> {
+                var partitionOffsets = topicOffsets.get(topicName);
+                if (partitionOffsets != null) {
+                    partitionOffsets.forEach((partition, offsetAndMetadata) -> {
+                        if (removedPartitionIds.contains(partition)) {
+                            appendOffsetCommitTombstone(groupId, topicName, partition, records);
+                        }
+                    });
+                }
+            });
+        };
+
+        delete.accept(offsets);
         pendingTransactionalOffsets.forEach((__, offsets) -> delete.accept(offsets));
 
         return records;
