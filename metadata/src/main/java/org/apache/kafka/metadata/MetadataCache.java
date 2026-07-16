@@ -67,6 +67,15 @@ public interface MetadataCache extends ConfigRepository {
         boolean errorUnavailableEndpoints,
         boolean errorUnavailableListeners);
 
+    default List<MetadataResponseData.MetadataResponseTopic> getTopicMetadata(
+        Set<String> topics,
+        ListenerName listenerName,
+        boolean errorUnavailableEndpoints,
+        boolean errorUnavailableListeners,
+        short requestVersion) {
+        return getTopicMetadata(topics, listenerName, errorUnavailableEndpoints, errorUnavailableListeners);
+    }
+
     Set<String> getAllTopics();
 
     boolean hasAliveBroker(int brokerId);

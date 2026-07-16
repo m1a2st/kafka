@@ -210,6 +210,7 @@ class ReplicaManager(val config: KafkaConfig,
   /* epoch of the controller that last changed the leader */
   protected val localBrokerId = config.brokerId
   protected val allPartitions = new ConcurrentHashMap[TopicPartition, HostedPartition[Partition]]
+  private[server] val drainingPartitions: java.util.Set[TopicPartition] = ConcurrentHashMap.newKeySet[TopicPartition]()
   private val replicaStateChangeLock = new Object
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
@@ -1409,6 +1410,13 @@ class ReplicaManager(val config: KafkaConfig,
           LogAppendSummary.fromAppendInfo(LogAppendInfo.UNKNOWN_LOG_APPEND_INFO),
           Optional.of(new InvalidTopicException(s"Cannot append to internal topic ${topicIdPartition.topic}")),
           false))
+      } else if (drainingPartitions.contains(topicIdPartition.topicPartition()) &&
+          origin != AppendOrigin.COORDINATOR) {
+        (topicIdPartition, new LogAppendResult(
+          LogAppendSummary.fromAppendInfo(LogAppendInfo.UNKNOWN_LOG_APPEND_INFO),
+          Optional.of(new NotLeaderOrFollowerException(
+            s"Cannot produce to partition ${topicIdPartition.topicPartition()} because it is being deleted")),
+          false))
       } else {
         try {
           val partition = getPartitionOrException(topicIdPartition)
@@ -2411,6 +2419,17 @@ class ReplicaManager(val config: KafkaConfig,
       if (metadataVersion.isDirectoryAssignmentSupported) {
         // We only want to update the directoryIds if DirectoryAssignment is supported!
         localChanges.directoryIds.forEach(maybeUpdateTopicAssignment)
+      }
+
+      if (!localChanges.drainingPartitions.isEmpty) {
+        drainingPartitions.addAll(localChanges.drainingPartitions)
+        stateChangeLogger.info(s"Marked ${localChanges.drainingPartitions.size} partition(s) as draining: " +
+          s"${localChanges.drainingPartitions}")
+      }
+
+      // Partitions that are deleted should also be removed from the draining set
+      if (!localChanges.deletes.isEmpty) {
+        drainingPartitions.removeAll(localChanges.deletes)
       }
     }
   }

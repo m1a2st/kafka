@@ -206,6 +206,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.DESCRIBE_LOG_DIRS => handleDescribeLogDirsRequest(request)
         case ApiKeys.SASL_AUTHENTICATE => handleSaslAuthenticateRequest(request)
         case ApiKeys.CREATE_PARTITIONS => forwardToController(request)
+        case ApiKeys.DELETE_PARTITIONS => forwardToController(request)
         // Create, renew and expire DelegationTokens must first validate that the connection
         // itself is not authenticated with a delegation token before maybeForwardToController.
         case ApiKeys.CREATE_DELEGATION_TOKEN => handleCreateTokenRequest(request)
@@ -847,10 +848,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     topics: util.Set[String],
     listenerName: ListenerName,
     errorUnavailableEndpoints: Boolean,
-    errorUnavailableListeners: Boolean
+    errorUnavailableListeners: Boolean,
+    requestVersion: Short
   ): Seq[MetadataResponseTopic] = {
     val topicResponses = metadataCache.getTopicMetadata(topics, listenerName,
-      errorUnavailableEndpoints, errorUnavailableListeners)
+      errorUnavailableEndpoints, errorUnavailableListeners, requestVersion)
 
     if (topics.isEmpty || topicResponses.size == topics.size || fetchAllTopics) {
       topicResponses.asScala
@@ -965,7 +967,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val allowAutoCreation = config.autoCreateTopicsEnable && metadataRequest.allowAutoTopicCreation && !metadataRequest.isAllTopics
     val topicMetadata = getTopicMetadata(request, metadataRequest.isAllTopics, allowAutoCreation, authorizedTopics.asJava,
-      request.context.listenerName, errorUnavailableEndpoints, errorUnavailableListeners)
+      request.context.listenerName, errorUnavailableEndpoints, errorUnavailableListeners, requestVersion.toShort)
 
     var clusterAuthorizedOperations = Int.MinValue // Default value in the schema
     if (requestVersion >= 8) {

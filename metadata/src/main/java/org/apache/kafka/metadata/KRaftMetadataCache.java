@@ -201,6 +201,7 @@ public class KRaftMetadataCache implements MetadataCache {
         List<DescribeTopicPartitionsResponsePartition> result = new ArrayList<>();
         final Set<Integer> partitions = topic.partitions().keySet();
         final int upperIndex = Math.min(topic.partitions().size(), startIndex + maxCount);
+        Set<Integer> draining = topic.drainingPartitions();
         for (int partitionId = startIndex; partitionId < upperIndex; partitionId++) {
             PartitionRegistration partition = topic.partitions().get(partitionId);
             if (partition == null) {
@@ -219,7 +220,8 @@ public class KRaftMetadataCache implements MetadataCache {
                 .setIsrNodes(filteredIsr)
                 .setOfflineReplicas(offlineReplicas)
                 .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
-                .setLastKnownElr(Replicas.toList(partition.lastKnownElr)));
+                .setLastKnownElr(Replicas.toList(partition.lastKnownElr))
+                .setIsDraining(draining.contains(partitionId)));
         }
         return Map.entry(Optional.of(result), (upperIndex < partitions.size()) ? upperIndex : -1);
     }
@@ -261,14 +263,39 @@ public class KRaftMetadataCache implements MetadataCache {
         boolean errorUnavailableEndpoints,
         boolean errorUnavailableListeners
     ) {
+        return getTopicMetadata(topics, listenerName, errorUnavailableEndpoints, errorUnavailableListeners, (short) -1);
+    }
+
+    @Override
+    public List<MetadataResponseTopic> getTopicMetadata(
+        Set<String> topics,
+        ListenerName listenerName,
+        boolean errorUnavailableEndpoints,
+        boolean errorUnavailableListeners,
+        short requestVersion
+    ) {
         MetadataImage image = currentImage;
         return topics.stream().flatMap(topic -> {
+            TopicImage topicImage = image.topics().getTopic(topic);
             List<MetadataResponsePartition> partitions = partitionMetadata(image, topic, listenerName, errorUnavailableEndpoints, errorUnavailableListeners);
             if (partitions.isEmpty()) return Stream.empty();
+            Set<Integer> draining = topicImage != null ? topicImage.drainingPartitions() : Set.of();
+            if (!draining.isEmpty()) {
+                if (requestVersion >= 0 && requestVersion < 14) {
+                    partitions = partitions.stream()
+                        .filter(p -> !draining.contains(p.partitionIndex()))
+                        .toList();
+                    if (partitions.isEmpty()) return Stream.empty();
+                } else if (requestVersion >= 14) {
+                    partitions = partitions.stream()
+                        .map(p -> draining.contains(p.partitionIndex()) ? p.setIsDraining(true) : p)
+                        .toList();
+                }
+            }
             return Stream.of(new MetadataResponseTopic()
                 .setErrorCode(Errors.NONE.code())
                 .setName(topic)
-                .setTopicId(image.topics().getTopic(topic) == null ? Uuid.ZERO_UUID : image.topics().getTopic(topic).id())
+                .setTopicId(topicImage == null ? Uuid.ZERO_UUID : topicImage.id())
                 .setIsInternal(Topic.isInternal(topic))
                 .setPartitions(partitions));
         }).toList();

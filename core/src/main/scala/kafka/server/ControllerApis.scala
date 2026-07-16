@@ -36,6 +36,8 @@ import org.apache.kafka.common.internals.{FatalExitError, Plugin, Topic}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => OldAlterConfigsResourceResponse}
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult
 import org.apache.kafka.common.message.DeleteTopicsResponseData.{DeletableTopicResult, DeletableTopicResultCollection}
 import org.apache.kafka.common.message.IncrementalAlterConfigsResponseData.AlterConfigsResourceResponse
@@ -121,6 +123,7 @@ class ControllerApis(
         case ApiKeys.SASL_AUTHENTICATE => handleSaslAuthenticateRequest(request)
         case ApiKeys.ALLOCATE_PRODUCER_IDS => handleAllocateProducerIdsRequest(request)
         case ApiKeys.CREATE_PARTITIONS => handleCreatePartitions(request)
+        case ApiKeys.DELETE_PARTITIONS => handleDeletePartitions(request)
         case ApiKeys.DESCRIBE_CONFIGS => handleDescribeConfigsRequest(request)
         case ApiKeys.DESCRIBE_ACLS => aclApis.handleDescribeAcls(request)
         case ApiKeys.CREATE_ACLS => aclApis.handleCreateAcls(request)
@@ -817,6 +820,67 @@ class ControllerApis(
         new CreatePartitionsResponse(responseData)
       }
       requestHelper.sendResponseMaybeThrottleWithControllerQuota(controllerMutationQuota, request, response)
+    }
+  }
+
+  private def handleDeletePartitions(request: Request): CompletableFuture[Unit] = {
+    def filterAlterAuthorizedTopics(topics: util.Collection[String]): util.Set[String] = {
+      authHelper.filterByAuthorized(request.context, ALTER, TOPIC, topics, (n: String) => n)
+    }
+    val deletePartitionsRequest = request.body(classOf[DeletePartitionsRequest])
+    val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(request.session, request.header, 3)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, deletePartitionsRequest.data.timeoutMs),
+      controllerMutationQuotaRecorderFor(controllerMutationQuota))
+    val future = deletePartitions(context,
+      deletePartitionsRequest.data(),
+      filterAlterAuthorizedTopics)
+    future.handle[Unit] { (responses, exception) =>
+      val response = if (exception != null) {
+        deletePartitionsRequest.getErrorResponse(exception)
+      } else {
+        val responseData = new DeletePartitionsResponseData().setResults(responses)
+        new DeletePartitionsResponse(responseData)
+      }
+      requestHelper.sendResponseMaybeThrottleWithControllerQuota(controllerMutationQuota, request, response)
+    }
+  }
+
+  def deletePartitions(
+    context: ControllerRequestContext,
+    request: DeletePartitionsRequestData,
+    getAlterAuthorizedTopics: util.Collection[String] => util.Set[String]
+  ): CompletableFuture[util.List[DeletePartitionsTopicResult]] = {
+    val responses = new util.ArrayList[DeletePartitionsTopicResult]()
+    val duplicateTopicNames = new util.HashSet[String]()
+    val topicNames = new util.HashSet[String]()
+    request.topics().forEach {
+      topic =>
+        if (!topicNames.add(topic.name())) {
+          duplicateTopicNames.add(topic.name())
+        }
+    }
+    duplicateTopicNames.forEach { topicName =>
+      responses.add(new DeletePartitionsTopicResult().
+        setName(topicName).
+        setErrorCode(INVALID_REQUEST.code).
+        setErrorMessage("Duplicate topic name."))
+        topicNames.remove(topicName)
+    }
+    val authorizedTopicNames = getAlterAuthorizedTopics(topicNames)
+    val topics = new util.ArrayList[DeletePartitionsTopic]
+    topicNames.forEach { topicName =>
+      if (authorizedTopicNames.contains(topicName)) {
+        topics.add(request.topics().find(topicName))
+      } else {
+        responses.add(new DeletePartitionsTopicResult().
+          setName(topicName).
+          setErrorCode(TOPIC_AUTHORIZATION_FAILED.code))
+      }
+    }
+    controller.deletePartitions(context, topics, request.validateOnly).thenApply { results =>
+      results.forEach(response => responses.add(response))
+      responses
     }
   }
 
