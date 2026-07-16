@@ -17,7 +17,7 @@
   "apiKey": 75,
   "type": "response",
   "name": "DescribeTopicPartitionsResponse",
-  "validVersions": "0",
+  "validVersions": "0-1",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+", "ignorable": true,
@@ -52,7 +52,11 @@
           "versions": "0+", "nullableVersions": "0+",
           "about": "The last known ELR." },
         { "name": "OfflineReplicas", "type": "[]int32", "versions": "0+", "ignorable": true, "entityType": "brokerId",
-          "about": "The set of offline replicas of this partition." }]},
+          "about": "The set of offline replicas of this partition." },
+        { "name": "IsDraining", "type": "bool", "versions": "1+", "default": "false", "ignorable": true,
+          "about": "True if this partition is in the draining state." },
+        { "name": "DrainDeadlineMs", "type": "int64", "versions": "1+", "default": "-1", "ignorable": true,
+          "about": "The absolute timestamp in ms when this partition will be forcibly removed, or -1 if not draining." }]},
       { "name": "TopicAuthorizedOperations", "type": "int32", "versions": "0+", "default": "-2147483648",
         "about": "32-bit bitfield to represent authorized operations for this topic." }]
     },

@@ -135,7 +135,10 @@ public enum MetadataVersion {
     IBP_4_4_IV0(31, "4.4", "IV0", false),
 
     // Add support for CIDR-based ACL host patterns (KIP-1276).
-    IBP_4_4_IV1(32, "4.4", "IV1", true);
+    IBP_4_4_IV1(32, "4.4", "IV1", true),
+
+    // Add support for partition deletion (DeletePartitions API, PartitionDrainingRecord, RemovePartitionRecord).
+    IBP_4_4_IV2(33, "4.4", "IV2", true);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -216,6 +219,10 @@ public enum MetadataVersion {
 
     public boolean isCidrAclSupported() {
         return this.isAtLeast(IBP_4_4_IV1);
+    }
+
+    public boolean isDeletePartitionsSupported() {
+        return this.isAtLeast(IBP_4_4_IV2);
     }
 
     public boolean isMigrationSupported() {

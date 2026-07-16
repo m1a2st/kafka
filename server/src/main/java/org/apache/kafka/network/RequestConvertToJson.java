@@ -66,6 +66,8 @@ import org.apache.kafka.common.message.DeleteAclsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteAclsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteGroupsResponseDataJsonConverter;
+import org.apache.kafka.common.message.DeletePartitionsRequestDataJsonConverter;
+import org.apache.kafka.common.message.DeletePartitionsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DeleteRecordsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestDataJsonConverter;
@@ -250,6 +252,8 @@ import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsRequest;
 import org.apache.kafka.common.requests.DeleteGroupsResponse;
+import org.apache.kafka.common.requests.DeletePartitionsRequest;
+import org.apache.kafka.common.requests.DeletePartitionsResponse;
 import org.apache.kafka.common.requests.DeleteRecordsRequest;
 import org.apache.kafka.common.requests.DeleteRecordsResponse;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsRequest;
@@ -448,6 +452,8 @@ public class RequestConvertToJson {
                 DeleteAclsRequestDataJsonConverter.write(((DeleteAclsRequest) request).data(), request.version());
             case DELETE_GROUPS ->
                 DeleteGroupsRequestDataJsonConverter.write(((DeleteGroupsRequest) request).data(), request.version());
+            case DELETE_PARTITIONS ->
+                DeletePartitionsRequestDataJsonConverter.write(((DeletePartitionsRequest) request).data(), request.version());
             case DELETE_RECORDS ->
                 DeleteRecordsRequestDataJsonConverter.write(((DeleteRecordsRequest) request).data(), request.version());
             case DELETE_SHARE_GROUP_OFFSETS ->
@@ -633,6 +639,8 @@ public class RequestConvertToJson {
                 DeleteAclsResponseDataJsonConverter.write(((DeleteAclsResponse) response).data(), version);
             case DELETE_GROUPS ->
                 DeleteGroupsResponseDataJsonConverter.write(((DeleteGroupsResponse) response).data(), version);
+            case DELETE_PARTITIONS ->
+                DeletePartitionsResponseDataJsonConverter.write(((DeletePartitionsResponse) response).data(), version);
             case DELETE_RECORDS ->
                 DeleteRecordsResponseDataJsonConverter.write(((DeleteRecordsResponse) response).data(), version);
             case DELETE_SHARE_GROUP_OFFSETS ->

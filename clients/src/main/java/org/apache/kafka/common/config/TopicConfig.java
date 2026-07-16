@@ -273,4 +273,11 @@ public class TopicConfig {
     public static final String ERRORS_DEADLETTERQUEUE_GROUP_ENABLE_DOC = "Enable this topic to be used as a dead-letter queue for share groups. " +
         "When set to <code>true</code>, share groups can write undeliverable records to this topic. When set to <code>false</code> (the default), " +
         "attempts to use this topic as a DLQ will be rejected.";
+
+    public static final String PARTITION_DRAIN_TIMEOUT_MS_CONFIG = "partition.drain.timeout.ms";
+    public static final String PARTITION_DRAIN_TIMEOUT_MS_DOC = "The time in milliseconds to wait " +
+        "after marking tail partitions as draining before forcibly removing them. During this window, " +
+        "consumers can continue to read from draining partitions but producers cannot write to them. " +
+        "A value of 0 means partitions are removed immediately (no drain period).";
+    public static final long PARTITION_DRAIN_TIMEOUT_MS_DEFAULT = 3600000L;
 }

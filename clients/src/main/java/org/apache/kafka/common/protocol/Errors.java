@@ -59,6 +59,7 @@ import org.apache.kafka.common.errors.InconsistentVoterSetException;
 import org.apache.kafka.common.errors.IneligibleReplicaException;
 import org.apache.kafka.common.errors.InvalidCommitOffsetSizeException;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.common.errors.InvalidDeletePartitionCountException;
 import org.apache.kafka.common.errors.InvalidFetchSessionEpochException;
 import org.apache.kafka.common.errors.InvalidFetchSizeException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
@@ -101,6 +102,7 @@ import org.apache.kafka.common.errors.OffsetNotAvailableException;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
 import org.apache.kafka.common.errors.OperationNotAttemptedException;
 import org.apache.kafka.common.errors.OutOfOrderSequenceException;
+import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.PositionOutOfRangeException;
 import org.apache.kafka.common.errors.PreferredLeaderNotAvailableException;
@@ -422,7 +424,9 @@ public enum Errors {
     STREAMS_TOPOLOGY_FENCED(132, "The supplied topology epoch is outdated.", StreamsTopologyFencedException::new),
     SHARE_SESSION_LIMIT_REACHED(133, "The limit of share sessions has been reached.", ShareSessionLimitReachedException::new),
     GROUP_DELETION_FAILED(134, "DeleteGroups could not complete; see the error message on the per-group result for details.", GroupDeletionFailedException::new),
-    STREAMS_TOPOLOGY_DESCRIPTION_UPDATE_FAILED(135, "The broker could not process the topology description update; see the error message for details.", StreamsTopologyDescriptionUpdateFailedException::new);
+    STREAMS_TOPOLOGY_DESCRIPTION_UPDATE_FAILED(135, "The broker could not process the topology description update; see the error message for details.", StreamsTopologyDescriptionUpdateFailedException::new),
+    PARTITION_OPERATION_IN_PROGRESS(136, "A partition deletion or creation operation is already in progress for this topic.", PartitionOperationInProgressException::new),
+    INVALID_DELETE_PARTITION_COUNT(137, "The requested partition count is invalid for deletion.", InvalidDeletePartitionCountException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

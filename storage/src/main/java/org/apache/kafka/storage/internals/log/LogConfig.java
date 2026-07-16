@@ -258,6 +258,8 @@ public class LogConfig extends AbstractConfig {
                 .define(TopicConfig.REMOTE_COPY_LAG_BYTES_CONFIG, LONG, RemoteLogManagerConfig.DEFAULT_LOG_REMOTE_COPY_LAG_BYTES, atLeast(RemoteLogManagerConfig.MAX_LOG_REMOTE_COPY_LAG_BYTES), MEDIUM, TopicConfig.REMOTE_COPY_LAG_BYTES_DOC)
                 .define(TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_DOC)
                 .define(TopicConfig.ERRORS_DEADLETTERQUEUE_GROUP_ENABLE_CONFIG, BOOLEAN, false, MEDIUM, TopicConfig.ERRORS_DEADLETTERQUEUE_GROUP_ENABLE_DOC)
+                .define(TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_CONFIG, LONG, TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DEFAULT,
+                        atLeast(0), MEDIUM, TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DOC)
                 .defineInternal(INTERNAL_SEGMENT_BYTES_CONFIG, INT, null, null, MEDIUM, INTERNAL_SEGMENT_BYTES_DOC);
     }
 

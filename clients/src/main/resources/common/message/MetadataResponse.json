@@ -42,7 +42,8 @@
   // by the DescribeCluster API (KIP-700).
   // Version 12 supports topicId.
   // Version 13 supports top-level error code in the response.
-  "validVersions": "0-13",
+  // Version 14 adds IsDraining to partition metadata for partition deletion support.
+  "validVersions": "0-14",
   "flexibleVersions": "9+",
   "fields": [
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "3+", "ignorable": true,
@@ -87,7 +88,9 @@
         { "name": "IsrNodes", "type": "[]int32", "versions": "0+", "entityType": "brokerId",
           "about": "The set of nodes that are in sync with the leader for this partition." },
         { "name": "OfflineReplicas", "type": "[]int32", "versions": "5+", "ignorable": true, "entityType": "brokerId",
-          "about": "The set of offline replicas of this partition." }
+          "about": "The set of offline replicas of this partition." },
+        { "name": "IsDraining", "type": "bool", "versions": "14+", "default": "false", "ignorable": true,
+          "about": "True if this partition is in the draining state and will be removed after the drain deadline. Draining partitions do not accept produce requests." }
       ]},
       { "name": "TopicAuthorizedOperations", "type": "int32", "versions": "8+", "default": "-2147483648",
         "about": "32-bit bitfield to represent authorized operations for this topic." }
