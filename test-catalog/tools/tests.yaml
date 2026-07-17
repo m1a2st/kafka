@@ -45,6 +45,8 @@ org.apache.kafka.tools.ClientMetricsCommandTest:
 - testOptionsListSucceeds
 - testOptionsNoActionFails
 org.apache.kafka.tools.ClusterToolTest:
+- testApiVersionsCommandOutputUsingBrokerServer
+- testApiVersionsCommandOutputUsingController
 - testClusterId
 - testClusterIdWithBootstrapController
 - testClusterTooOldToHaveId
@@ -445,7 +447,7 @@ org.apache.kafka.tools.LogDirsCommandTest:
 - testLogDirsWithoutBrokers
 org.apache.kafka.tools.MetadataQuorumCommandErrorTest:
 - testDescribeOptions
-- testPropertiesFileDoesNotExists
+- testPropertiesFileDoesNotExist
 - testRelativeTimeMs
 - testRemoveControllerRequiresControllerDirectoryId
 - testRemoveControllerRequiresControllerId
@@ -1017,6 +1019,7 @@ org.apache.kafka.tools.streams.DescribeStreamsGroupTest:
 - testDescribeStreamsGroupWithMembersOption
 - testDescribeStreamsGroupWithStateAndVerboseOptions
 - testDescribeStreamsGroupWithStateOption
+- testDescribeStreamsGroupWithTopologyOption
 - testDescribeStreamsGroupWithVerboseOption
 - testDescribeWithUnrecognizedOption
 - testDescribeWithoutGroupOption

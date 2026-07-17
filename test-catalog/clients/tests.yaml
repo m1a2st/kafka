@@ -1397,6 +1397,8 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testHeartbeatResponseErrorNotifiedToGroupManagerAfterErrorPropagated
 - testHeartbeatResponseOnErrorHandling
 - testHeartbeatState
+- testLogsHeartbeatIntervalReceivedFromCoordinatorOnlyWhenChanged
+- testMaximumTimeToWaitWhenCoordinatorUnavailableDoesNotSpin
 - testMaximumTimeToWaitWhenHeartbeatShouldBeSkipped
 - testNetworkTimeout
 - testNoCoordinator
@@ -1740,6 +1742,7 @@ org.apache.kafka.clients.consumer.internals.CoordinatorRequestManagerTest:
 - testMarkCoordinatorUnknown
 - testMarkCoordinatorUnknownLoggingAccuracy
 - testNetworkTimeout
+- testNoBusyPollWhileFindCoordinatorRequestInFlight
 - testNullGroupIdShouldThrow
 - testSuccessfulResponse
 org.apache.kafka.clients.consumer.internals.DelegatingRebalanceConsumerTest:
@@ -2027,6 +2030,7 @@ org.apache.kafka.clients.consumer.internals.FetchRequestManagerTest:
 - testReadCommittedLagMetric
 - testReadCommittedWithCommittedAndAbortedTransactions
 - testReadCommittedWithCompactedTopic
+- testRecordLatencyOnFetchResponseLevelError
 - testReturnAbortedTransactionsInUncommittedMode
 - testReturnCommittedTransactions
 - testSeekBeforeException
@@ -2118,6 +2122,7 @@ org.apache.kafka.clients.consumer.internals.FetcherTest:
 - testReadCommittedLagMetric
 - testReadCommittedWithCommittedAndAbortedTransactions
 - testReadCommittedWithCompactedTopic
+- testRecordLatencyOnFetchResponseLevelError
 - testReturnAbortedTransactionsInUncommittedMode
 - testReturnCommittedTransactions
 - testSeekBeforeException
@@ -2356,6 +2361,7 @@ org.apache.kafka.clients.consumer.internals.ShareConsumeRequestManagerTest:
 - testPiggybackAcknowledgementsOnInitialShareSessionError
 - testPiggybackAcknowledgementsOnInitialShareSessionErrorSubscriptionChange
 - testPiggybackAcknowledgementsOnInitialShareSession_ShareSessionNotFound
+- testRecordLatencyOnFetchResponseLevelError
 - testResultHandlerCompleteIfEmpty
 - testResultHandlerOnCommitAsync
 - testResultHandlerOnCommitSync
@@ -2450,6 +2456,8 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 - testHeartbeatOutsideInterval
 - testHeartbeatResponseOnErrorHandling
 - testHeartbeatState
+- testLogsHeartbeatIntervalReceivedFromCoordinatorOnlyWhenChanged
+- testMaximumTimeToWaitWhenHeartbeatShouldBeSkippedDoesNotSpin
 - testNetworkTimeout
 - testNoCoordinator
 - testPollTimerExpiration
@@ -5575,15 +5583,6 @@ org.apache.kafka.common.telemetry.internals.TelemetryMetricNamingConventionTest:
 - testNullPrefix
 - testStandardConsumerMetrics
 - testStandardProducerMetrics
-org.apache.kafka.common.utils.ByteBufferInputStreamTest:
-- testReadUnsignedIntFromInputStream
-org.apache.kafka.common.utils.ByteBufferOutputStreamTest:
-- testExpandByteBufferOnPositionIncrease
-- testExpandByteBufferOnWrite
-- testExpandDirectByteBufferOnPositionIncrease
-- testExpandDirectByteBufferOnWrite
-- testWriteByteBuffer
-- testWriteDirectByteBuffer
 org.apache.kafka.common.utils.BytesTest:
 - compareToReflectsLexicographicUnsignedOrdering
 - constructorThrowsForNullInput
@@ -5689,6 +5688,15 @@ org.apache.kafka.common.utils.internals.AppInfoParserTest:
 - testClientIdWontAddRepeatedly
 - testRegisterAppInfoRegistersMetrics
 - testUnregisterAppInfoUnregistersMetrics
+org.apache.kafka.common.utils.internals.ByteBufferInputStreamTest:
+- testReadUnsignedIntFromInputStream
+org.apache.kafka.common.utils.internals.ByteBufferOutputStreamTest:
+- testExpandByteBufferOnPositionIncrease
+- testExpandByteBufferOnWrite
+- testExpandDirectByteBufferOnPositionIncrease
+- testExpandDirectByteBufferOnWrite
+- testWriteByteBuffer
+- testWriteDirectByteBuffer
 org.apache.kafka.common.utils.internals.ByteBufferUnmapperTest:
 - testUnmap
 org.apache.kafka.common.utils.internals.ByteUtilsTest:
