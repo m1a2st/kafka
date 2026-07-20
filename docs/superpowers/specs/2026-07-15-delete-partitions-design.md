@@ -17,25 +17,68 @@ This requires:
 
 ## Motivation
 
-Topics that were over-partitioned need a way to reduce partition count to save resources (file descriptors, memory,
-replication traffic, rebalance time). Currently the only option is to delete and recreate the topic, which causes
-complete data loss, consumer group offset reset, and operational disruption across all downstream systems.
+### The Problem
 
-**Use cases:**
+Kafka supports increasing the partition count of a topic (`CreatePartitions` API) but provides no mechanism to decrease
+it. This asymmetry has been a known limitation since 2012 (KAFKA-347) and was explicitly requested as a feature in 2014
+(KAFKA-1231, resolved "Won't Fix" in 2020). The StackOverflow question "How to decrease number partitions Kafka topic?"
+has accumulated 37 votes and over 50,000 views, indicating real-world demand.
+
+The only workaround today is to delete and recreate the topic, which causes:
+
+- Complete data loss of all unconsumed messages
+- Consumer group offset reset across all consumer groups
+- Hard failures in downstream systems (Kafka Streams, Connect, MirrorMaker)
+- Loss of ACLs, configs, and quotas that must be manually re-applied
+
+### Why Kafka Never Supported This
+
+The commonly cited reason — "reducing partitions causes data loss" — is imprecise. The true difficulty is that Kafka
+guarantees message ordering within each partition but not across partitions. If data in a removed partition were
+redistributed to remaining partitions, the ordering guarantee of the target partitions would be violated. There is no
+way to merge messages from partition N into partition M while preserving the total order of both.
+
+However, this analysis only applies to a design that attempts to **redistribute data** from removed partitions. It does
+not apply to a design that simply **removes partitions and lets their data expire**.
+
+### Why Partition Removal Is Symmetric With Partition Expansion
+
+Partition expansion (3 → 5) works as follows:
+
+- Existing partitions 0, 1, 2 are untouched — data and ordering preserved
+- New partitions 3, 4 are created empty
+- Future messages route via `hash(key) % 5` instead of `hash(key) % 3`
+- Key affinity breaks: a key previously routed to partition 1 may now route to partition 4
+
+Our partition removal (5 → 3) works identically in reverse:
+
+- Remaining partitions 0, 1, 2 are untouched — data and ordering preserved
+- Partitions 3, 4 enter a draining state (reject writes, allow reads until retention expires)
+- Future messages route via `hash(key) % 3` instead of `hash(key) % 5`
+- Key affinity breaks: a key previously routed to partition 4 must now route elsewhere
+
+| Property | Expansion (3→5) | Removal (5→3) |
+|----------|-----------------|---------------|
+| Existing partition data | Untouched | Untouched |
+| Ordering guarantee | Preserved | Preserved |
+| Key affinity | Breaks | Breaks |
+| Data loss | None | Draining partitions expire per retention policy |
+
+The only additional cost of removal is that historical data in the draining partitions will eventually be lost after
+the retention period. This is an explicit, operator-controlled trade-off — not an ordering violation.
+
+### Use Cases
 
 1. **Capacity right-sizing** — A topic was provisioned with 256 partitions for anticipated load that never
    materialized. Each idle partition still costs ~1 MB heap, file handles, and ISR heartbeat overhead.
-2. **Post-migration cleanup** — After migrating consumers to a new topic with fewer partitions, the old topic cannot
-   be shrunk in-place.
-3. **Cost reduction** — In cloud deployments, partition count directly affects billing. Reducing unused partitions
-   saves cost.
-
-**Why not just delete and recreate?**
-
-- Data loss: all unconsumed messages are lost
-- Consumer groups must be manually recreated or offsets reset
-- Downstream systems (Streams, Connect, MirrorMaker) experience hard failures
-- ACLs, configs, and quotas must be re-applied
+2. **Over-partition recovery** — An operator accidentally set partition count too high. Today the only fix is to
+   delete the entire topic and recreate it, disrupting all producers and consumers.
+3. **Cost reduction in cloud environments** — Partition count directly affects billing in managed Kafka offerings.
+   Reducing unused partitions saves cost without service interruption.
+4. **Post-peak scale-down** — A topic was scaled up for a seasonal traffic peak and should be scaled back down
+   afterward, mirroring how brokers and consumer instances are scaled down.
+5. **Multi-tenant platform management** — Platform operators need to reclaim resources from tenants whose usage has
+   decreased, without forcing a destructive topic recreation.
 
 ---
 
