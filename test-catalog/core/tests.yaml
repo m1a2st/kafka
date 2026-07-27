@@ -318,7 +318,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDeleteTopicsWithOptionTimeoutMs
 - testDescribeAndAlterConfigs
 - testDescribeClassicGroups
-- testDescribeCluster
 - testDescribeConfigWithOptionTimeoutMs
 - testDescribeConfigsForLog4jLogLevels
 - testDescribeConfigsForTopic
@@ -326,17 +325,12 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeConfigsNonexistentForKraft
 - testDescribeGroups
 - testDescribeLogDirs
-- testDescribeNonExistingTopic
 - testDescribeProducers
 - testDescribeReplicaLogDirs
 - testDescribeStreamsGroups
 - testDescribeStreamsGroupsForStatelessTopology
 - testDescribeStreamsGroupsNotReady
 - testDescribeStreamsGroupsWithTopologyDescription
-- testDescribeTopicsWithIds
-- testDescribeTopicsWithNames
-- testDescribeTopicsWithOptionPartitionSizeLimitPerResponse
-- testDescribeTopicsWithOptionTimeoutMs
 - testDescribeTransactions
 - testDescribeTransactionsTimeout
 - testDescribeUserScramCredentials
@@ -370,14 +364,10 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testListConsumerGroupOffsets
 - testListConsumerGroups
 - testListGroups
-- testListNodes
-- testListNodesWithFencedBroker
 - testListReassignmentsDoesNotShowDeletedPartitions
 - testListReassignmentsDoesNotShowNonReassigningPartitions
 - testListShareGroupOffsets
 - testListStreamsGroupOffsets
-- testListTopicsWithOptionListInternal
-- testListTopicsWithOptionTimeoutMs
 - testListTransactions
 - testLogStartOffsetAfterDeleteRecords
 - testLogStartOffsetCheckpoint
@@ -2224,6 +2214,7 @@ kafka.server.StreamsGroupDescribeRequestTest:
 - testStreamsGroupDescribeGroupsWithNewGroupCoordinator
 - testStreamsGroupDescribeWhenFeatureFlagNotEnabled
 kafka.server.StreamsGroupHeartbeatRequestTest:
+- testAlterRackAwareAssignmentTagsGroupConfig
 - testDynamicGroupConfig
 - testEmptyStreamsGroupId
 - testFencedMemberCanRejoinWithEpochZero
@@ -2239,6 +2230,7 @@ kafka.server.StreamsGroupHeartbeatRequestTest:
 - testStreamsGroupHeartbeatIsInaccessibleWhenOffsetTopicNotExist
 - testStreamsGroupHeartbeatWithInvalidAPIVersion
 kafka.server.StreamsGroupHeartbeatRequestTest$WithAssignmentBatchingDisabledTest:
+- testAlterRackAwareAssignmentTagsGroupConfig
 - testDynamicGroupConfig
 - testEmptyStreamsGroupId
 - testFencedMemberCanRejoinWithEpochZero
