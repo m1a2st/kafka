@@ -1106,6 +1106,7 @@ org.apache.kafka.clients.consumer.StickyAssignorTest:
 - testTwoConsumersTwoTopicsSixPartitions
 org.apache.kafka.clients.consumer.internals.AbstractCoordinatorTest:
 - testAuthenticationErrorInEnsureCoordinatorReady
+- testAuthenticationErrorInHeartbeatThreadTriggersRejoin
 - testBackoffAndRetryUponRetriableError
 - testCoordinatorDiscoveryExponentialBackoff
 - testGroupMaxSizeExceptionIsFatal
@@ -4714,6 +4715,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testApiVersionsRequestBeforeV3Validation
 - testApiVersionsSerialization
 - testBatchedFindCoordinatorRequestSerialization
+- testClientThrottlesResponsesWithThrottleTime
 - testCreateTopicRequestV0FailsIfValidateOnly
 - testCreateTopicRequestV3FailsIfNoPartitionsOrReplicas
 - testDeletableTopicResultErrorMessageIsNullByDefault
@@ -5613,9 +5615,7 @@ org.apache.kafka.common.utils.BytesTest:
 org.apache.kafka.common.utils.MockTimeTest:
 - testAdvanceClock
 - testAutoTickMs
-- testWaitObjectConditionSatisfied
-- testWaitObjectTimeout
-org.apache.kafka.common.utils.SystemTimeTest:
+org.apache.kafka.common.utils.TimeTest:
 - testWaitObjectConditionSatisfied
 - testWaitObjectTimeout
 org.apache.kafka.common.utils.TimerTest:
