@@ -41,6 +41,9 @@ org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testConfigs
 - testConsumerGroupAssignorFullClassNames
 - testConsumerGroupAssignors
+- testConsumerGroupAssignorsBuiltinByClassName
+- testConsumerGroupAssignorsWithDuplicateNamesFails
+- testConsumerGroupAssignorsWithReservedBuiltinNameFails
 - testDLQAutoCreateTopicsEnableCustomValue
 - testDLQAutoCreateTopicsEnableDefaultValue
 - testDLQTopicNamePrefixCustomValue
@@ -780,6 +783,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupHeartbeatOnConsumerGroup
 - testStreamsGroupHeartbeatOnShareGroup
 - testStreamsGroupHeartbeatPartialResponseWhenNothingChanges
+- testStreamsGroupHeartbeatRefinementStepBumpsEpochWithoutRunningAssignor
 - testStreamsGroupHeartbeatRejectsDuplicateTaskOffsets
 - testStreamsGroupHeartbeatResponseVersion0
 - testStreamsGroupHeartbeatResponseVersion1
@@ -1339,6 +1343,7 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupTest:
 - testValidateOffsetDelete
 - testValidateOffsetFetch
 org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
+- testActiveNotGrantedWhileAnotherMemberOnSameProcessHoldsWarmup
 - testAssignmentEpochsShouldBePreservedFromPreviousAssignment
 - testMixedPreservedAndNewAssignmentEpochs
 - testNewlyAssignedTasksGetTargetAssignmentEpoch
@@ -1360,6 +1365,10 @@ org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
 - testUnrevokedTasksToStable
 - testUnrevokedTasksToUnreleasedTasks
 - testUnrevokedTasksToUnrevokedTasks
+- testWarmupNotDroppedWhilePromotionIsBlockedByAnotherRevocation
+- testWarmupPromotedToActiveFromUnreleasedState
+- testWarmupPromotedToActiveWhenActiveIsReleased
+- testWarmupPromotionHoldsWarmupWhileActiveOwnedByAnotherMember
 org.apache.kafka.coordinator.group.streams.MemberTaskOffsetsTest:
 - shouldConvertHeartbeatRequestTaskOffsets
 - shouldRejectDuplicateTaskEntries
@@ -1532,6 +1541,7 @@ org.apache.kafka.coordinator.group.streams.TasksTupleTest:
 - testFromTargetAssignmentRecord
 - testIsEmpty
 - testReturnUnmodifiableTaskAssignments
+- testSameTasks
 - testTasksCannotBeNull
 org.apache.kafka.coordinator.group.streams.TasksTupleWithEpochsTest:
 - testFromCurrentAssignmentRecord
