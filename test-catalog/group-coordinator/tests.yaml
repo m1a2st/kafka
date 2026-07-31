@@ -30,6 +30,9 @@ org.apache.kafka.coordinator.group.GroupConfigTest:
 - testInvalidConfigName
 - testInvalidProps
 - testNotValidatedWhenNotConfigured
+- testStreamsAssignorNameEvaluateIsLenient
+- testStreamsAssignorNameSelectsCustomAssignor
+- testStreamsAssignorNameValidation
 - testStreamsRackAwareAssignmentTagsValidation
 - testValidShareAutoOffsetResetValues
 - testValidShareIsolationLevelValues
@@ -52,6 +55,12 @@ org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testInvalidStreamsConfigs
 - testShareGroupAssignorFullClassNames
 - testShareGroupAssignors
+- testStreamsGroupAssignorFullClassNames
+- testStreamsGroupAssignors
+- testStreamsGroupAssignorsBuiltinByClassName
+- testStreamsGroupAssignorsWithDuplicateNamesFails
+- testStreamsGroupAssignorsWithInvalidClassFails
+- testStreamsGroupAssignorsWithReservedBuiltinNameFails
 - testStreamsGroupInitialRebalanceDelayCustomValue
 - testStreamsGroupInitialRebalanceDelayDefaultValue
 - testStreamsGroupMaxWarmupReplicasCustomValue
@@ -763,12 +772,16 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStaticMembersUnknownInstanceBatchLeaveGroup
 - testStaticMembersValidBatchLeaveGroup
 - testStreamsGroupAssignmentInterval
+- testStreamsGroupAssignorFallsBackToDefaultWhenUnavailable
+- testStreamsGroupAssignorSelectedByGroupConfig
+- testStreamsGroupDefaultsToFirstAssignorWhenNoStickyConfigured
 - testStreamsGroupDeleteCancelsInitialRebalanceTimer
 - testStreamsGroupDescribeBeforeAndAfterCommittingOffset
 - testStreamsGroupDescribeNoErrors
 - testStreamsGroupDescribeOnConsumerGroup
 - testStreamsGroupDescribeOnShareGroup
 - testStreamsGroupDescribeReadsStoredDescriptionTopologyEpochAtCommittedOffset
+- testStreamsGroupDescribeReportsAssignorSelectedByGroupConfig
 - testStreamsGroupDescribeReturnsPerMemberTaskOffsets
 - testStreamsGroupDescribeSurfacesStoredDescriptionTopologyEpoch
 - testStreamsGroupDescribeWithErrors
@@ -790,6 +803,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupHeartbeatStoresTaskOffsetsWithoutPersisting
 - testStreamsGroupHeartbeatWithEmptyClassicGroup
 - testStreamsGroupHeartbeatWithNonEmptyClassicGroup
+- testStreamsGroupKeepsNoRefinedAssignmentWhenWarmupsAreDisabled
 - testStreamsGroupMemberCanRejoinWithEpochZero
 - testStreamsGroupMemberEpochValidation
 - testStreamsGroupMemberJoiningWithIncorrectlyPartitionedTopic
@@ -799,6 +813,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupMemberRequestingShutdownApplication
 - testStreamsGroupMemberRequestingShutdownApplicationUponLeaving
 - testStreamsGroupMetadataReplayRoundTripsTopologyDescriptionEpochs
+- testStreamsGroupUsesBrokerDefaultAssignorWhenGroupUnset
 - testStreamsInitialRebalanceDelayEmptyDuringDelayAssignsAfterTimer
 - testStreamsLeavingMemberRemovesMemberAndBumpsGroupEpoch
 - testStreamsNewJoiningMemberTriggersNewTargetAssignment
@@ -980,6 +995,7 @@ org.apache.kafka.coordinator.group.StreamsGroupStaticMemberGroupMetadataManagerT
 - testStaticMemberRejoinsAfterTemporaryLeave
 - testStaticMemberRejoinsAfterTemporaryLeaveFromUnreleasedState
 - testStaticMemberRejoinsWithSameMemberIdAndDifferentInstanceId
+- testStaticMemberReplacementRelabelsCachedRefinedAssignment
 - testStaticMemberSendHeartbeatWithVariousEpochThenThrowError
 - testStreamsStaticJoinWithNewInstanceAtMaxSizeThrowsGroupMaxSizeReached
 - testStreamsStaticJoinWithUnreleasedInstanceThrowsUnreleasedInstanceIdAtMaxSize
@@ -1342,7 +1358,21 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupTest:
 - testValidateOffsetCommit
 - testValidateOffsetDelete
 - testValidateOffsetFetch
+org.apache.kafka.coordinator.group.streams.AssignmentRefinerTest:
+- shouldNotDetectADropAndADuplicateCancellingEachOtherOut
+- shouldNotPreserveActiveTaskCountWhenASubtopologyWasDroppedEntirely
+- shouldNotPreserveActiveTaskCountWhenATaskWasDropped
+- shouldNotPreserveActiveTaskCountWhenATaskWasHandedToTwoMembers
+- shouldNotPreserveActiveTaskCountWhenATaskWasInvented
+- shouldPreserveActiveTaskCountOfUnchangedAssignment
+- shouldPreserveActiveTaskCountWhenATaskIsHeldBackWithItsCurrentOwner
+- shouldPreserveActiveTaskCountWhenStandbysAreDeferred
+- shouldPreserveActiveTaskCountWhenTheTargetAssignmentItselfDuplicatesATask
 org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
+- testActiveDemotedToStandbyInPlace
+- testActiveDemotionCompletesWhenRevocationIsAcknowledged
+- testActiveNotDemotedInPlaceWhileAnotherMemberOnSameProcessHoldsStandby
+- testActiveNotGrantedWhileAnotherMemberOnSameProcessHoldsStandby
 - testActiveNotGrantedWhileAnotherMemberOnSameProcessHoldsWarmup
 - testAssignmentEpochsShouldBePreservedFromPreviousAssignment
 - testMixedPreservedAndNewAssignmentEpochs
@@ -1355,6 +1385,10 @@ org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
 - testStableToUnreleasedTasksWithOwnedTasksNotHavingRevokedTasks
 - testStableToUnrevokedTasks
 - testStableToUnrevokedWithEmptyAssignment
+- testStandbyConvertedToWarmupInPlace
+- testStandbyPromotedToActiveWhenActiveIsReleased
+- testStandbyPromotionHoldsStandbyWhileActiveOwnedByAnotherMember
+- testStandbyRevokedNormallyWhenConversionIsBlockedByAnotherMemberOnSameProcess
 - testUnknownState
 - testUnreleasedTasksToStable
 - testUnreleasedTasksToStableWithNewTasks
@@ -1365,6 +1399,7 @@ org.apache.kafka.coordinator.group.streams.CurrentAssignmentBuilderTest:
 - testUnrevokedTasksToStable
 - testUnrevokedTasksToUnreleasedTasks
 - testUnrevokedTasksToUnrevokedTasks
+- testWarmupConvertedToStandbyInPlace
 - testWarmupNotDroppedWhilePromotionIsBlockedByAnotherRevocation
 - testWarmupPromotedToActiveFromUnreleasedState
 - testWarmupPromotedToActiveWhenActiveIsReleased
@@ -1450,7 +1485,9 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testAsDescribedGroupPrefersConfiguredTopologyOverStreamsTopology
 - testAsDescribedGroupWithStreamsTopologyHavingSubtopologies
 - testAsListedGroup
+- testCacheAndRetrieveRefinedAssignment
 - testCacheEndpointToPartitionsAndRetrieve
+- testCachedRefinedAssignmentDoesNotTrackTheCallersMap
 - testCancelTimers
 - testComputeMetadataHash
 - testCreateGroupTombstoneRecords
@@ -1467,6 +1504,9 @@ org.apache.kafka.coordinator.group.streams.StreamsGroupTest:
 - testMetadataRefreshDeadline
 - testNoStaticMember
 - testOffsetExpirationCondition
+- testRefinedAssignmentCacheHoldsOnlyTheLatestEpoch
+- testRelabelRefinedAssignment
+- testRelabelRefinedAssignmentOfUnknownMemberIsANoOp
 - testRemoveMember
 - testRemoveMemberClearsTaskOffsets
 - testRemoveMemberRemovesCacheEntry
