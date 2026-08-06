@@ -2345,6 +2345,8 @@ org.apache.kafka.streams.processor.internals.ProcessorStateManagerTest:
 - shouldNotThrowTaskCorruptedExceptionAfterCheckpointing
 - shouldNotThrowTaskCorruptedWithoutCheckpointAndNonEmptyDirWhenTransactional
 - shouldNotThrowTaskCorruptedWithoutInMemoryStoreCheckpointAndNonEmptyDir
+- shouldNotTrackInMemoryStoreOffsetsInStateDirectory
+- shouldNotTrackOffsetsInStateDirectoryWhenNoStoreIsPersistent
 - shouldNotWriteCheckpointForStoresWithoutChangelogTopic
 - shouldNotWriteDowngradeCheckpointOnCloseWhenUpgradeFromIsNull
 - shouldOverrideOffsetsWhenRestoreAndProcess
@@ -2379,6 +2381,7 @@ org.apache.kafka.streams.processor.internals.ProcessorStateManagerTest:
 - shouldThrowProcessorStateExceptionOnCommitIfStoreThrowsAnException
 - shouldThrowProcessorStateExceptionOnFlushCacheIfStoreThrowsAFailedProcessingException
 - shouldThrowTaskCorruptedWithoutPersistentStoreCheckpointAndNonEmptyDir
+- shouldTrackPersistentStoreOffsetsInStateDirectory
 - shouldWriteDowngradeCheckpointOnCloseWhenUpgradeFromIsPre43
 - shouldWritePositionCheckpointFile
 org.apache.kafka.streams.processor.internals.ProcessorTopologyTest:
@@ -2814,6 +2817,7 @@ org.apache.kafka.streams.processor.internals.StreamTaskTest:
 - shouldNotThrowExceptionOnAnchoredSchedule
 - shouldNotThrowExceptionOnScheduleIfCurrentNodeIsNotNull
 - shouldNotThrowFromStateManagerCloseInCloseDirty
+- shouldNotWipeStateDirectoryWhenCloseDirtyAndEosEnabledWithTransactionalStateStores
 - shouldPauseAndResumeBasedOnBufferedRecords
 - shouldPrepareRecycleSuspendedTask
 - shouldProcessInOrder
@@ -3216,6 +3220,7 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldComputeOffsetSumForStandbyTask
 - shouldComputeOffsetSumForUnassignedTaskWeCanLock
 - shouldComputeOffsetSumFromCheckpointFileForCreatedAndClosedTasks
+- shouldComputeOffsetSumFromLiveOffsetsForOwnTasks
 - shouldConvertActiveTaskToStandbyTask
 - shouldConvertStandbyTaskToActiveTask
 - shouldCreateActiveTaskDuringAssignment
@@ -3275,6 +3280,7 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldPropagateSuspendExceptionWhenRevokingStandbyTask
 - shouldPropagateTaskMigratedExceptionsInProcessActiveTasks
 - shouldPropagateTaskMigratedExceptionsInPunctuateActiveTasks
+- shouldPublishLiveOffsetsForOwnTasksInTaskOffsetSumSnapshot
 - shouldPublishTaskOffsetSumSnapshotFromStateDirectoryExcludingRunningActiveTasks
 - shouldPunctuateActiveTasks
 - shouldReAddRevivedTasksToStateUpdater

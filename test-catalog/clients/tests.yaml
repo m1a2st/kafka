@@ -454,6 +454,12 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testUnregisterBrokerTimeoutAndSuccessRetry
 - testUnregisterBrokerTimeoutMaxRetry
 - testUnregisterBrokerTimeoutMaxWait
+- testUnregisterControllerFailure
+- testUnregisterControllerSuccess
+- testUnregisterControllerTimeoutAndFailureRetry
+- testUnregisterControllerTimeoutAndSuccessRetry
+- testUnregisterControllerTimeoutMaxRetry
+- testUnregisterControllerTimeoutMaxWait
 - testUpdateFeaturesDuringSuccess
 - testUpdateFeaturesHandleNotControllerException
 - testUpdateFeaturesShouldFailRequestForEmptyUpdates
@@ -1002,6 +1008,7 @@ org.apache.kafka.clients.consumer.MockConsumerTest:
 - testLosePartitionsThrowsIfNotAssigned
 - testRe2JPatternSubscription
 - testRebalanceListener
+- testRebalanceWithConsumerAwareListener
 - testSimpleMock
 org.apache.kafka.clients.consumer.MockShareConsumerTest:
 - testSimpleMock
@@ -1376,17 +1383,6 @@ org.apache.kafka.clients.consumer.internals.CompletedFetchTest:
 - testNegativeFetchCount
 - testNoRecordsInFetch
 - testSimple
-org.apache.kafka.clients.consumer.internals.ConsumerAwareRebalanceListenerTest:
-- testDefaultDelegationFromTwoArgToOneArg
-- testEachCallbackGetsFreshView
-- testExceptionFromCallbackPropagates
-- testOnPartitionsAssignedCreatesViewAndDelegates
-- testOnPartitionsLostCreatesViewAndDelegates
-- testOnPartitionsRevokedCreatesViewAndDelegates
-- testViewIsClosedAfterAssignedCallback
-- testViewIsClosedAfterLostCallback
-- testViewIsClosedAfterRevokedCallback
-- testViewIsClosedEvenWhenCallbackThrows
 org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testConsumerAcksReconciledAssignmentAfterAckLost
 - testDisconnect
@@ -2608,6 +2604,7 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testNotSendingHeartbeatIfMemberIsJoiningOrAcknowledgingWhenHeartbeatInFlight
 - testNotSendingLeaveHeartbeatIfPollTimerExpiredAndMemberIsLeaving
 - testOtherErrorResponse
+- testPartitionsByUserEndpointMergedForDuplicateUserEndpoints
 - testPollOnCloseWhenIsLeaving
 - testPollOnCloseWhenIsNotLeaving
 - testPollOnCloseWhenStaticMemberIsLeaving
@@ -2811,6 +2808,9 @@ org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - testAssignedPartitionsWithTopicIdsForRe2Pattern
 - testAssignedTopicIdsPreservedWhenReconciliationCompletes
 - testCompleteValidationShouldClearAwaitingValidation
+- testDefaultDelegationFromTwoArgToOneArg
+- testEachCallbackGetsFreshView
+- testExceptionFromCallbackPropagates
 - testFetchablePartitionsPerformsCheapChecksFirst
 - testGroupSubscribe
 - testIsAssignedFromRe2j
@@ -2825,6 +2825,9 @@ org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - testMaybeValidatePositionForCurrentLeader
 - testMixedPatternSubscriptionNotAllowed
 - testOffsetResetWhileAwaitingValidation
+- testOnPartitionsAssignedCreatesViewAndDelegates
+- testOnPartitionsLostCreatesViewAndDelegates
+- testOnPartitionsRevokedCreatesViewAndDelegates
 - testPositionOrNull
 - testPreferredReadReplicaLease
 - testRequestOffsetResetIfPartitionAssigned
@@ -2842,6 +2845,10 @@ org.apache.kafka.clients.consumer.internals.SubscriptionStateTest:
 - testTryUpdatingLastStableOffset
 - testTryUpdatingLogStartOffset
 - testTryUpdatingPreferredReadReplica
+- testViewIsClosedAfterAssignedCallback
+- testViewIsClosedAfterLostCallback
+- testViewIsClosedAfterRevokedCallback
+- testViewIsClosedEvenWhenCallbackThrows
 - topicSubscription
 - unsubscribeUserAssignment
 - unsubscribeUserSubscribe
@@ -3900,6 +3907,10 @@ org.apache.kafka.common.internals.TopicTest:
 - testTopicHasCollision
 - testTopicHasCollisionChars
 - testUnifyCollisionChars
+org.apache.kafka.common.internals.UnsupportedProtocolFieldExceptionTest:
+- testFieldConstructorFormatsMessage
+- testIsUnsupportedVersionException
+- testMessageConstructorPassesMessageThrough
 org.apache.kafka.common.memory.GarbageCollectedMemoryPoolTest:
 - testAllocationBound
 - testAllocationNegative
@@ -4811,6 +4822,7 @@ org.apache.kafka.common.requests.RequestResponseTest:
 - testStreamsGroupDescribeRequestV0RejectsIncludeTopologyDescription
 - testStreamsGroupDescribeResponseV0RejectsTopologyDescriptionFields
 - testUnregisterBrokerResponseWithUnknownServerError
+- testUnregisterControllerResponseWithUnknownServerError
 - testValidApiVersionsRequest
 - testValidTaggedFieldsWithSaslAuthenticateRequest
 - verifyFetchResponseFullWrites
@@ -5265,6 +5277,7 @@ org.apache.kafka.common.security.oauthbearer.internals.secured.HttpJwtRetrieverT
 - testErrorResponseRetryableCode
 - testErrorResponseUnretryableCode
 org.apache.kafka.common.security.oauthbearer.internals.secured.JaasOptionsUtilsTest:
+- testCreateSSLSocketFactory
 - testSSLClientConfig
 - testShouldUseSslClientConfig
 org.apache.kafka.common.security.oauthbearer.internals.secured.JwtResponseParserTest:
