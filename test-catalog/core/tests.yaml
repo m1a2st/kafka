@@ -492,10 +492,6 @@ kafka.api.SaslPlainSslEndToEndAuthorizationTest:
 - testProduceConsumeWithPrefixedAcls
 - testProduceConsumeWithWildcardAcls
 - testTwoConsumersWithDifferentSaslCredentials
-kafka.api.SaslPlaintextConsumerTest:
-- testClusterResourceListener
-- testCoordinatorFailover
-- testSimpleConsumption
 kafka.api.SaslScramSslEndToEndAuthorizationTest:
 - testAuthentications
 - testNoConsumeWithDescribeAclViaAssign
@@ -960,10 +956,6 @@ kafka.network.DynamicConnectionQuotaTest:
 - testDynamicListenerConnectionQuota
 kafka.network.DynamicNumNetworkThreadsTest:
 - testDynamicNumNetworkThreads
-kafka.network.RequestConvertToJsonTest:
-- testRequestDesc
-- testRequestDescMetrics
-- testRequestHeaderNode
 kafka.network.SocketServerTest:
 - closingChannelSendFailure
 - closingChannelWithBufferedReceivesFailedSend
