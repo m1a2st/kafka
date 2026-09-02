@@ -2761,16 +2761,24 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - logicalChangelogEndOffsetsShouldReturnNullWhenBothSourcesUnknown
 - shouldBackOffProbingAPartitionWhoseProbeJustFailed
 - shouldBackOffWhenTheProbeFailsByTimeout
+- shouldBackOffWhenTimestampOffsetClampsToStoredOffset
 - shouldCallRecordRestoreTimeAtTheEndOfRestore
 - shouldCheckCompletionIfPositionLargerThanEndOffset
 - shouldDecrementRemainingRecordsToZeroWithOffsetGaps
+- shouldFallBackNoStoredOffsetToBeginningAndStoredOffsetToItsFloor
+- shouldFallBackToStoredOffsetAndBackOffWhenProbeNeverAnswers
 - shouldInitializeChangelogAndCheckForCompletion
 - shouldKeepPollingWhileTheWindowIsStillResolvingPartitions
+- shouldMarkTaskCorruptedWhenStoredOffsetIsBelowTheLogStart
 - shouldNotBackOffAfterAProbeThatSucceeded
 - shouldNotCallRecordRestoreTimeIfRestoreDoesNotComplete
+- shouldNotDecrementRemainingRecordsBelowZeroWhenSkippingPastStoredOffset
 - shouldNotGiveUpOnPollsThatHaveNotWaited
+- shouldNotProbeStandbyWithStoredOffset
+- shouldNotProbeWhenStoredOffsetGapIsSmall
 - shouldNotRegisterSameStoreMultipleTimes
 - shouldNotRegisterStoreWithoutMetadata
+- shouldNotSeekBelowStoredOffsetWhenTimestampOffsetIsBehindIt
 - shouldNotThrowOnUnknownRevokedPartition
 - shouldNotUpdateLimitForNonSourceStandbyChangelog
 - shouldOnlyRestoreStandbyChangelogInUpdateStandbyState
@@ -2784,9 +2792,10 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldRestoreMultipleChangelogs
 - shouldRestoreToLimitInStandbyState
 - shouldRetryProbePollBeforeFallingBackToLogStart
-- shouldSeekByTimestampForWindowedStoreWithoutCheckpoint
+- shouldSeekByTimestampForWindowedStoreWithoutStoredOffset
 - shouldSeekFromTheNewestTimestampInTheProbedWindow
-- shouldSeekToBeginningForNonWindowedStoreWithoutCheckpoint
+- shouldSeekPastStoredOffsetByTimestampWhenGapIsLarge
+- shouldSeekToBeginningForNonWindowedStoreWithoutStoredOffset
 - shouldSeekToBeginningWhenBrokerReturnsNullForOffsetsForTimes
 - shouldSupportUnregisterChangelogAfterCompletion
 - shouldSupportUnregisterChangelogBeforeCompletion
@@ -3946,7 +3955,7 @@ org.apache.kafka.streams.query.StateQueryResultTest:
 - getOnlyPartitionResultWithSingleFailureResultTest
 - getOnlyPartitionResultWithSingleResultTest
 org.apache.kafka.streams.query.VersionedKeyQueryTest:
-- shouldThrowNPEWithNullAsOftimestamp
+- shouldThrowNPEWithNullAsOfTimestamp
 - shouldThrowNPEWithNullKey
 org.apache.kafka.streams.state.AggregationWithHeadersTest:
 - shouldAllowNullableAggregation
@@ -4831,6 +4840,7 @@ org.apache.kafka.streams.state.internals.InMemoryKeyValueStoreTest:
 - shouldDeleteFromStore
 - shouldDeleteIfSerializedValueIsNull
 - shouldMatchPositionAfterPut
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotThrowConcurrentModificationException
 - shouldNotThrowInvalidRangeExceptionWithFromLargerThanTo
@@ -4873,6 +4883,7 @@ org.apache.kafka.streams.state.internals.InMemoryLRUCacheStoreTest:
 - prefixScanShouldNotThrowConcurrentModificationException
 - shouldDeleteFromStore
 - shouldDeleteIfSerializedValueIsNull
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotThrowConcurrentModificationException
 - shouldNotThrowInvalidRangeExceptionWithFromLargerThanTo
@@ -5812,6 +5823,7 @@ org.apache.kafka.streams.state.internals.RocksDBMigratingSessionStoreWithHeaders
 - shouldMigrateExistingPositionFromFile
 - shouldMigrateFromDefaultToHeadersAwareColumnFamily
 - shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
@@ -5918,6 +5930,7 @@ org.apache.kafka.streams.state.internals.RocksDBMigratingWindowStoreWithHeadersT
 - shouldMigrateExistingPositionFromFile
 - shouldMigrateFromDefaultColumnFamilyWhenLegacyDataExists
 - shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
@@ -6103,6 +6116,7 @@ org.apache.kafka.streams.state.internals.RocksDBStoreTest:
 - shouldMatchPositionAfterPutAll
 - shouldMigrateExistingPositionFromFile
 - shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
@@ -6642,6 +6656,7 @@ org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreTest:
 - shouldMigrateDataFromDefaultToTimestampColumnFamily
 - shouldMigrateExistingPositionFromFile
 - shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
@@ -6754,6 +6769,7 @@ org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreWithHeadersTest:
 - shouldMigrateFromTimestampedToHeadersAwareColumnFamily
 - shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
 - shouldNotCollectExecutionInfoWhenNotRequested
+- shouldNotDeadlockOnConcurrentPutAndQuery
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
