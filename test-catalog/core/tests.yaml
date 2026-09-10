@@ -314,9 +314,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testConsumerGroupWithMemberRemoval
 - testConsumerGroupsDeprecatedConsumerGroupState
 - testCreateDeleteTopics
-- testCreateExistingTopicsThrowTopicExistsException
 - testCreatePartitionWithOptionRetryOnQuotaViolation
-- testCreatePartitions
 - testCreateTopicsReturnsConfigs
 - testDefaultNameQuotaIsNotEqualToDefaultQuota
 - testDelayedClose
@@ -326,19 +324,14 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDeleteShareGroupOffsets
 - testDeleteStreamsGroupOffsets
 - testDeleteStreamsGroups
-- testDeleteTopicsWithIds
-- testDeleteTopicsWithOptionTimeoutMs
 - testDescribeAndAlterConfigs
 - testDescribeClassicGroups
 - testDescribeConfigWithOptionTimeoutMs
 - testDescribeConfigsForLog4jLogLevels
-- testDescribeConfigsForTopic
 - testDescribeConfigsNonexistent
 - testDescribeConfigsNonexistentForKraft
 - testDescribeGroups
-- testDescribeLogDirs
 - testDescribeProducers
-- testDescribeReplicaLogDirs
 - testDescribeStreamsGroups
 - testDescribeStreamsGroupsForStatelessTopology
 - testDescribeStreamsGroupsNotReady
@@ -357,7 +350,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testElectUncleanLeadersWhenNoLiveBrokers
 - testForceClose
 - testGroupConfigEvaluatedAfterBrokerRestart
-- testIncludeDocumentation
 - testIncrementalAlterAndDescribeGroupConfigs
 - testIncrementalAlterConfigsDeleteAndSetBrokerConfigs
 - testIncrementalAlterConfigsDeleteBrokerConfigs
@@ -794,6 +786,7 @@ kafka.coordinator.transaction.TransactionCoordinatorTest:
 - testInitProducerIdWithCurrentEpochProvided
 - testInitProducerIdWithInvalidEpochAfterProducerIdRotation
 - testInitProducerIdWithNoLastProducerData
+- testRetryInitProducerIdAfterFailoverDuringProducerIdRotation
 - testRetryInitProducerIdAfterProducerIdRotation
 - testTV2AllowsEpochReBumpingAfterFailedWrite
 - testVerifyPartitionHandling
@@ -1022,6 +1015,7 @@ kafka.raft.RaftManagerTest:
 - testLogDirLockWhenBrokerOnlyWithSeparateMetadataDir
 - testLogDirLockWhenControllerOnly
 - testNodeIdPresent
+- testRaftManagerRegistersSslChannelBuilderForReconfiguration
 kafka.server.AbstractFetcherManagerTest:
 - testAddAndRemovePartition
 - testDeadThreadCountMetric
@@ -1992,6 +1986,8 @@ kafka.server.OffsetFetchRequestTest:
 kafka.server.OffsetsForLeaderEpochRequestTest:
 - testCurrentEpochValidation
 - testOffsetsForLeaderEpochErrorCodes
+kafka.server.RaftManagerSslReconfigIntegrationTest:
+- testDynamicControllerKeystoreReachesRunningRaftChannel
 kafka.server.RemoteLeaderEndPointTest:
 - testBrokerEpochSupplier
 - testFetchEarliestLocalOffset

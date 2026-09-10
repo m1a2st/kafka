@@ -24,6 +24,7 @@ org.apache.kafka.clients.MetadataVersionIntegrationTest:
 org.apache.kafka.clients.MetricsDuringTopicCreationDeletionTest:
 - testMetricsDuringTopicCreateDelete
 org.apache.kafka.clients.admin.AddPartitionsTest:
+- testCreatePartitions
 - testIncrementPartitions
 - testManualAssignmentOfReplicas
 - testMissingPartitionsInCreatePartitions
@@ -40,12 +41,19 @@ org.apache.kafka.clients.admin.AdminFenceProducersTest:
 - testFenceBeforeProducerCommit
 - testFenceProducerTimeoutMs
 org.apache.kafka.clients.admin.AdminMetadataTest:
+- testCreateExistingTopicsThrowTopicExistsException
+- testDeleteTopicsWithIds
+- testDeleteTopicsWithOptionTimeoutMs
 - testDescribeCluster
+- testDescribeConfigsForTopic
+- testDescribeLogDirs
 - testDescribeNonExistingTopic
+- testDescribeReplicaLogDirs
 - testDescribeTopicsWithIds
 - testDescribeTopicsWithNames
 - testDescribeTopicsWithOptionPartitionSizeLimitPerResponse
 - testDescribeTopicsWithOptionTimeoutMs
+- testIncludeDocumentation
 - testListNodes
 - testListNodesWithFencedBroker
 - testListTopicsWithOptionListInternal
@@ -510,7 +518,10 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 org.apache.kafka.clients.producer.ProducerCompressionTest:
 - testCompression
 org.apache.kafka.clients.producer.ProducerFailureHandlingTest:
-- testCannotSendToInternalTopic
+- testCannotSendToInternalTopicWhenAutoCreateFalseAndTopicExists
+- testCannotSendToInternalTopicWhenAutoCreateFalseAndTopicNotExists
+- testCannotSendToInternalTopicWhenAutoCreateTrueAndTopicExists
+- testCannotSendToInternalTopicWhenAutoCreateTrueAndTopicNotExists
 - testInvalidPartition
 - testNonExistentTopic
 - testNotEnoughReplicasAfterBrokerShutdown
