@@ -1675,14 +1675,6 @@ org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImplTest:
 org.apache.kafka.coordinator.group.streams.assignor.MemberMetadataAndStateImplTest:
 - testCollectionsAreDeeplyUnmodifiable
 - testTaskOffsetsAreDeeplyUnmodifiable
-org.apache.kafka.coordinator.group.streams.assignor.MockAssignorTest:
-- testBasicScenario
-- testDoubleAssignment
-- testSingleMember
-- testToStringReturnsName
-- testTwoMembersTwoSubtopologies
-- testTwoMembersTwoSubtopologiesStickiness
-- testZeroMembers
 org.apache.kafka.coordinator.group.streams.assignor.ProcessStateTest:
 - shouldAddActiveTaskToMember
 - shouldAddStandbyTaskToMember
@@ -1703,6 +1695,7 @@ org.apache.kafka.coordinator.group.streams.assignor.StickyTaskAssignorTest:
 - shouldAssignMultipleReplicasOfStandbyTask
 - shouldAssignNewTasksToNewClientWhenPreviousTasksAssignedToOldClients
 - shouldAssignOneActiveTaskToEachProcessWhenTaskCountSameAsProcessCount
+- shouldAssignStandbyTaskToClientWithPreviousWarmupTaskOverLessLoadedClient
 - shouldAssignStandbyTaskToPreviousOwnerBasedOnBelowQuotaCondition
 - shouldAssignStandbyTasksToDifferentClientThanCorrespondingActiveTaskIsAssignedTo
 - shouldAssignStandbyToPreviousStandbyThatDoesNotHoldTheActiveTask
@@ -1711,6 +1704,7 @@ org.apache.kafka.coordinator.group.streams.assignor.StickyTaskAssignorTest:
 - shouldAssignTasksNotPreviouslyActiveToMultipleNewClients
 - shouldAssignTasksNotPreviouslyActiveToNewClient
 - shouldAssignTasksToClientWithPreviousStandbyTasks
+- shouldAssignTasksToClientWithPreviousWarmupTasks
 - shouldAssignTasksToMembersReportingTaskOffsetsOnColdStart
 - shouldAssignTasksToNewClient
 - shouldAssignTasksToNewClientWithoutFlippingAssignmentBetweenExistingAndBouncedClients
@@ -1732,6 +1726,7 @@ org.apache.kafka.coordinator.group.streams.assignor.StickyTaskAssignorTest:
 - shouldNotAssignStandbyTasksToClientWithPreviousStandbyTasksAndCurrentActiveTasks
 - shouldNotMigrateActiveTaskToOtherProcess
 - shouldNotMoveAnyTasksWhenNewTasksAdded
+- shouldPreferMoreCaughtUpCandidateRegardlessOfPrevStandbyOrPrevWarmupRole
 - shouldRangeAssignTasksWhenScalingUp
 - shouldRangeAssignTasksWhenStartingEmpty
 - shouldRankCurrentOwnersAheadOfReportedTaskOffsetsAndMostCaughtUpFirst
