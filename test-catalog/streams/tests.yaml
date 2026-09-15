@@ -130,6 +130,8 @@ org.apache.kafka.streams.StreamsBuilderTest:
 - shouldNotThrowWhenRepartitionWithRepartitionName
 - shouldNotThrowWhenSuppressWithSuppressName
 - shouldNowAllowStreamAndTableFromSameTopic
+- shouldPlaceProcessorsInSameSubtopologyWhenMixingStoreNameAndStoreBuilderLinking
+- shouldPlaceProcessorsLinkedByStoreBuilderInSameSubtopology
 - shouldProcessViaRepartitionTopic
 - shouldProcessingFromSinkTopic
 - shouldReuseSourceTopicAsChangelogsWithOptimization20
@@ -2138,7 +2140,6 @@ org.apache.kafka.streams.processor.internals.InternalTopologyBuilderTest:
 - shouldAddSourceWithoutOffsetReset
 - shouldAddTimestampExtractorPerSource
 - shouldAddTimestampExtractorWithPatternPerSource
-- shouldAllowAddingSameStoreBuilderMultipleTimes
 - shouldAllowIncrementalBuilds
 - shouldAssociateStateStoreNameWhenStateStoreSupplierIsExternal
 - shouldAssociateStateStoreNameWhenStateStoreSupplierIsInternal
@@ -2177,6 +2178,7 @@ org.apache.kafka.streams.processor.internals.InternalTopologyBuilderTest:
 - shouldThrowIfNameIsNull
 - shouldThrowIfTopicAndPatternAreNull
 - shouldThrowOnInvalidProcessorWrapperClassName
+- shouldUniteProcessorsWhenAddStateStoreCalledMultipleTimesWithSameBuilder
 - shouldUseNonDeprecatedConfigToSetCacheBytesWhenBothDeprecatedAndNonDeprecatedConfigsUsed
 - shouldWrapFixedKeyProcessorSupplier
 - shouldWrapProcessorSupplier
@@ -2744,6 +2746,9 @@ org.apache.kafka.streams.processor.internals.StateManagerUtilConverterTest:
 - shouldReturnTimestampedConverterForTimestampedToHeadersPersistentKeyValueStore
 - shouldReturnTimestampedConverterForTimestampedToHeadersPersistentWindowStore
 org.apache.kafka.streams.processor.internals.StateManagerUtilTest:
+- shouldLogDebugWhenUnableToLockAndOwnerAlreadyReleased
+- shouldLogDebugWhenUnableToLockBecauseAnotherLiveThreadHoldsIt
+- shouldLogWarnWhenUnableToLockBecauseOwnerThreadTerminated
 - shouldNotCloseStateManagerIfUnableToLockTaskDirectory
 - shouldNotWipeStateStoresIfUnableToLockTaskDirectory
 - shouldStillWipeStateStoresIfCloseThrowsException
