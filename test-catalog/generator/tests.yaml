@@ -25,12 +25,14 @@ org.apache.kafka.message.HeaderVersionsTest:
 - testHeaderVersionThreeAcceptedWhenHeaderSchemaAllowsIt
 - testHighestExistingHeaderVersionsAccepted
 - testLastRangeNotOpenEnded
+- testMatchingFlexibilityMappingAccepted
 - testMissingHeaderSchemaRejected
 - testNegativeValue
 - testNegativeVersionRangeKey
 - testNoHeaderVersionsIsNoOpWithoutHeaderSchemas
-- testNonFlexibleHeaderSchemaWithFlexibleBodyRejected
-- testNonFlexibleVersionsAreNotChecked
+- testNonFlexibleHeaderSchemaWithFlexibleVersionRejected
+- testNonFlexibleRequestVersionNeedsNonFlexibleHeader
+- testNonFlexibleResponseVersionNeedsNonFlexibleHeader
 - testNoneKey
 - testNullValue
 - testOpenEndedRangeNotLast
@@ -38,6 +40,7 @@ org.apache.kafka.message.HeaderVersionsTest:
 - testPropertyIgnoredWithNoValidVersions
 - testPropertyOnDataType
 - testRangeBeyondValidVersions
+- testRequestHeaderVersionBelowLowestRejected
 - testRequestHeaderVersionMustExist
 - testResponseHeaderVersionMustExist
 - testReversedRangeKey
@@ -55,6 +58,8 @@ org.apache.kafka.message.IsNullConditionalTest:
 - testNotNullCheck
 - testNullCheck
 org.apache.kafka.message.MessageDataGeneratorTest:
+- testArrayLengthIsCapped
+- testArrayPreallocationIsCapped
 - testDuplicateTags
 - testInvalidFieldName
 - testInvalidFlexibleVersionsRange
@@ -70,6 +75,7 @@ org.apache.kafka.message.MessageDataGeneratorTest:
 - testInvalidTaggedVersionsWithoutTag
 - testNullDefaults
 - testNullDefaultsWithDeprecatedVersions
+- testTaggedFieldCountIsBounded
 org.apache.kafka.message.MessageGeneratorTest:
 - stripSuffixTest
 - testCapitalizeFirst

@@ -289,6 +289,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldNotEnableAnyOptimizationsWithNoOptimizationConfig
 - shouldNotLeakInternalDocMembers
 - shouldNotLogWarningWhenProcessingExceptionHandlerIsEnabledOnGlobalThread
+- shouldNotLogWarningWhenUserSpecifiedBootstrapResolveTimeoutMatchesStreamsDefault
 - shouldNotOverrideUserConfigCommitIntervalMsIfExactlyOnceV2Enabled
 - shouldNotOverrideUserConfigRetriesIfExactlyV2OnceEnabled
 - shouldNotSetEnableMetricCollectionByDefault
@@ -2778,6 +2779,7 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldCheckCompletionIfPositionLargerThanEndOffset
 - shouldDecrementRemainingRecordsToZeroWithOffsetGaps
 - shouldFallBackNoStoredOffsetToBeginningAndStoredOffsetToItsFloor
+- shouldFallBackToFloorWhenNothingHasExpiredYet
 - shouldFallBackToStoredOffsetAndBackOffWhenProbeNeverAnswers
 - shouldInitializeChangelogAndCheckForCompletion
 - shouldKeepPollingWhileTheWindowIsStillResolvingPartitions
@@ -2788,6 +2790,7 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldNotGiveUpOnPollsThatHaveNotWaited
 - shouldNotProbeStandbyWithStoredOffset
 - shouldNotProbeWhenStoredOffsetGapIsSmall
+- shouldNotProbeWindowedStoreWithUnboundedRetention
 - shouldNotRegisterSameStoreMultipleTimes
 - shouldNotRegisterStoreWithoutMetadata
 - shouldNotSeekBelowStoredOffsetWhenTimestampOffsetIsBehindIt
@@ -2804,6 +2807,7 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldRestoreMultipleChangelogs
 - shouldRestoreToLimitInStandbyState
 - shouldRetryProbePollBeforeFallingBackToLogStart
+- shouldRouteEachStoredOffsetPartitionIndependentlyInOneRestore
 - shouldSeekByTimestampForWindowedStoreWithoutStoredOffset
 - shouldSeekFromTheNewestTimestampInTheProbedWindow
 - shouldSeekPastStoredOffsetByTimestampWhenGapIsLarge
@@ -5325,6 +5329,9 @@ org.apache.kafka.streams.state.internals.MaybeTest:
 - shouldThrowOnGetUndefinedValue
 - shouldUpholdEqualityCorrectness
 - shouldUpholdHashCodeCorrectness
+org.apache.kafka.streams.state.internals.MemoryLRUCacheTest:
+- shouldResetRestoringFlagWhenRestoreThrows
+- shouldSuppressEvictionListenerDuringRestoreAndResumeAfter
 org.apache.kafka.streams.state.internals.MergedSortedCacheKeyValueBytesStoreIteratorTest:
 - shouldIgnoreIfDeletedInCacheButExistsInStore
 - shouldIterateCacheOnly

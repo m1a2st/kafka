@@ -1408,6 +1408,7 @@ org.apache.kafka.clients.consumer.internals.ConsumerHeartbeatRequestManagerTest:
 - testGroupIdNotFoundExceptionWhileUnsubscribed
 - testGroupIdNotFoundWhileStableIsFatal
 - testHeartBeatRequestStateToStringBase
+- testHeartbeatMetrics
 - testHeartbeatNotSentIfAnotherOneInFlight
 - testHeartbeatOnStartup
 - testHeartbeatOutsideInterval
@@ -2495,7 +2496,9 @@ org.apache.kafka.clients.consumer.internals.ShareFetchMetricsManagerTest:
 - testNodeLatency
 - testRecordsFetched
 org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
+- testDisconnect
 - testFailureOnFatalException
+- testFencedMemberStopHeartbeatUntilItReleasesAssignmentToRejoin
 - testFirstHeartbeatIncludesRequiredInfoToJoinGroupAndGetAssignments
 - testGroupIdNotFoundExceptionWhileUnsubscribed
 - testGroupIdNotFoundWhileStableIsFatal
@@ -2503,11 +2506,15 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 - testHeartbeatNotSentIfAnotherOneInFlight
 - testHeartbeatOnStartup
 - testHeartbeatOutsideInterval
+- testHeartbeatRequestFailureNotifiedToGroupManagerAfterErrorPropagated
+- testHeartbeatResponseErrorNotifiedToGroupManagerAfterErrorPropagated
 - testHeartbeatResponseOnErrorHandling
 - testHeartbeatState
 - testLogsHeartbeatIntervalReceivedFromCoordinatorOnlyWhenChanged
+- testMaximumTimeToWaitWhenCoordinatorUnavailableDoesNotSpin
 - testMaximumTimeToWaitWhenFatalReturnsMaxValue
-- testMaximumTimeToWaitWhenHeartbeatShouldBeSkippedDoesNotSpin
+- testMaximumTimeToWaitWhenFencedWaitsRetryBackoff
+- testMaximumTimeToWaitWhenHeartbeatShouldBeSkipped
 - testMaximumTimeToWaitWhenJoiningAndCoordinatorUnknownDoesNotSpin
 - testNetworkTimeout
 - testNoCoordinator
@@ -2518,6 +2525,7 @@ org.apache.kafka.clients.consumer.internals.ShareHeartbeatRequestManagerTest:
 - testTimerNotDue
 - testUnsupportedVersionGeneratedOnTheBroker
 - testUnsupportedVersionGeneratedOnTheClient
+- testisExpiredByUsedForLogging
 org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testDelayedMetadataUsedToCompleteAssignment
 - testFatalFailureWhenMemberAlreadyLeft
@@ -4019,6 +4027,8 @@ org.apache.kafka.common.message.MessageTest:
 - testProduceResponseVersions
 - testSimpleMessage
 - testSyncGroupDefaultGroupInstanceId
+- testTaggedFieldCountRejectedWhenExceedingHardCap
+- testTaggedFieldCountRejectedWhenLargerThanRemainingBytes
 - testThrottleTimeIgnorableInDescribeGroupsResponse
 - testTxnOffsetCommitRequestVersions
 - testTxnOffsetCommitResponseVersions
@@ -4043,6 +4053,10 @@ org.apache.kafka.common.message.RecordsSerdeTest:
 org.apache.kafka.common.message.SimpleArraysMessageTest:
 - testArrayBoundsChecking
 - testArrayBoundsCheckingOtherArray
+- testArrayLengthAboveMaxIsRejected
+- testDeclaredLengthAboveInitialCapacityStillParses
+- testKeyedArrayLengthAboveMaxIsRejected
+- testKeyedDeclaredLengthAboveInitialCapacityStillParses
 org.apache.kafka.common.message.SimpleExampleMessageTest:
 - shouldDefaultField
 - shouldImplementEqualsAndHashCode
@@ -4837,10 +4851,14 @@ org.apache.kafka.common.requests.RequestContextTest:
 - testInvalidRequestForArrayList
 - testInvalidRequestForByteArray
 - testInvalidRequestForImplicitHashCollection
+- testInvalidRequestForImplicitHashCollectionWithMaxPreAllocation
+- testKeyedCollectionAboveInitialCapacityStillParses
+- testProduceRequestV3WithHugeDeclaredTopicCountIsRejected
 - testSerdeUnsupportedApiVersionRequest
 org.apache.kafka.common.requests.RequestHeaderTest:
 - parseHeaderFromBufferWithNonZeroPosition
 - parseHeaderWithNullClientId
+- testHugeDeclaredTaggedFieldCountIsRejected
 - testRequestHeaderV1
 - testRequestHeaderV2
 - verifySizeMethodsReturnSameValue
