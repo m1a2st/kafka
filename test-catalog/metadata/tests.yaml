@@ -95,6 +95,10 @@ org.apache.kafka.controller.ClusterControlManagerTest:
 - testUnregisterControllerWithUnsupportedMetadataVersion
 - testUnregisterUnknownController
 org.apache.kafka.controller.ConfigurationControlManagerTest:
+- ASCII
+- Hangul
+- emoji
+- testAppendChecksFinalUtf8Size
 - testBuilderRequiresPositiveMaxRecordsPerBatch
 - testCordonedLogDirsFeature
 - testElrUpgrade
@@ -103,7 +107,6 @@ org.apache.kafka.controller.ConfigurationControlManagerTest:
 - testIncrementalAlterConfigsWithPolicy
 - testIncrementalAlterConfigsWithoutExistence
 - testIncrementalAlterMultipleConfigValues
-- testIncrementalDeletePolicyIncludesUnsetConfigs
 - testIsCordonedLogDirsDisabled
 - testIsCordonedLogDirsInvalid
 - testLegacyAlterConfigs
@@ -506,6 +509,11 @@ org.apache.kafka.image.ProducerIdsImageTest:
 - testEmptyImageRoundTrip
 - testImage1RoundTrip
 - testImage2RoundTrip
+org.apache.kafka.image.ScramDeltaTest:
+- testAbsentRemovesBeforeUpsertPreservesUsers
+- testAbsentRemovesOnlyLeaveImageEmpty
+- testApplyWithNoChangesReturnsBaseImage
+- testRemoveLastExistingUserClearsImage
 org.apache.kafka.image.ScramImageTest:
 - testApplyDelta1
 - testEmptyImageRoundTrip
