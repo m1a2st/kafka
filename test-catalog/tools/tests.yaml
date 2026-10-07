@@ -450,6 +450,9 @@ org.apache.kafka.tools.LineMessageReaderTest:
 - testNullMarkerHeaderKeyThrows
 - testNullMarkerWithHeaders
 - testParseHeaderEnabledWithCustomDelimiterAndVaryingNumberOfKeyValueHeaderPairs
+org.apache.kafka.tools.LogCompactionTesterTest:
+- testConsumeMessagesDoesNotStopAtEmptyPollBeforeEndOffset
+- testConsumeMessagesFailsWhenNoProgress
 org.apache.kafka.tools.LogDirsCommandTest:
 - shouldNotThrowWhenDuplicatedBrokers
 - shouldQueryAllBrokersIfNonSpecified
@@ -740,6 +743,7 @@ org.apache.kafka.tools.consumer.ConsoleConsumerTest:
 - shouldStopWhenOutputCheckErrorFails
 - shouldThrowTimeoutExceptionWhenTimeoutIsReached
 - shouldWorkWithoutTopicOption
+- testConsumerGroupMessageFormatter
 - testGroupMetadataMessageFormatterWithClassicGroupProtocol
 - testGroupMetadataMessageFormatterWithConsumerGroupProtocol
 - testOffsetsMessageFormatter
@@ -772,6 +776,8 @@ org.apache.kafka.tools.consumer.ConsoleShareConsumerTest:
 - shouldThrowTimeoutExceptionWhenTimeoutIsReached
 - shouldUpgradeDeliveryCount
 - testRejectMessageOnError
+org.apache.kafka.tools.consumer.ConsumerGroupMessageFormatterTest:
+- testMessageFormatter
 org.apache.kafka.tools.consumer.DefaultMessageFormatterTest:
 - testDefaultMessageFormatter
 org.apache.kafka.tools.consumer.GroupMetadataMessageFormatterTest:
