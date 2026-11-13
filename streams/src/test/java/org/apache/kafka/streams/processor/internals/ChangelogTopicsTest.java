@@ -16,7 +16,12 @@
  */
 package org.apache.kafka.streams.processor.internals;
 
+import org.apache.kafka.clients.admin.MockAdminClient;
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.utils.MockTime;
+import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.processor.TaskId;
 import org.apache.kafka.streams.processor.internals.InternalTopologyBuilder.TopicsInfo;
 import org.apache.kafka.streams.processor.internals.TopologyMetadata.Subtopology;
@@ -28,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -36,6 +42,7 @@ import static org.apache.kafka.common.utils.Utils.mkMap;
 import static org.apache.kafka.streams.processor.internals.assignment.AssignmentTestUtils.SUBTOPOLOGY_0;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -82,6 +89,41 @@ public class ChangelogTopicsTest {
     private static final TaskId TASK_0_2 = new TaskId(0, 2);
 
     final InternalTopicManager internalTopicManager = mock(InternalTopicManager.class);
+
+    @Test
+    public void shouldRetainExtraChangelogPartitionsAfterSourceTasksShrink() throws Exception {
+        final Node broker = new Node(0, "localhost", 9092);
+        final List<Node> replicas = List.of(broker);
+        try (final MockAdminClient admin = new MockAdminClient(replicas, broker)) {
+            admin.addTopic(false, CHANGELOG_TOPIC_NAME1, List.of(
+                new TopicPartitionInfo(0, broker, replicas, replicas),
+                new TopicPartitionInfo(1, broker, replicas, replicas),
+                new TopicPartitionInfo(2, broker, replicas, replicas)), Collections.emptyMap());
+            final InternalTopicManager topicManager = new InternalTopicManager(new MockTime(), admin,
+                new StreamsConfig(Map.of(
+                    StreamsConfig.APPLICATION_ID_CONFIG, "test-app",
+                    StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092")));
+            final TopicsInfo topicsInfo = new TopicsInfo(Collections.emptySet(), Set.of(SOURCE_TOPIC_NAME),
+                Collections.emptyMap(), Map.of(CHANGELOG_TOPIC_NAME1,
+                    new UnwindowedUnversionedChangelogTopicConfig(CHANGELOG_TOPIC_NAME1, Collections.emptyMap())));
+            final Map<Subtopology, TopicsInfo> topicGroups = Map.of(SUBTOPOLOGY_0, topicsInfo);
+            final ChangelogTopics beforeShrink = new ChangelogTopics(topicManager, topicGroups,
+                Map.of(SUBTOPOLOGY_0, Set.of(TASK_0_0, TASK_0_1, TASK_0_2)), "[test] ");
+            beforeShrink.setup();
+            assertEquals(Set.of(TASK_0_0, TASK_0_1, TASK_0_2), beforeShrink.statefulTaskIds());
+
+            final ChangelogTopics afterShrink = new ChangelogTopics(topicManager, topicGroups,
+                Map.of(SUBTOPOLOGY_0, Set.of(TASK_0_0, TASK_0_1)), "[test] ");
+            afterShrink.setup();
+
+            assertEquals(Set.of(TASK_0_0, TASK_0_1), afterShrink.statefulTaskIds());
+            assertEquals(Set.of(new TopicPartition(CHANGELOG_TOPIC_NAME1, 0), new TopicPartition(CHANGELOG_TOPIC_NAME1, 1)),
+                afterShrink.preExistingNonSourceTopicBasedPartitions());
+            assertEquals(Collections.emptySet(), afterShrink.preExistingPartitionsFor(TASK_0_2));
+            assertEquals(3, admin.describeTopics(List.of(CHANGELOG_TOPIC_NAME1)).allTopicNames().get()
+                .get(CHANGELOG_TOPIC_NAME1).partitions().size());
+        }
+    }
 
     @Test
     public void shouldNotContainChangelogsForStatelessTasks() {

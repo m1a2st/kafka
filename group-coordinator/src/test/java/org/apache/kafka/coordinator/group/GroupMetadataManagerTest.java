@@ -65,6 +65,7 @@ import org.apache.kafka.common.message.StreamsGroupDescribeResponseData;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData.CopartitionGroup;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData.Subtopology;
+import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData.TaskIds;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData.TopicInfo;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestData.Topology;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatResponseData;
@@ -166,6 +167,7 @@ import org.apache.kafka.server.share.persister.TopicData;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -20116,6 +20118,82 @@ public class GroupMetadataManagerTest {
         );
 
         assertRecordsEquals(expectedRecords, result.records());
+    }
+
+    @ParameterizedTest
+    @EnumSource(TaskRole.class)
+    public void testStreamsRevokesOwnedTasksAfterSourcePartitionShrink(TaskRole removedTaskRole) {
+        String groupId = "shrinking-streams-group";
+        String memberId = "member";
+        String subtopologyId = "subtopology";
+        String topicName = "source";
+        Uuid topicId = Uuid.randomUuid();
+        Topology topology = new Topology().setSubtopologies(List.of(
+            new Subtopology().setSubtopologyId(subtopologyId).setSourceTopics(List.of(topicName))
+        ));
+        CoordinatorMetadataImage oldImage = new MetadataImageBuilder()
+            .addTopic(topicId, topicName, 3).buildCoordinatorMetadataImage();
+        CoordinatorMetadataImage newImage = new MetadataImageBuilder()
+            .addTopic(topicId, topicName, 2).buildCoordinatorMetadataImage();
+        var retainedTasks = mkTasksTupleWithCommonEpoch(TaskRole.ACTIVE, 10,
+            TaskAssignmentTestUtil.mkTasks(subtopologyId, 0, 1));
+        var removedTasks = mkTasksTupleWithCommonEpoch(removedTaskRole, 10,
+            TaskAssignmentTestUtil.mkTasks(subtopologyId, 2));
+        MockTaskAssignor assignor = new MockTaskAssignor("sticky");
+        GroupMetadataManagerTestContext context = new GroupMetadataManagerTestContext.Builder()
+            .withStreamsGroupTaskAssignors(List.of(assignor))
+            .withMetadataImage(newImage)
+            .withStreamsGroup(new StreamsGroupBuilder(groupId, 10)
+                .withMember(streamsGroupMemberBuilderWithDefaults(memberId)
+                    .setState(org.apache.kafka.coordinator.group.streams.MemberState.STABLE)
+                    .setMemberEpoch(10)
+                    .setPreviousMemberEpoch(9)
+                    .setAssignedTasks(retainedTasks.merge(removedTasks))
+                    .build())
+                .withTopology(StreamsTopology.fromHeartbeatRequest(topology))
+                .withMetadataHash(computeGroupHash(Map.of(topicName, computeTopicHash(topicName, oldImage))))
+                .withTargetAssignmentEpoch(10))
+            .build();
+        assignor.prepareGroupAssignment(Map.of(memberId, TaskAssignmentTestUtil.mkTasksTuple(TaskRole.ACTIVE,
+            TaskAssignmentTestUtil.mkTasks(subtopologyId, 0, 1))));
+
+        StreamsGroupHeartbeatRequestData request = new StreamsGroupHeartbeatRequestData()
+            .setGroupId(groupId).setMemberId(memberId).setMemberEpoch(10)
+            .setActiveTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId)
+                .setPartitions(removedTaskRole == TaskRole.ACTIVE ? List.of(0, 1, 2) : List.of(0, 1))))
+            .setStandbyTasks(removedTaskRole == TaskRole.STANDBY
+                ? List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(2))) : List.of())
+            .setWarmupTasks(removedTaskRole == TaskRole.WARMUP
+                ? List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(2))) : List.of());
+
+        var response = context.streamsGroupHeartbeat(request).response().data();
+        assertEquals(List.of(new StreamsGroupHeartbeatResponseData.TaskIds()
+            .setSubtopologyId(subtopologyId).setPartitions(List.of(0, 1))), response.activeTasks());
+        assertEquals(List.of(), response.standbyTasks());
+        assertEquals(List.of(), response.warmupTasks());
+        var member = context.groupMetadataManager.streamsGroup(groupId).getMemberOrThrow(memberId);
+        assertEquals(removedTasks, member.tasksPendingRevocation());
+
+        // A lost revocation response can cause the member to report the old tasks again.
+        assertDoesNotThrow(() -> context.streamsGroupHeartbeat(request));
+        assertThrows(InvalidRequestException.class, () -> context.streamsGroupHeartbeat(request.duplicate()
+            .setActiveTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(3))))));
+        StreamsGroupHeartbeatRequestData wrongRole = request.duplicate();
+        if (removedTaskRole == TaskRole.ACTIVE) {
+            wrongRole.setStandbyTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(2))));
+        } else {
+            wrongRole.setActiveTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(0, 1, 2))));
+        }
+        assertThrows(InvalidRequestException.class, () -> context.streamsGroupHeartbeat(wrongRole));
+
+        request.setActiveTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(0, 1))))
+            .setStandbyTasks(List.of()).setWarmupTasks(List.of());
+        assertEquals(11, context.streamsGroupHeartbeat(request).response().data().memberEpoch());
+        member = context.groupMetadataManager.streamsGroup(groupId).getMemberOrThrow(memberId);
+        assertTrue(member.tasksPendingRevocation().isEmpty());
+        assertThrows(InvalidRequestException.class, () -> context.streamsGroupHeartbeat(request.duplicate()
+            .setMemberEpoch(11)
+            .setActiveTasks(List.of(new TaskIds().setSubtopologyId(subtopologyId).setPartitions(List.of(0, 1, 2))))));
     }
 
     @Test

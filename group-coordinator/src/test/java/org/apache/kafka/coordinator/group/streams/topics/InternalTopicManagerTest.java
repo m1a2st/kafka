@@ -20,6 +20,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfig;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfigCollection;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.requests.StreamsGroupHeartbeatResponse.Status;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataImage;
@@ -27,9 +28,13 @@ import org.apache.kafka.coordinator.common.runtime.MetadataImageBuilder;
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyValue;
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyValue.Subtopology;
 import org.apache.kafka.coordinator.group.streams.StreamsTopology;
+import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.MetadataProvenance;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -106,6 +111,116 @@ class InternalTopicManagerTest {
 
         Optional<Map<String, ConfiguredSubtopology>> expectedConfiguredTopology = Optional.of(makeExpectedConfiguredSubtopologies());
         assertEquals(expectedConfiguredTopology, configuredTopology.subtopologies());
+    }
+
+    @Test
+    void testRetainedChangelogPartitionsAfterSourceShrink() {
+        final Uuid sourceId = Uuid.randomUuid();
+        final MetadataImage initialImage = new MetadataImageBuilder()
+            .addTopic(sourceId, SOURCE_TOPIC_1, 3)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_1, 3)
+            .build();
+        final Subtopology subtopology = new Subtopology().setSubtopologyId(SUBTOPOLOGY_1)
+            .setSourceTopics(List.of(SOURCE_TOPIC_1))
+            .setStateChangelogTopics(List.of(new StreamsGroupTopologyValue.TopicInfo().setName(STATE_CHANGELOG_TOPIC_1)));
+        final StreamsTopology topology = new StreamsTopology(1, Map.of(SUBTOPOLOGY_1, subtopology));
+        final ConfiguredTopology beforeShrink = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 0,
+            topology, new KRaftCoordinatorMetadataImage(initialImage), TIME);
+        assertTrue(beforeShrink.isReady());
+        assertEquals(3, beforeShrink.subtopologies().orElseThrow().get(SUBTOPOLOGY_1).numberOfTasks());
+
+        final MetadataDelta delta = new MetadataDelta.Builder().setImage(initialImage).build();
+        delta.replay(new RemovePartitionRecord().setTopicId(sourceId).setPartitionId(2));
+        final MetadataImage shrunkImage = delta.apply(MetadataProvenance.EMPTY);
+        final ConfiguredTopology afterShrink = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 1,
+            topology, new KRaftCoordinatorMetadataImage(shrunkImage), TIME);
+
+        assertEquals(Optional.empty(), afterShrink.topicConfigurationException());
+        final ConfiguredSubtopology configured = afterShrink.subtopologies().orElseThrow().get(SUBTOPOLOGY_1);
+        assertEquals(2, configured.numberOfTasks());
+        assertEquals(2, configured.stateChangelogTopics().get(STATE_CHANGELOG_TOPIC_1).numberOfPartitions());
+        assertTrue(afterShrink.internalTopicsToBeCreated().isEmpty());
+        assertEquals(3, shrunkImage.topics().getTopic(STATE_CHANGELOG_TOPIC_1).partitions().size());
+    }
+
+    @Test
+    void testUnderprovisionedChangelogStillFails() {
+        final MetadataImage image = new MetadataImageBuilder()
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_1, 2)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_1, 1)
+            .build();
+        final Subtopology subtopology = new Subtopology().setSubtopologyId(SUBTOPOLOGY_1)
+            .setSourceTopics(List.of(SOURCE_TOPIC_1))
+            .setStateChangelogTopics(List.of(new StreamsGroupTopologyValue.TopicInfo().setName(STATE_CHANGELOG_TOPIC_1)));
+        final StreamsTopology topology = new StreamsTopology(1, Map.of(SUBTOPOLOGY_1, subtopology));
+
+        final ConfiguredTopology configured = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 0,
+            topology, new KRaftCoordinatorMetadataImage(image), TIME);
+
+        assertTrue(configured.topicConfigurationException().isPresent());
+        assertEquals(Status.INCORRECTLY_PARTITIONED_TOPICS, configured.topicConfigurationException().orElseThrow().status());
+        assertTrue(configured.topicConfigurationException().orElseThrow().getMessage().contains(STATE_CHANGELOG_TOPIC_1));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 3})
+    void testRepartitionTopicStillRequiresExactCount(final int repartitionPartitions) {
+        final MetadataImage image = new MetadataImageBuilder()
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_1, 2)
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_2, 2)
+            .addTopic(Uuid.randomUuid(), REPARTITION_TOPIC, repartitionPartitions)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_1, 2)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_2, Math.max(2, repartitionPartitions))
+            .build();
+
+        final ConfiguredTopology configured = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 0,
+            makeTestTopology(), new KRaftCoordinatorMetadataImage(image), TIME);
+
+        assertTrue(configured.topicConfigurationException().isPresent());
+        assertEquals(Status.INCORRECTLY_PARTITIONED_TOPICS, configured.topicConfigurationException().orElseThrow().status());
+        assertTrue(configured.topicConfigurationException().orElseThrow().getMessage().contains(REPARTITION_TOPIC));
+    }
+
+    @Test
+    void testRepartitionChangelogStillRequiresExactCount() {
+        final MetadataImage image = new MetadataImageBuilder()
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_1, 2)
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_2, 2)
+            .addTopic(Uuid.randomUuid(), REPARTITION_TOPIC, 3)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_1, 2)
+            .build();
+        final StreamsTopology topology = makeTestTopology();
+        topology.subtopologies().get(SUBTOPOLOGY_2).setStateChangelogTopics(List.of(
+            new StreamsGroupTopologyValue.TopicInfo().setName(REPARTITION_TOPIC)));
+
+        final ConfiguredTopology configured = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 0,
+            topology, new KRaftCoordinatorMetadataImage(image), TIME);
+
+        assertTrue(configured.topicConfigurationException().isPresent());
+        assertEquals(Status.INCORRECTLY_PARTITIONED_TOPICS, configured.topicConfigurationException().orElseThrow().status());
+        assertTrue(configured.topicConfigurationException().orElseThrow().getMessage().contains(REPARTITION_TOPIC));
+    }
+
+    @Test
+    void testSourceShrinkStillRejectsMismatchedCopartitionedInputs() {
+        final MetadataImage image = new MetadataImageBuilder()
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_1, 2)
+            .addTopic(Uuid.randomUuid(), SOURCE_TOPIC_2, 3)
+            .addTopic(Uuid.randomUuid(), STATE_CHANGELOG_TOPIC_1, 3)
+            .build();
+        final Subtopology subtopology = new Subtopology().setSubtopologyId(SUBTOPOLOGY_1)
+            .setSourceTopics(List.of(SOURCE_TOPIC_1, SOURCE_TOPIC_2))
+            .setStateChangelogTopics(List.of(new StreamsGroupTopologyValue.TopicInfo().setName(STATE_CHANGELOG_TOPIC_1)))
+            .setCopartitionGroups(List.of(new StreamsGroupTopologyValue.CopartitionGroup()
+                .setSourceTopics(List.of((short) 0, (short) 1))));
+        final StreamsTopology topology = new StreamsTopology(1, Map.of(SUBTOPOLOGY_1, subtopology));
+
+        final ConfiguredTopology configured = InternalTopicManager.configureTopics(LOG, "test-group", "test-member", 0,
+            topology, new KRaftCoordinatorMetadataImage(image), TIME);
+
+        assertTrue(configured.topicConfigurationException().isPresent());
+        assertEquals(Status.INCORRECTLY_PARTITIONED_TOPICS, configured.topicConfigurationException().orElseThrow().status());
+        assertTrue(configured.topicConfigurationException().orElseThrow().getMessage().contains("same number of partitions"));
     }
 
     private static Map<String, ConfiguredSubtopology> makeExpectedConfiguredSubtopologies() {

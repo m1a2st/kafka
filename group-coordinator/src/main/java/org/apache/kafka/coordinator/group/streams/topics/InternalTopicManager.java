@@ -172,7 +172,8 @@ public class InternalTopicManager {
             copartitionedTopicsEnforcer
         );
 
-        decidedPartitionCountsForInternalTopics.putAll(changelogTopics.setup());
+        // A topic also used as a changelog must keep its repartitioning requirement.
+        changelogTopics.setup().forEach(decidedPartitionCountsForInternalTopics::putIfAbsent);
 
         return decidedPartitionCountsForInternalTopics;
     }
@@ -206,17 +207,24 @@ public class InternalTopicManager {
                                                                      CoordinatorMetadataImage metadataImage) {
 
         final Map<String, CreatableTopic> topicsToCreate = new HashMap<>();
+        final Set<String> repartitionTopics = new HashSet<>();
         for (ConfiguredSubtopology subtopology : subtopologyMap.values()) {
             subtopology.repartitionSourceTopics().values()
-                .forEach(x -> topicsToCreate.put(x.name(), toCreatableTopic(x)));
+                .forEach(x -> {
+                    topicsToCreate.put(x.name(), toCreatableTopic(x));
+                    repartitionTopics.add(x.name());
+                });
             subtopology.stateChangelogTopics().values()
-                .forEach(x -> topicsToCreate.put(x.name(), toCreatableTopic(x)));
+                .forEach(x -> topicsToCreate.putIfAbsent(x.name(), toCreatableTopic(x)));
         }
         for (String topic : topology.requiredTopics()) {
             metadataImage.topicMetadata(topic).ifPresent(topicMetadata -> {
                 final CreatableTopic expectedTopic = topicsToCreate.remove(topic);
                 if (expectedTopic != null) {
-                    if (topicMetadata.partitionCount() != expectedTopic.numPartitions()) {
+                    // Changelogs can retain unused partitions after their sources shrink.
+                    // Repartition topics must match exactly, including those also used as changelogs.
+                    if (topicMetadata.partitionCount() != expectedTopic.numPartitions()
+                        && (topicMetadata.partitionCount() < expectedTopic.numPartitions() || repartitionTopics.contains(topic))) {
                         throw TopicConfigurationException.incorrectlyPartitionedTopics("Existing topic " + topic + " has different"
                             + " number of partitions: expected " + expectedTopic.numPartitions() + ", found " + topicMetadata.partitionCount());
                     }

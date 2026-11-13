@@ -274,13 +274,22 @@ public class InternalTopicManager {
             .orElseThrow(() -> new IllegalStateException("No partition count is specified for internal topic " +
                 topicName + ". " + BUG_ERROR_MESSAGE));
         final int actualPartitionCount = topicDescription.partitions().size();
-        if (actualPartitionCount != requiredPartitionCount) {
+        if (!hasValidPartitionCount(topicConfig, actualPartitionCount, requiredPartitionCount)) {
             validationResult.addMisconfiguration(
                 topicName,
                 "Internal topic " + topicName + " requires " + requiredPartitionCount + " partitions, " +
                 "but the existing topic on the broker has " + actualPartitionCount + " partitions."
             );
         }
+    }
+
+    private static boolean hasValidPartitionCount(final InternalTopicConfig topicConfig,
+                                                  final int actualPartitionCount,
+                                                  final int requiredPartitionCount) {
+        return actualPartitionCount == requiredPartitionCount || actualPartitionCount > requiredPartitionCount
+            && (topicConfig instanceof UnwindowedUnversionedChangelogTopicConfig
+                || topicConfig instanceof WindowedChangelogTopicConfig
+                || topicConfig instanceof VersionedChangelogTopicConfig);
     }
 
     private void validateCleanupPolicy(final ValidationResult validationResult,
@@ -697,13 +706,14 @@ public class InternalTopicManager {
 
         final Set<String> topicsNotCreated = new HashSet<>();
         for (final String topicName : topicsToIdentify) {
-            final Optional<Integer> numberOfPartitions = topicsMap.get(topicName).numberOfPartitions();
+            final InternalTopicConfig topicConfig = topicsMap.get(topicName);
+            final Optional<Integer> numberOfPartitions = topicConfig.numberOfPartitions();
             if (numberOfPartitions.isEmpty()) {
                 log.error("Found undefined number of partitions for topic {}", topicName);
                 throw new StreamsException("Topic " + topicName + " number of partitions not defined");
             }
             if (existedTopicPartition.containsKey(topicName)) {
-                if (!existedTopicPartition.get(topicName).equals(numberOfPartitions.get())) {
+                if (!hasValidPartitionCount(topicConfig, existedTopicPartition.get(topicName), numberOfPartitions.get())) {
                     final String errorMsg = String.format("Existing internal topic %s has invalid partitions: " +
                             "expected: %d; actual: %d. " +
                             "Use 'org.apache.kafka.tools.StreamsResetter' tool to clean up invalid topics before processing.",

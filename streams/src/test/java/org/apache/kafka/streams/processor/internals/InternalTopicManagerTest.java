@@ -58,6 +58,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -71,6 +74,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.apache.kafka.common.utils.Utils.mkEntry;
 import static org.apache.kafka.common.utils.Utils.mkMap;
@@ -822,6 +827,78 @@ public class InternalTopicManagerTest {
             internalTopicManager.makeReady(Collections.singletonMap(topic1, internalTopicConfig));
             fail("Should have thrown StreamsException");
         } catch (final StreamsException expected) { /* pass */ }
+    }
+
+    private static Stream<Arguments> partitionCountValidationCases() {
+        return Stream.of(
+            Arguments.of("unwindowed", 1, false),
+            Arguments.of("unwindowed", 2, true),
+            Arguments.of("unwindowed", 3, true),
+            Arguments.of("windowed", 1, false),
+            Arguments.of("windowed", 2, true),
+            Arguments.of("windowed", 3, true),
+            Arguments.of("versioned", 1, false),
+            Arguments.of("versioned", 2, true),
+            Arguments.of("versioned", 3, true),
+            Arguments.of("repartition", 1, false),
+            Arguments.of("repartition", 2, true),
+            Arguments.of("repartition", 3, false)
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionCountValidationCases")
+    public void shouldCheckPartitionCountsWhenMakingTopicsReady(final String topicType,
+                                                               final int actualPartitions,
+                                                               final boolean valid) {
+        final InternalTopicConfig topicConfig = setupPartitionCountTestTopic(topicType, actualPartitions);
+        if (valid) {
+            assertEquals(Collections.emptySet(), internalTopicManager.makeReady(Map.of(topic1, topicConfig)));
+        } else {
+            assertThrows(StreamsException.class, () -> internalTopicManager.makeReady(Map.of(topic1, topicConfig)));
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionCountValidationCases")
+    public void shouldCheckPartitionCountsDuringValidation(final String topicType,
+                                                           final int actualPartitions,
+                                                           final boolean valid) {
+        final InternalTopicConfig topicConfig = setupPartitionCountTestTopic(topicType, actualPartitions);
+
+        final ValidationResult result = internalTopicManager.validate(Map.of(topic1, topicConfig));
+
+        assertEquals(Collections.emptySet(), result.missingTopics());
+        assertEquals(valid ? Collections.emptySet() : Set.of(topic1), result.misconfigurationsForTopics().keySet());
+    }
+
+    private InternalTopicConfig setupPartitionCountTestTopic(final String topicType, final int actualPartitions) {
+        final InternalTopicConfig topicConfig;
+        final Map<String, String> brokerConfig;
+        switch (topicType) {
+            case "unwindowed":
+                topicConfig = setupUnwindowedUnversionedChangelogTopicConfig(topic1, 2);
+                brokerConfig = unwindowedUnversionedChangelogConfig();
+                break;
+            case "windowed":
+                topicConfig = setupWindowedChangelogTopicConfig(topic1, 2, 1000);
+                brokerConfig = windowedChangelogConfig(1000);
+                break;
+            case "versioned":
+                topicConfig = setupVersionedChangelogTopicConfig(topic1, 2, 1000);
+                brokerConfig = versionedChangelogConfig(1000);
+                break;
+            case "repartition":
+                topicConfig = setupRepartitionTopicConfig(topic1, 2);
+                brokerConfig = repartitionTopicConfig();
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown topic type " + topicType);
+        }
+        mockAdminClient.addTopic(false, topic1, IntStream.range(0, actualPartitions)
+            .mapToObj(partition -> new TopicPartitionInfo(partition, broker1, singleReplica, Collections.emptyList()))
+            .collect(Collectors.toList()), brokerConfig);
+        return topicConfig;
     }
 
     @Test

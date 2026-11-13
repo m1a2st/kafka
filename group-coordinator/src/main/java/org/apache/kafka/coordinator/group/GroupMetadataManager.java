@@ -201,6 +201,7 @@ import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -1879,10 +1880,12 @@ public class GroupMetadataManager {
      *
      * @param subtopologySortedMap The configured topology.
      * @param tasks                The list of requested tasks.
+     * @param previouslyOwned      Whether the task was assigned or is awaiting revocation for this member and role.
      */
     private static void throwIfRequestContainsInvalidTasks(
         SortedMap<String, ConfiguredSubtopology> subtopologySortedMap,
-        List<StreamsGroupHeartbeatRequestData.TaskIds> tasks
+        List<StreamsGroupHeartbeatRequestData.TaskIds> tasks,
+        BiPredicate<String, Integer> previouslyOwned
     ) {
         if (tasks == null || tasks.isEmpty()) return;
         for (StreamsGroupHeartbeatRequestData.TaskIds task : tasks) {
@@ -1893,7 +1896,7 @@ public class GroupMetadataManager {
             }
             int numTasks = subtopology.numberOfTasks();
             for (Integer partition : task.partitions()) {
-                if (partition < 0 || partition >= numTasks) {
+                if (partition < 0 || (partition >= numTasks && !previouslyOwned.test(subtopologyId, partition))) {
                     throw new InvalidRequestException("Task " + partition + " for subtopology " + subtopologyId +
                         " is invalid. Number of tasks for this subtopology: " + numTasks);
                 }
@@ -2183,9 +2186,18 @@ public class GroupMetadataManager {
         if (updatedConfiguredTopology.isReady()) {
             validatedTopologyEpoch = updatedTopology.topologyEpoch();
             SortedMap<String, ConfiguredSubtopology> subtopologySortedMap = updatedConfiguredTopology.subtopologies().get();
-            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedActiveTasks);
-            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedStandbyTasks);
-            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedWarmupTasks);
+            // Source partition removal can make a previously assigned task exceed the new task count.
+            // Keep accepting that ownership until the member acknowledges its revocation.
+            TasksTupleWithEpochs previouslyOwned = member.assignedTasks().merge(member.tasksPendingRevocation());
+            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedActiveTasks,
+                (subtopologyId, partition) -> previouslyOwned.activeTasksWithEpochs()
+                    .getOrDefault(subtopologyId, Map.of()).containsKey(partition));
+            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedStandbyTasks,
+                (subtopologyId, partition) -> previouslyOwned.standbyTasks()
+                    .getOrDefault(subtopologyId, Set.of()).contains(partition));
+            throwIfRequestContainsInvalidTasks(subtopologySortedMap, ownedWarmupTasks,
+                (subtopologyId, partition) -> previouslyOwned.warmupTasks()
+                    .getOrDefault(subtopologyId, Set.of()).contains(partition));
         }
 
         // Store the latest task changelog offsets/end-offsets reported by the member. These are transient telemetry
