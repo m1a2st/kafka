@@ -29,6 +29,7 @@ public class DeletePartitionsOptions extends AbstractOptions<DeletePartitionsOpt
 
     private boolean validateOnly = false;
     private boolean force = false;
+    private boolean retryOnQuotaViolation = true;
 
     public DeletePartitionsOptions() {
     }
@@ -62,5 +63,20 @@ public class DeletePartitionsOptions extends AbstractOptions<DeletePartitionsOpt
     public DeletePartitionsOptions force(boolean force) {
         this.force = force;
         return this;
+    }
+
+    /**
+     * Set whether quota violations should be automatically retried. This defaults to true.
+     */
+    public DeletePartitionsOptions retryOnQuotaViolation(boolean retryOnQuotaViolation) {
+        this.retryOnQuotaViolation = retryOnQuotaViolation;
+        return this;
+    }
+
+    /**
+     * Return whether quota violations should be automatically retried.
+     */
+    public boolean shouldRetryOnQuotaViolation() {
+        return retryOnQuotaViolation;
     }
 }

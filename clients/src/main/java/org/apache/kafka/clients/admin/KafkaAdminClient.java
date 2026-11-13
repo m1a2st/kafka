@@ -3301,54 +3301,96 @@ public class KafkaAdminClient extends AdminClient {
                                                    final DeletePartitionsOptions options) {
         final Map<String, KafkaFutureImpl<Void>> futures = new HashMap<>(partitionCounts.size());
         final DeletePartitionsTopicCollection topics = new DeletePartitionsTopicCollection(partitionCounts.size());
+        final boolean force = options.force();
+        final boolean validateOnly = options.validateOnly();
+        final boolean retryOnQuotaViolation = options.shouldRetryOnQuotaViolation();
         for (Map.Entry<String, Integer> entry : partitionCounts.entrySet()) {
-            topics.add(new DeletePartitionsTopic()
-                .setName(entry.getKey())
-                .setCount(entry.getValue())
-                .setForce(options.force()));
-            futures.put(entry.getKey(), new KafkaFutureImpl<>());
+            String topicName = entry.getKey();
+            KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+            futures.put(topicName, future);
+            if (topicNameIsUnrepresentable(topicName)) {
+                future.completeExceptionally(new InvalidTopicException("The given topic name '" +
+                    topicName + "' cannot be represented in a request."));
+            } else {
+                topics.add(new DeletePartitionsTopic()
+                    .setName(topicName)
+                    .setCount(entry.getValue())
+                    .setForce(force));
+            }
         }
         if (!topics.isEmpty()) {
             final long now = time.milliseconds();
             final long deadline = calcDeadlineMs(now, options.timeoutMs());
-            runnable.call(new Call("deletePartitions", deadline, new ControllerNodeProvider()) {
-                @Override
-                public DeletePartitionsRequest.Builder createRequest(int timeoutMs) {
-                    return new DeletePartitionsRequest.Builder(
-                        new DeletePartitionsRequestData()
-                            .setTopics(topics)
-                            .setValidateOnly(options.validateOnly())
-                            .setTimeoutMs(timeoutMs));
-                }
-
-                @Override
-                public void handleResponse(AbstractResponse abstractResponse) {
-                    handleNotControllerError(abstractResponse);
-                    final DeletePartitionsResponse response = (DeletePartitionsResponse) abstractResponse;
-                    for (DeletePartitionsTopicResult result : response.data().results()) {
-                        KafkaFutureImpl<Void> future = futures.get(result.name());
-                        if (future == null) {
-                            log.warn("Server response mentioned unknown topic {}", result.name());
-                        } else {
-                            ApiError error = new ApiError(result.errorCode(), result.errorMessage());
-                            if (error.isFailure()) {
-                                future.completeExceptionally(error.exception());
-                            } else {
-                                future.complete(null);
-                            }
-                        }
-                    }
-                    completeUnrealizedFutures(futures.entrySet().stream(),
-                        topic -> "The controller response did not contain a result for topic " + topic);
-                }
-
-                @Override
-                void handleFailure(Throwable throwable) {
-                    completeAllExceptionally(futures.values(), throwable);
-                }
-            }, now);
+            runnable.call(getDeletePartitionsCall(validateOnly, retryOnQuotaViolation, futures, topics,
+                Collections.emptyMap(), now, deadline), now);
         }
         return new DeletePartitionsResult(new HashMap<>(futures));
+    }
+
+    private Call getDeletePartitionsCall(final boolean validateOnly,
+                                        final boolean retryOnQuotaViolation,
+                                        final Map<String, KafkaFutureImpl<Void>> futures,
+                                        final DeletePartitionsTopicCollection topics,
+                                        final Map<String, ThrottlingQuotaExceededException> quotaExceededExceptions,
+                                        final long now,
+                                        final long deadline) {
+        return new Call("deletePartitions", deadline, new ControllerNodeProvider()) {
+            @Override
+            public DeletePartitionsRequest.Builder createRequest(int timeoutMs) {
+                return new DeletePartitionsRequest.Builder(
+                    new DeletePartitionsRequestData()
+                        .setTopics(topics)
+                        .setValidateOnly(validateOnly)
+                        .setTimeoutMs(timeoutMs));
+            }
+
+            @Override
+            public void handleResponse(AbstractResponse abstractResponse) {
+                handleNotControllerError(abstractResponse);
+                final DeletePartitionsResponse response = (DeletePartitionsResponse) abstractResponse;
+                final DeletePartitionsTopicCollection retryTopics = new DeletePartitionsTopicCollection();
+                final Map<String, ThrottlingQuotaExceededException> retryTopicQuotaExceededExceptions = new HashMap<>();
+                for (DeletePartitionsTopicResult result : response.data().results()) {
+                    KafkaFutureImpl<Void> future = futures.get(result.name());
+                    if (future == null) {
+                        log.warn("Server response mentioned unknown topic {}", result.name());
+                    } else {
+                        ApiError error = new ApiError(result.errorCode(), result.errorMessage());
+                        if (error.isFailure()) {
+                            if (error.is(Errors.THROTTLING_QUOTA_EXCEEDED)) {
+                                ThrottlingQuotaExceededException quotaExceededException = new ThrottlingQuotaExceededException(
+                                    response.throttleTimeMs(), error.messageWithFallback());
+                                if (retryOnQuotaViolation) {
+                                    retryTopics.add(topics.find(result.name()).duplicate());
+                                    retryTopicQuotaExceededExceptions.put(result.name(), quotaExceededException);
+                                } else {
+                                    future.completeExceptionally(quotaExceededException);
+                                }
+                            } else {
+                                future.completeExceptionally(error.exception());
+                            }
+                        } else {
+                            future.complete(null);
+                        }
+                    }
+                }
+                if (retryTopics.isEmpty()) {
+                    completeUnrealizedFutures(futures.entrySet().stream(),
+                        topic -> "The controller response did not contain a result for topic " + topic);
+                } else {
+                    final long now = time.milliseconds();
+                    runnable.call(getDeletePartitionsCall(validateOnly, retryOnQuotaViolation, futures, retryTopics,
+                        retryTopicQuotaExceededExceptions, now, deadline), now);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                maybeCompleteQuotaExceededException(retryOnQuotaViolation, throwable, futures,
+                    quotaExceededExceptions, (int) (time.milliseconds() - now));
+                completeAllExceptionally(futures.values(), throwable);
+            }
+        };
     }
 
     @Override

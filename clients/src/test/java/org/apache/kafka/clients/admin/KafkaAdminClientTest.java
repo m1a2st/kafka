@@ -11967,6 +11967,145 @@ public class KafkaAdminClientTest {
         }
     }
 
+    @Test
+    public void testDeletePartitionsRejectsInvalidNamesWithoutFailingValidTopics() throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(request -> {
+                DeletePartitionsRequestData data = ((DeletePartitionsRequest) request).data();
+                return data.topics().size() == 1 && data.topics().find("valid_topic") != null;
+            }, prepareDeletePartitionsResponse(0, deletePartitionsTopicResult("valid_topic", Errors.NONE)));
+            Map<String, Integer> counts = new HashMap<>();
+            counts.put(null, 1);
+            counts.put("", 1);
+            counts.put("valid_topic", 2);
+
+            DeletePartitionsResult result = env.adminClient().deletePartitions(counts);
+
+            assertTrue(result.values().get(null).isDone());
+            assertTrue(result.values().get("").isDone());
+            TestUtils.assertFutureThrows(InvalidTopicException.class, result.values().get(null));
+            TestUtils.assertFutureThrows(InvalidTopicException.class, result.values().get(""));
+            assertNull(result.values().get("valid_topic").get(10, TimeUnit.SECONDS));
+
+            env.kafkaClient().prepareResponse(prepareDeletePartitionsResponse(0,
+                deletePartitionsTopicResult("another_topic", Errors.NONE)));
+            assertNull(env.adminClient().deletePartitions(Map.of("another_topic", 1)).all().get(10, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void testDeletePartitionsWithOnlyInvalidNamesSendsNoRequest() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            Map<String, Integer> counts = new HashMap<>();
+            counts.put(null, 1);
+            counts.put("", 1);
+
+            DeletePartitionsResult result = env.adminClient().deletePartitions(counts);
+
+            assertTrue(result.values().get(null).isDone());
+            assertTrue(result.values().get("").isDone());
+            TestUtils.assertFutureThrows(InvalidTopicException.class, result.values().get(null));
+            TestUtils.assertFutureThrows(InvalidTopicException.class, result.values().get(""));
+            assertEquals(0, env.kafkaClient().inFlightRequestCount());
+        }
+    }
+
+    @Test
+    public void testDeletePartitionsRetriesOnlyThrottledTopicsWithOriginalOptions() throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            DeletePartitionsOptions options = new DeletePartitionsOptions().force(true).validateOnly(true);
+            List<DeletePartitionsRequestData> requests = new ArrayList<>();
+            env.kafkaClient().prepareResponse(request -> {
+                requests.add(((DeletePartitionsRequest) request).data().duplicate());
+                options.force(false).validateOnly(false);
+                return true;
+            }, prepareDeletePartitionsResponse(1000,
+                deletePartitionsTopicResult("accepted_topic", Errors.NONE),
+                deletePartitionsTopicResult("throttled_topic", Errors.THROTTLING_QUOTA_EXCEEDED),
+                deletePartitionsTopicResult("unauthorized_topic", Errors.TOPIC_AUTHORIZATION_FAILED)));
+            env.kafkaClient().prepareResponse(request -> {
+                requests.add(((DeletePartitionsRequest) request).data().duplicate());
+                return true;
+            }, prepareDeletePartitionsResponse(1000,
+                deletePartitionsTopicResult("throttled_topic", Errors.THROTTLING_QUOTA_EXCEEDED)));
+            env.kafkaClient().prepareResponse(request -> {
+                requests.add(((DeletePartitionsRequest) request).data().duplicate());
+                return true;
+            }, prepareDeletePartitionsResponse(0, deletePartitionsTopicResult("throttled_topic", Errors.NONE)));
+
+            DeletePartitionsResult result = env.adminClient().deletePartitions(
+                Map.of("accepted_topic", 2, "throttled_topic", 3, "unauthorized_topic", 4), options);
+
+            assertNull(result.values().get("accepted_topic").get(10, TimeUnit.SECONDS));
+            assertNull(result.values().get("throttled_topic").get(10, TimeUnit.SECONDS));
+            TestUtils.assertFutureThrows(TopicAuthorizationException.class, result.values().get("unauthorized_topic"));
+            assertEquals(3, requests.size());
+            assertEquals(3, requests.get(0).topics().size());
+            for (DeletePartitionsRequestData request : requests.subList(1, requests.size())) {
+                assertEquals(1, request.topics().size());
+                assertEquals(3, request.topics().find("throttled_topic").count());
+                assertTrue(request.topics().find("throttled_topic").force());
+                assertTrue(request.validateOnly());
+            }
+        }
+    }
+
+    @Test
+    public void testDeletePartitionsDoesNotRetryQuotaViolationWhenDisabled() throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(prepareDeletePartitionsResponse(1200,
+                deletePartitionsTopicResult("accepted_topic", Errors.NONE),
+                deletePartitionsTopicResult("throttled_topic", Errors.THROTTLING_QUOTA_EXCEEDED,
+                    "partition mutation quota exceeded")));
+            DeletePartitionsOptions options = new DeletePartitionsOptions().retryOnQuotaViolation(false);
+
+            DeletePartitionsResult result = env.adminClient().deletePartitions(
+                Map.of("accepted_topic", 2, "throttled_topic", 3), options);
+
+            assertNull(result.values().get("accepted_topic").get(10, TimeUnit.SECONDS));
+            ThrottlingQuotaExceededException exception = TestUtils.assertFutureThrows(
+                ThrottlingQuotaExceededException.class, result.values().get("throttled_topic"));
+            assertEquals(1200, exception.throttleTimeMs());
+            assertEquals("partition mutation quota exceeded", exception.getMessage());
+        }
+    }
+
+    @Test
+    public void testDeletePartitionsQuotaRetryPreservesOriginalDeadline() throws Exception {
+        MockTime time = new MockTime();
+        try (AdminClientUnitTestEnv env = mockClientEnv(time,
+            AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "60000")) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(request -> {
+                time.sleep(40000);
+                return true;
+            }, prepareDeletePartitionsResponse(25000,
+                deletePartitionsTopicResult("accepted_topic", Errors.NONE),
+                deletePartitionsTopicResult("throttled_topic", Errors.THROTTLING_QUOTA_EXCEEDED,
+                    "partition mutation quota exceeded")));
+
+            DeletePartitionsResult result = env.adminClient().deletePartitions(
+                Map.of("accepted_topic", 2, "throttled_topic", 3));
+
+            assertNull(result.values().get("accepted_topic").get(10, TimeUnit.SECONDS));
+            TestUtils.waitForCondition(() -> result.values().get("throttled_topic").isDone() ||
+                    env.kafkaClient().inFlightRequestCount() == 1,
+                "The throttled partition deletion was not retried");
+            assertFalse(result.values().get("throttled_topic").isDone());
+            time.sleep(20001);
+
+            ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> result.values().get("throttled_topic").get(10, TimeUnit.SECONDS));
+            ThrottlingQuotaExceededException exception = assertInstanceOf(
+                ThrottlingQuotaExceededException.class, failure.getCause());
+            assertEquals(4999, exception.throttleTimeMs());
+            assertEquals("partition mutation quota exceeded", exception.getMessage());
+        }
+    }
+
     private static DeletePartitionsResponse prepareDeletePartitionsResponse(int throttleTimeMs, DeletePartitionsTopicResult... topics) {
         DeletePartitionsResponseData data = new DeletePartitionsResponseData()
             .setThrottleTimeMs(throttleTimeMs)
