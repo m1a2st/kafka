@@ -39,8 +39,9 @@ preserving the total order of both. This is fundamental — not an implementatio
 impossibility given Kafka's ordering contract.
 
 However, this analysis only applies to a design that attempts to **redistribute data** from removed partitions into
-other partitions. It does not apply to a design that simply **removes partitions and lets their data expire under
-the existing retention policy**.
+other partitions. It does not apply to a design that **stops new writes, allows consumers to drain retained data,
+and removes the partitions after a configured minimum interval and transaction-safety checks**. Normal retention
+continues during draining.
 
 ### Why Partition Removal Is Symmetric With Partition Expansion
 
@@ -54,7 +55,7 @@ Partition expansion (3 → 5) works as follows:
 Our partition removal (5 → 3) works identically in reverse:
 
 - Remaining partitions 0, 1, 2 are untouched — data and ordering preserved
-- Partitions 3, 4 enter a draining state (reject writes, allow reads until retention expires)
+- Partitions 3, 4 enter a draining state (reject data writes and allow reads until removal is safe or explicitly forced)
 - Future messages route via `hash(key) % 3` instead of `hash(key) % 5`
 - Key affinity breaks: a key previously routed to partition 4 must now route elsewhere
 
@@ -358,6 +359,7 @@ Log cleaner continues during DRAINING (keeps log small). On removal, `cleaner.ab
 |--------|----------|
 | CreatePartitions | Reopens retained draining IDs up to the target, then adds new IDs if no removed ID would be reused |
 | AlterPartitionReassignments | Blocked for draining partitions |
+| Reassignment verification | Old plans referencing removed partitions report missing current replicas; verification and throttle cleanup can finish |
 | DeletePartitions during reassignment | Rejected (`PARTITION_OPERATION_IN_PROGRESS`) |
 | DeleteTopics | Allowed; supersedes draining (cancels scheduled removal) |
 | ElectLeaders | Allowed for draining partitions |
@@ -562,7 +564,7 @@ partition-status fields, while controller logs expose blockers.
 
 ### Admin Client
 
-The Admin API accepts reduced target counts:
+The Admin API accepts reduced absolute target counts:
 
 ```java
 default DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts);
@@ -570,18 +572,71 @@ DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts,
                                        DeletePartitionsOptions options);
 ```
 
-`DeletePartitionsOptions` provides `validateOnly(boolean)` and `force(boolean)` with matching getters; both
-default to `false`. `force(true)` sets each requested topic's tagged `Force` field. For example, reducing a
-ten-partition topic to seven with the explicit transaction-safety override is:
+`DeletePartitionsOptions` provides the following options in addition to the inherited operation timeout:
+
+| Setter | Getter | Default | Behavior |
+|--------|--------|---------|----------|
+| `validateOnly(boolean)` | `validateOnly()` | `false` | Validate without persisting drain records |
+| `force(boolean)` | `force()` | `false` | Set each requested topic's tagged `Force` field |
+| `retryOnQuotaViolation(boolean)` | `shouldRetryOnQuotaViolation()` | `true` | Retry throttled topics until the original operation deadline |
+
+For example, reducing a ten-partition topic to seven with the explicit transaction-safety override is:
 
 ```java
 admin.deletePartitions(Map.of("orders", 7), new DeletePartitionsOptions().force(true)).all().get();
 ```
 
+Null and empty topic names fail their individual futures with `InvalidTopicException` before serialization;
+valid topics in the same call are still submitted. Quota retries include only throttled topics, preserve the
+force and validation flags captured at invocation, and keep the original absolute operation deadline.
+Successful and permanently failed topics are not resubmitted. When quota retries are disabled, the future
+fails with `ThrottlingQuotaExceededException` carrying the server's throttle duration. If the deadline expires
+during quota retries, the exception retains the remaining throttle duration.
+
 The result's `values()` and `all()` futures complete when the controller accepts and persists the drain or force
-upgrade. They do not wait for the deadline, transaction completion, removal, or storage cleanup. Without force,
-a drain can remain pending indefinitely when the controller cannot obtain a fresh safe report from its leader.
-With force, the configured minimum interval still applies, and unresolved transactional data may be discarded.
+upgrade, or completes validation for `validateOnly(true)`. They do not wait for the deadline, transaction
+completion, removal, or storage cleanup. Without force, a drain can remain pending indefinitely when the
+controller cannot obtain a fresh safe report from its leader. With force, the configured minimum interval
+still applies, and unresolved transactional data may be discarded.
+
+#### Partition Descriptions
+
+`TopicPartitionInfo` adds the following constructor and accessors:
+
+```java
+public TopicPartitionInfo(int partition, Node leader,
+                          List<Node> replicas, List<Node> isr,
+                          List<Node> elr, List<Node> lastKnownElr,
+                          boolean isDraining, long drainDeadlineMs);
+public boolean isDraining();
+public OptionalLong drainDeadlineMs();
+```
+
+The existing four- and six-argument constructors remain available and default to `isDraining=false` with an
+unknown deadline. The four-argument constructor continues to represent unavailable ELR information as null.
+A constructor deadline of `-1` denotes unavailable information. Equality and hash codes include draining
+state and deadline, and string output includes them when present.
+
+`Admin.describeTopics()` preserves draining state and the earliest removal timestamp from
+DescribeTopicPartitions v1 responses, including across pages. Descriptions by topic ID and the Metadata API
+fallback preserve `IsDraining` when the negotiated Metadata version supplies it, but return
+`OptionalLong.empty()` for the deadline because Metadata has no deadline field. Protocol versions without
+these fields report the active/unknown defaults. An empty deadline does not imply that a draining partition
+is ready for removal; even a known deadline is only the earliest removal time.
+
+#### Reopening With CreatePartitions
+
+`NewPartitions.increaseTo(totalCount)` specifies the target number of active partitions. With five retained
+partitions and IDs 3 and 4 draining, a target of four reopens ID 3, and a target of five reopens both IDs.
+Reopened partitions retain their logs, offsets, producer state, and replica assignments. Partitions above the
+target continue draining. An increase above the retained count also creates physically new partitions, provided
+it would not reuse a removed partition ID.
+
+For `NewPartitions.increaseTo(totalCount, newAssignments)`, assignments apply only to physically new
+partitions. The required list length is `Math.max(0, totalCount - retainedCount)`, where the retained count
+includes draining partitions. A request that only reopens retained partitions can use the no-assignment
+overload or an empty assignment list. A target that does not increase the active count, or would reuse a
+removed ID, fails with `InvalidPartitionsException`.
 
 ### Command-Line Interface
 
@@ -599,8 +654,7 @@ Delete the last 3 partitions (enters draining state):
 $ bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --alter --topic orders \
     --delete-partitions 3
-Initiated partition deletion for topic 'orders': partitions [7, 8, 9] entering DRAINING state.
-Drain deadline: 2026-07-15T15:00:00Z (partition.drain.timeout.ms=3600000)
+Initiated partition deletion for topic 'orders' to target count 7. Removal is asynchronous.
 ```
 
 Check draining status via describe:
@@ -608,12 +662,12 @@ Check draining status via describe:
 ```
 $ bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --describe --topic orders
-Topic: orders   TopicId: abc123   PartitionCount: 10   ReplicationFactor: 3
+Topic: orders   TopicId: abc123   PartitionCount: 10   ActivePartitionCount: 7   DrainingPartitionCount: 3   ReplicationFactor: 3
   Partition: 0   Leader: 1   Replicas: 1,2,3   Isr: 1,2,3
   ...
-  Partition: 7   Leader: 2   Replicas: 2,3,1   Isr: 2,3,1   Draining: true   Deadline: 2026-07-15T15:00:00Z
-  Partition: 8   Leader: 3   Replicas: 3,1,2   Isr: 3,1,2   Draining: true   Deadline: 2026-07-15T15:00:00Z
-  Partition: 9   Leader: 1   Replicas: 1,2,3   Isr: 1,2,3   Draining: true   Deadline: 2026-07-15T15:00:00Z
+  Partition: 7   Leader: 2   Replicas: 2,3,1   Isr: 2,3,1   Draining: true   DrainDeadlineMs: 1784127600000
+  Partition: 8   Leader: 3   Replicas: 3,1,2   Isr: 3,1,2   Draining: true   DrainDeadlineMs: 1784127600000
+  Partition: 9   Leader: 1   Replicas: 1,2,3   Isr: 1,2,3   Draining: true   DrainDeadlineMs: 1784127600000
 ```
 
 Set the minimum interval to zero to make removal eligible without a consumer-drain wait. Normal deletion
@@ -627,21 +681,48 @@ bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --alter --topic orders --delete-partitions 3
 ```
 
-To explicitly bypass transaction safety after the deadline, pass `--force`. This also upgrades an existing drain
-for the same target while preserving its original deadline:
+To explicitly bypass transaction safety after the deadline, pass `--force`. An absolute target also upgrades
+an existing drain for the same target while preserving its original deadline:
 
 ```bash
+# For ten active partitions with no drain in progress:
 bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --alter --topic orders --delete-partitions 3 --force
-# Equivalent target-count form for a ten-partition topic:
+# Absolute target form; also upgrades an existing drain to seven active partitions:
 bin/kafka-topics.sh --bootstrap-server localhost:9092 \
     --alter --topic orders --partitions 7 --force
 ```
 
-`--force` is valid only for an alteration that decreases partition counts. With a topic pattern, every matched
-topic must pass that validation before any mutation is submitted. The command reports initiation, including for
-zero-timeout or forced deletion; it does not promise that removal is complete. Describe continues to show the
-draining flag and original deadline. Controller logs explain transaction-safety blockers.
+`--partitions` specifies the active target count. For five retained partitions with IDs 3 and 4 draining:
+
+| Request | Behavior |
+|---------|----------|
+| `--partitions 4` | Reopen retained partition 3 with CreatePartitions |
+| `--partitions 5` | Reopen retained partitions 3 and 4 with CreatePartitions |
+| `--partitions 3` | No mutation; the requested active count already exists |
+| `--partitions 3 --force` | Upgrade the existing drain without resetting its deadlines |
+| `--partitions 4 --force` | Reject: force cannot reopen partitions |
+| `--delete-partitions 1` | Request an active target of two; existing-drain conflicts remain controller-validated |
+| `--delete-partitions 1 --force` | Reject: an existing drain requires an absolute force target |
+
+`--delete-partitions N` subtracts N from the active count. Combining that relative form with `--force` when a
+drain is already in progress is ambiguous after partial removal, so it is rejected before mutation. Operators
+must use `--partitions <target> --force` for an existing drain.
+
+`--delete-partitions` and `--partitions` are mutually exclusive. Relative deletion also rejects
+`--replica-assignment`, and an absolute decrease rejects an assignment that would otherwise be ignored.
+When reopening or expanding a topic that has draining partitions, a supplied full replica assignment must have
+exactly the target number of entries and preserve the replicas of every retained partition below the target.
+Only entries beyond the physical retained count are sent as new partition assignments.
+
+With a topic pattern, the CLI completes the count, force, and reopening-assignment checks for every matched
+topic before submitting mutations. It disables automatic quota retries for deletion and prints initiation only
+after the Admin future succeeds, including for zero-timeout or forced deletion. This confirms acceptance, not completed removal.
+
+Describe keeps `PartitionCount` as the physical retained count and adds `ActivePartitionCount` and
+`DrainingPartitionCount` only when draining partitions exist. A draining partition reports `Draining: true`
+and `DrainDeadlineMs` in epoch milliseconds, or `unknown` if unavailable. Describing by topic ID uses this
+unknown form. Controller logs explain transaction-safety blockers.
 
 Error examples:
 
@@ -653,8 +734,8 @@ $ bin/kafka-topics.sh --alter --topic orders --delete-partitions 10
 Error: The requested delete partition count is invalid. Cannot delete all partitions; at least one must remain.
 ```
 
-`--delete-partitions` specifies a number to remove; `--partitions` specifies the target total and can also
-request a decrease. These options are mutually exclusive.
+`--delete-partitions` specifies a number to subtract from the active count; `--partitions` specifies an
+absolute active target and may decrease, reopen, or expand the topic as described above.
 
 ### Configuration
 
@@ -760,6 +841,18 @@ public class InvalidDeletePartitionCountException extends ApiException {
 | Old producer (MetadataResponse v0-v13) | Draining partitions excluded from metadata. Producer sees reduced count. |
 | Old consumer | Continues consuming from draining partitions. On removal, rebalance triggered. |
 | New client (v14 metadata) | Sees `IsDraining=true`. Can log warning for observability. |
+| Admin describe with DescribeTopicPartitions v1 | Exposes draining state and earliest removal deadline, including across pages |
+| Admin describe by ID or Metadata fallback | Exposes available draining state; deadline is unknown |
+| DescribeTopicPartitions v0 | No draining fields; TopicPartitionInfo uses active/unknown defaults |
+
+### Admin Source and Binary Compatibility
+
+The existing TopicPartitionInfo constructors and accessors are retained; the new constructor and draining
+accessors are additive. String and CLI describe output for active partitions remain unchanged. Callers must
+account for the new state when comparing partition descriptions. NewPartitions retains its public signatures, while
+its documented target count refers to active partitions and its assignments cover only physically new IDs.
+The Admin quota retry option defaults to enabled, matching CreatePartitions; the CLI opts out explicitly.
+The Admin descriptions and CLI use the draining protocol fields defined above and add no further wire fields.
 
 ### Cluster Upgrade Path
 
@@ -789,6 +882,14 @@ public class InvalidDeletePartitionCountException extends ApiException {
 - Fresh current-leader reports covering applied drain metadata; stale epochs, fencing, omitted/blocked reports and failover invalidate readiness
 - Force before/after deadline, same-target upgrade preserving deadlines, and snapshot/replay retention or clearing
 - Admin and CLI force validation for all matched topics before mutation
+- TopicPartitionInfo constructor compatibility, draining/deadline accessors, equality and string output
+- DescribeTopics pagination preserves state/deadline; Metadata fallback and topic-ID paths preserve state with unknown deadline
+- Admin invalid topic names fail individual futures without disrupting valid topics or the I/O thread
+- Quota retries resubmit only throttled topics, preserve option snapshots and the original deadline, and retain throttle duration on opt-out/timeout
+- CLI active/retained count decisions for reopening, no-op, force upgrades, relative deletion and ambiguous relative-force rejection
+- CLI replica assignments reject ignored decreases and require exact target length with matching retained replicas during reopening
+- CLI describe reports active/draining counts and known/unknown deadlines; acceptance output follows successful futures
+- Reassignment verification of plans referencing removed partition IDs returns missing current replicas without an index error
 - Tail removal stops at a blocked highest ID; safe lower IDs remain retained while other topics progress
 - Force upgrades after partial removal touch only actual retained draining IDs and preserve deadlines
 - State machine transitions (ACTIVE → DRAINING → REMOVED)
@@ -844,7 +945,8 @@ public class InvalidDeletePartitionCountException extends ApiException {
 
 ### 1. Extend CreatePartitions to Support Decrease
 
-Allow `CreatePartitions` with a target count lower than current.
+Allow `CreatePartitions` with a target count lower than the active count. Reopening retained draining
+partitions may already use a target lower than the physical retained count; it increases the active count.
 
 **Rejected**: Violates API semantic contract ("create" implies adding). Introduces deferred behavior into a
 synchronous API. Confusing UX.

@@ -642,6 +642,12 @@ public interface Admin extends AutoCloseable {
      * according to the corresponding values. <strong>If partitions are increased for a topic that has a key,
      * the partition logic or ordering of the messages will be affected.</strong>
      * <p>
+     * The target count is the number of active partitions. On brokers supporting partition draining,
+     * increasing this count reopens retained draining partitions before creating new partitions. Reopened
+     * partitions keep their existing logs and replica assignments. A partition ID that has already been removed
+     * cannot be reused within the same topic ID, so such an increase fails with
+     * {@link org.apache.kafka.common.errors.InvalidPartitionsException}.
+     * <p>
      * This operation is not transactional so it may succeed for some topics while fail for others.
      * <p>
      * It may take several seconds after this method returns
@@ -668,7 +674,8 @@ public interface Admin extends AutoCloseable {
      * <li>Subclasses of {@link org.apache.kafka.common.KafkaException}
      * if the request is invalid in some way.</li>
      * <li>{@link org.apache.kafka.common.errors.InvalidPartitionsException}
-     * if the requested partition count is less than or equal to the current partition count.</li>
+     * if the requested partition count is less than or equal to the current active partition count,
+     * or would reuse a removed partition ID.</li>
      * </ul>
      *
      * @param newPartitions The topics which should have new partitions created, and corresponding parameters
@@ -700,7 +707,13 @@ public interface Admin extends AutoCloseable {
      * is explicitly enabled. Transaction markers retain their normal acknowledgement and minimum ISR requirements.
      * <p>
      * The returned futures confirm that the deletion request was accepted or validated, rather than
-     * that the partitions have been physically removed.
+     * that the partitions have been physically removed. Use {@link #describeTopics(Collection)} and
+     * {@link org.apache.kafka.common.TopicPartitionInfo#isDraining()} to observe the retained partitions.
+     * Draining partitions can be reopened with {@link #createPartitions(Map, CreatePartitionsOptions)}
+     * before they are removed.
+     * <p>
+     * Quota violations are retried by default until the operation deadline. Disable this with
+     * {@link DeletePartitionsOptions#retryOnQuotaViolation(boolean)} to receive the quota failure immediately.
      * <p>
      * This operation is not transactional so it may succeed for some topics while fail for others.
      * <p>
@@ -713,6 +726,10 @@ public interface Admin extends AutoCloseable {
      * if the request was not completed in within the given {@link DeletePartitionsOptions#timeoutMs()}.</li>
      * <li>{@link org.apache.kafka.common.errors.InvalidDeletePartitionCountException}
      * if the requested partition count is greater than or equal to the current partition count.</li>
+     * <li>{@link org.apache.kafka.common.errors.InvalidTopicException}
+     * if a topic name cannot be represented in a request.</li>
+     * <li>{@link org.apache.kafka.common.errors.ThrottlingQuotaExceededException}
+     * if a quota violation is not retried or the operation deadline is reached while retrying it.</li>
      * <li>{@link org.apache.kafka.common.errors.PartitionOperationInProgressException}
      * if a partition deletion is already in progress for the topic and force is not enabled.</li>
      * </ul>

@@ -38,20 +38,22 @@ public class NewPartitions {
     }
 
     /**
-     * Increase the partition count for a topic to the given {@code totalCount}.
+     * Increase the active partition count for a topic to the given {@code totalCount}.
+     * Retained draining partitions below this count are reopened with their existing logs and assignments.
      * The assignment of new replicas to brokers will be decided by the broker.
      *
-     * @param totalCount The total number of partitions after the operation succeeds.
+     * @param totalCount The target number of active partitions after the operation succeeds.
      */
     public static NewPartitions increaseTo(int totalCount) {
         return new NewPartitions(totalCount, null);
     }
 
     /**
-     * <p>Increase the partition count for a topic to the given {@code totalCount}
-     * assigning the new partitions according to the given {@code newAssignments}.
-     * The length of the given {@code newAssignments} should equal {@code totalCount - oldCount}, since
-     * the assignment of existing partitions are not changed.
+     * <p>Increase the active partition count for a topic to the given {@code totalCount}
+     * assigning physically new partitions according to the given {@code newAssignments}.
+     * Retained draining partitions below the target count are reopened with their existing logs and assignments.
+     * The length of {@code newAssignments} must equal {@code Math.max(0, totalCount - retainedCount)}, where
+     * {@code retainedCount} includes draining partitions. Existing replica assignments are not changed.
      * Each inner list of {@code newAssignments} should have a length equal to
      * the topic's replication factor.
      * The first broker id in each inner list is the "preferred replica".</p>
@@ -68,15 +70,16 @@ public class NewPartitions {
      * <p>In this example partition 3's preferred leader will be broker 1, partition 4's preferred leader will be
      * broker 2 and partition 5's preferred leader will be broker 3.</p>
      *
-     * @param totalCount The total number of partitions after the operation succeeds.
-     * @param newAssignments The replica assignments for the new partitions.
+     * @param totalCount The target number of active partitions after the operation succeeds.
+     * @param newAssignments The replica assignments for physically new partitions; use an empty list when only reopening retained partitions.
      */
     public static NewPartitions increaseTo(int totalCount, List<List<Integer>> newAssignments) {
         return new NewPartitions(totalCount, newAssignments);
     }
 
     /**
-     * The total number of partitions after the operation succeeds.
+     * The target number of active partitions after the operation succeeds.
+     * The retained partition count may remain higher while other partitions are draining.
      */
     public int totalCount() {
         return totalCount;
