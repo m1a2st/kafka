@@ -372,13 +372,12 @@ public class ReassignPartitionsCommand {
     ) throws InterruptedException, ExecutionException {
         try {
             TopicDescription topicDescription = future.get();
-            if (topicDescription.partitions().size() < partition) {
-                throw new ExecutionException("Too few partitions found", new UnknownTopicOrPartitionException());
-            }
-            return new PartitionReassignmentState(
-                topicDescription.partitions().get(partition).replicas().stream().map(Node::id).collect(Collectors.toList()),
-                targetReplicas,
-                true);
+            List<Integer> currentReplicas = topicDescription.partitions().stream()
+                .filter(info -> info.partition() == partition)
+                .findFirst()
+                .map(info -> info.replicas().stream().map(Node::id).collect(Collectors.toList()))
+                .orElseGet(List::of);
+            return new PartitionReassignmentState(currentReplicas, targetReplicas, true);
         } catch (ExecutionException t) {
             if (t.getCause() instanceof UnknownTopicOrPartitionException)
                 return new PartitionReassignmentState(List.of(), targetReplicas, true);

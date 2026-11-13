@@ -208,6 +208,29 @@ public class ReassignPartitionsUnitTest {
     }
 
     @Test
+    public void testFindPartitionReassignmentStatesAfterPartitionDeletion() throws Exception {
+        try (MockAdminClient adminClient = new MockAdminClient.Builder().numBrokers(4).build()) {
+            addTopics(adminClient);
+            TopicPartition survivingPartition = new TopicPartition("foo", 1);
+            TopicPartition firstRemovedPartition = new TopicPartition("foo", 2);
+            TopicPartition higherRemovedPartition = new TopicPartition("foo", 3);
+
+            Entry<Map<TopicPartition, PartitionReassignmentState>, Boolean> actual =
+                findPartitionReassignmentStates(adminClient, List.of(
+                    Map.entry(survivingPartition, List.of(1, 2, 3)),
+                    Map.entry(firstRemovedPartition, List.of(0, 1, 2)),
+                    Map.entry(higherRemovedPartition, List.of(0, 2, 3))));
+
+            assertEquals(Map.of(
+                survivingPartition, new PartitionReassignmentState(List.of(1, 2, 3), List.of(1, 2, 3), true),
+                firstRemovedPartition, new PartitionReassignmentState(List.of(), List.of(0, 1, 2), true),
+                higherRemovedPartition, new PartitionReassignmentState(List.of(), List.of(0, 2, 3), true)
+            ), actual.getKey());
+            assertFalse(actual.getValue());
+        }
+    }
+
+    @Test
     public void testFindLogDirMoveStates() throws Exception {
         try (MockAdminClient adminClient = new MockAdminClient.Builder().
                 numBrokers(4).
