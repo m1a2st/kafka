@@ -417,7 +417,8 @@ public class Metadata implements Closeable {
                 newLeader.epoch,
                 existingMetadata.replicaIds,
                 existingMetadata.inSyncReplicaIds,
-                existingMetadata.offlineReplicaIds
+                existingMetadata.offlineReplicaIds,
+                existingMetadata.isDraining
             );
             updatePartitionMetadata.add(updatedMetadata);
 
@@ -516,6 +517,9 @@ public class Metadata implements Closeable {
 
             if (metadata.error() == Errors.NONE) {
                 for (MetadataResponse.PartitionMetadata partitionMetadata : metadata.partitionMetadata()) {
+                    if (!retainPartition(partitionMetadata))
+                        continue;
+
                     // Even if the partition's metadata includes an error, we need to handle
                     // the update to catch new epochs
                     updateLatestMetadata(partitionMetadata, metadataResponse.hasReliableLeaderEpochs(), topicId, oldTopicId)
@@ -770,6 +774,14 @@ public class Metadata implements Closeable {
      */
     protected boolean retainTopic(String topicName, Uuid topicId, boolean isInternal, long nowMs) {
         return retainTopic(topicName, isInternal, nowMs);
+    }
+
+    /**
+     * Whether to retain a partition from a metadata response. Consumers retain draining partitions
+     * for reads, while producers exclude them from partition selection.
+     */
+    protected boolean retainPartition(MetadataResponse.PartitionMetadata partitionMetadata) {
+        return true;
     }
 
     public static class MetadataRequestAndVersion {

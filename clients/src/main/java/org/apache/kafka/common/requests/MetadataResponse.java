@@ -382,6 +382,7 @@ public class MetadataResponse extends AbstractResponse {
         public final List<Integer> replicaIds;
         public final List<Integer> inSyncReplicaIds;
         public final List<Integer> offlineReplicaIds;
+        public final boolean isDraining;
 
         public PartitionMetadata(Errors error,
                                  TopicPartition topicPartition,
@@ -390,6 +391,17 @@ public class MetadataResponse extends AbstractResponse {
                                  List<Integer> replicaIds,
                                  List<Integer> inSyncReplicaIds,
                                  List<Integer> offlineReplicaIds) {
+            this(error, topicPartition, leaderId, leaderEpoch, replicaIds, inSyncReplicaIds, offlineReplicaIds, false);
+        }
+
+        public PartitionMetadata(Errors error,
+                                 TopicPartition topicPartition,
+                                 Optional<Integer> leaderId,
+                                 Optional<Integer> leaderEpoch,
+                                 List<Integer> replicaIds,
+                                 List<Integer> inSyncReplicaIds,
+                                 List<Integer> offlineReplicaIds,
+                                 boolean isDraining) {
             this.error = error;
             this.topicPartition = topicPartition;
             this.leaderId = leaderId;
@@ -397,6 +409,7 @@ public class MetadataResponse extends AbstractResponse {
             this.replicaIds = replicaIds;
             this.inSyncReplicaIds = inSyncReplicaIds;
             this.offlineReplicaIds = offlineReplicaIds;
+            this.isDraining = isDraining;
         }
 
         public int partition() {
@@ -414,7 +427,8 @@ public class MetadataResponse extends AbstractResponse {
                     Optional.empty(),
                     replicaIds,
                     inSyncReplicaIds,
-                    offlineReplicaIds);
+                    offlineReplicaIds,
+                    isDraining);
         }
 
         @Override
@@ -426,7 +440,8 @@ public class MetadataResponse extends AbstractResponse {
                     ", leaderEpoch=" + leaderEpoch +
                     ", replicas=" + replicaIds.stream().map(Object::toString).collect(Collectors.joining(",")) +
                     ", isr=" + inSyncReplicaIds.stream().map(Object::toString).collect(Collectors.joining(",")) +
-                    ", offlineReplicas=" + offlineReplicaIds.stream().map(Object::toString).collect(Collectors.joining(",")) + ')';
+                    ", offlineReplicas=" + offlineReplicaIds.stream().map(Object::toString).collect(Collectors.joining(",")) +
+                    ", isDraining=" + isDraining + ')';
         }
     }
 
@@ -466,7 +481,7 @@ public class MetadataResponse extends AbstractResponse {
                     TopicPartition topicPartition = new TopicPartition(topic, partitionIndex);
                     partitionMetadataList.add(new PartitionMetadata(partitionError, topicPartition, leaderIdOpt,
                             leaderEpoch, partitionMetadata.replicaNodes(), partitionMetadata.isrNodes(),
-                            partitionMetadata.offlineReplicas()));
+                            partitionMetadata.offlineReplicas(), partitionMetadata.isDraining()));
                 }
 
                 topicMetadataList.add(new TopicMetadata(topicError, topic, topicId, isInternal, partitionMetadataList,

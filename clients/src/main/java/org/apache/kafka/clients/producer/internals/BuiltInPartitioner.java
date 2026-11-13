@@ -18,6 +18,7 @@ package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.common.utils.internals.LogContext;
 
@@ -80,26 +81,7 @@ public class BuiltInPartitioner {
         int partition;
 
         if (partitionLoadStats == null) {
-            // We don't have stats to do adaptive partitioning (or it's disabled), just switch to the next
-            // partition based on uniform distribution.
-            List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
-            if (!availablePartitions.isEmpty()) {
-                // Select only partitions with leaders in this rack if configured so, falling back if none are available.
-                if (rackAware) {
-                    List<PartitionInfo> availablePartitionsInRack = availablePartitions.stream()
-                        .filter(p -> p.leader().hasRack() && p.leader().rack().equals(rack))
-                        .collect(Collectors.toList());
-                    if (!availablePartitionsInRack.isEmpty()) {
-                        availablePartitions = availablePartitionsInRack;
-                    }
-                }
-
-                partition = availablePartitions.get(random % availablePartitions.size()).partition();
-            } else {
-                // We don't have available partitions, just pick one among all partitions.
-                List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
-                partition = random % partitions.size();
-            }
+            partition = uniformPartition(cluster, random);
         } else {
             // Calculate next partition based on load distribution.
             // Note that partitions without leader are excluded from the partitionLoadStats.
@@ -130,10 +112,34 @@ public class BuiltInPartitioner {
             int partitionIndex = Math.abs(searchResult + 1);
             assert partitionIndex < partitionLoadStatsToUse.length;
             partition = partitionLoadStatsToUse.partitionIds[partitionIndex];
+            if (cluster.partition(new TopicPartition(topic, partition)) == null) {
+                // Load statistics may predate a partition removal.
+                partition = uniformPartition(cluster, random);
+            }
         }
 
         log.trace("Switching to partition {} in topic {}", partition, topic);
         return partition;
+    }
+
+    private int uniformPartition(Cluster cluster, int random) {
+        List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
+        if (!availablePartitions.isEmpty()) {
+            // Select only partitions with leaders in this rack if configured so, falling back if none are available.
+            if (rackAware) {
+                List<PartitionInfo> availablePartitionsInRack = availablePartitions.stream()
+                    .filter(p -> p.leader().hasRack() && p.leader().rack().equals(rack))
+                    .collect(Collectors.toList());
+                if (!availablePartitionsInRack.isEmpty()) {
+                    availablePartitions = availablePartitionsInRack;
+                }
+            }
+
+            return availablePartitions.get(random % availablePartitions.size()).partition();
+        }
+        // We don't have available partitions, just pick one among all partitions.
+        List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
+        return partitions.get(random % partitions.size()).partition();
     }
 
     int randomPartition() {
@@ -168,21 +174,19 @@ public class BuiltInPartitioner {
      *
      *  It's important that steps 3-5 are under partition's batch queue lock.
      *
-     * @param cluster The cluster information (needed if there is no current partition)
+     * @param cluster The cluster information (needed to check the current partition and select a replacement)
      * @return sticky partition info object
      */
     StickyPartitionInfo peekCurrentPartitionInfo(Cluster cluster) {
-        StickyPartitionInfo partitionInfo = stickyPartitionInfo.get();
-        if (partitionInfo != null)
-            return partitionInfo;
+        while (true) {
+            StickyPartitionInfo partitionInfo = stickyPartitionInfo.get();
+            if (partitionInfo != null && cluster.partition(new TopicPartition(topic, partitionInfo.partition())) != null)
+                return partitionInfo;
 
-        // We're the first to create it.
-        partitionInfo = new StickyPartitionInfo(nextPartition(cluster));
-        if (stickyPartitionInfo.compareAndSet(null, partitionInfo))
-            return partitionInfo;
-
-        // Someone has raced us.
-        return stickyPartitionInfo.get();
+            StickyPartitionInfo newPartitionInfo = new StickyPartitionInfo(nextPartition(cluster));
+            if (stickyPartitionInfo.compareAndSet(partitionInfo, newPartitionInfo))
+                return newPartitionInfo;
+        }
     }
 
     /**
@@ -219,11 +223,11 @@ public class BuiltInPartitioner {
      * @param enableSwitch If true, switch partition once produced enough bytes
      */
     void updatePartitionInfo(StickyPartitionInfo partitionInfo, int appendedBytes, Cluster cluster, boolean enableSwitch) {
-        // partitionInfo may be null if the caller didn't use built-in partitioner.
-        if (partitionInfo == null)
+        // A metadata refresh may have replaced partitionInfo since the caller selected it.
+        // partitionInfo may also be null if the caller didn't use built-in partitioner.
+        if (partitionInfo == null || partitionInfo != stickyPartitionInfo.get())
             return;
 
-        assert partitionInfo == stickyPartitionInfo.get();
         int producedBytes = partitionInfo.producedBytes.addAndGet(appendedBytes);
 
         // We're trying to switch partition once we produce stickyBatchSize bytes to a partition
@@ -254,7 +258,7 @@ public class BuiltInPartitioner {
         if (producedBytes >= stickyBatchSize && enableSwitch || producedBytes >= stickyBatchSize * 2) {
             // We've produced enough to this partition, switch to next.
             StickyPartitionInfo newPartitionInfo = new StickyPartitionInfo(nextPartition(cluster));
-            stickyPartitionInfo.set(newPartitionInfo);
+            stickyPartitionInfo.compareAndSet(partitionInfo, newPartitionInfo);
         }
     }
 

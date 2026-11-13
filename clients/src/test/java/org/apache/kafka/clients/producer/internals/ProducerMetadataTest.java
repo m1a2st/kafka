@@ -17,7 +17,9 @@
 package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
@@ -28,6 +30,8 @@ import org.apache.kafka.common.utils.internals.LogContext;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -264,6 +268,39 @@ public class ProducerMetadataTest {
         metadata.updateWithCurrentRequestVersion(responseWithTopics(Collections.singleton(topic2)), true, now);
         assertEquals(metadata.topics(), Set.of(topic1, topic2, topic3));
         assertEquals(metadata.newTopics(), Collections.singleton(topic3));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testDrainingPartitionsExcludedFromProducerMetadata(boolean partialUpdate) {
+        String topic = "draining-topic";
+        String otherTopic = "other-topic";
+        metadata.add(topic, 0);
+        metadata.add(otherTopic, 0);
+        metadata.updateWithCurrentRequestVersion(
+            RequestTestUtils.metadataUpdateWith(1, Map.of(topic, 4, otherTopic, 1)), false, 0);
+
+        MetadataResponse response = RequestTestUtils.metadataUpdateWith(1, Map.of(topic, 4));
+        response.data().topics().find(topic).partitions().get(2).setIsDraining(true);
+        response.data().topics().find(topic).partitions().get(3).setIsDraining(true);
+        metadata.updateWithCurrentRequestVersion(response, partialUpdate, 1);
+
+        assertEquals(2, metadata.fetch().partitionCountForTopic(topic));
+        assertEquals(2, metadata.fetch().availablePartitionsForTopic(topic).size());
+        assertTrue(metadata.partitionMetadataIfCurrent(new TopicPartition(topic, 0)).isPresent());
+        assertTrue(metadata.partitionMetadataIfCurrent(new TopicPartition(topic, 1)).isPresent());
+        assertTrue(metadata.partitionMetadataIfCurrent(new TopicPartition(topic, 2)).isEmpty());
+        assertTrue(metadata.partitionMetadataIfCurrent(new TopicPartition(topic, 3)).isEmpty());
+        if (partialUpdate) {
+            assertEquals(1, metadata.fetch().partitionCountForTopic(otherTopic));
+        }
+
+        // Consumer metadata must keep draining partitions available for reads.
+        Metadata consumerMetadata = new Metadata(refreshBackoffMs, refreshBackoffMaxMs, metadataExpireMs,
+            new LogContext(), new ClusterResourceListeners());
+        consumerMetadata.updateWithCurrentRequestVersion(response, false, 1);
+        assertEquals(4, consumerMetadata.fetch().partitionCountForTopic(topic));
+        assertTrue(consumerMetadata.partitionMetadataIfCurrent(new TopicPartition(topic, 3)).isPresent());
     }
 
     @Test

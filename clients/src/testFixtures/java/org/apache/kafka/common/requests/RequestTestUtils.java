@@ -95,7 +95,8 @@ public class RequestTestUtils {
                         .setLeaderEpoch(partitionMetadata.leaderEpoch.orElse(RecordBatch.NO_PARTITION_LEADER_EPOCH))
                         .setReplicaNodes(partitionMetadata.replicaIds)
                         .setIsrNodes(partitionMetadata.inSyncReplicaIds)
-                        .setOfflineReplicas(partitionMetadata.offlineReplicaIds));
+                        .setOfflineReplicas(partitionMetadata.offlineReplicaIds)
+                        .setIsDraining(partitionMetadata.isDraining));
             }
             topics.add(metadataResponseTopic);
         });

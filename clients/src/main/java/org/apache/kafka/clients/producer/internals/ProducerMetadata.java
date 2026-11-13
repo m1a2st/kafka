@@ -152,6 +152,11 @@ public class ProducerMetadata extends Metadata {
     }
 
     @Override
+    protected boolean retainPartition(MetadataResponse.PartitionMetadata partitionMetadata) {
+        return !partitionMetadata.isDraining;
+    }
+
+    @Override
     public synchronized void update(int requestVersion, MetadataResponse response, boolean isPartialUpdate, long nowMs) {
         super.update(requestVersion, response, isPartialUpdate, nowMs);
         errors = response.errors();

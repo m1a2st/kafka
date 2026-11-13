@@ -34,6 +34,7 @@ import static java.util.Arrays.asList;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,6 +96,85 @@ public class BuiltInPartitionerTest {
             assertEquals(0, partitionInfo.partition());
             builtInPartitionerB.updatePartitionInfo(partitionInfo, 1, testCluster);
         }
+    }
+
+    @Test
+    public void testStickyPartitionSwitchesWhenPartitionIsRemoved() {
+        List<PartitionInfo> partitions = asList(
+            new PartitionInfo(TOPIC_A, 0, NODES[0], NODES, NODES),
+            new PartitionInfo(TOPIC_A, 1, NODES[1], NODES, NODES),
+            new PartitionInfo(TOPIC_A, 2, NODES[2], NODES, NODES));
+        Cluster cluster = new Cluster("clusterId", asList(NODES), partitions,
+            Collections.emptySet(), Collections.emptySet());
+        SequentialPartitioner partitioner = new SequentialPartitioner(logContext, TOPIC_A, 10, false, "");
+        partitioner.mockRandom.set(2);
+        BuiltInPartitioner.StickyPartitionInfo original = partitioner.peekCurrentPartitionInfo(cluster);
+        assertEquals(2, original.partition());
+        partitioner.updatePartitionInfo(original, 1, cluster);
+
+        Cluster leaderlessCluster = new Cluster("clusterId", asList(NODES), asList(
+            partitions.get(0), partitions.get(1), new PartitionInfo(TOPIC_A, 2, null, NODES, NODES)),
+            Collections.emptySet(), Collections.emptySet());
+        assertSame(original, partitioner.peekCurrentPartitionInfo(leaderlessCluster));
+
+        Cluster shrunkCluster = new Cluster("clusterId", asList(NODES), partitions.subList(0, 2),
+            Collections.emptySet(), Collections.emptySet());
+        BuiltInPartitioner.StickyPartitionInfo retained = partitioner.peekCurrentPartitionInfo(shrunkCluster);
+        assertEquals(1, retained.partition());
+        assertTrue(partitioner.isPartitionChanged(original));
+        partitioner.updatePartitionInfo(retained, 1, shrunkCluster);
+        assertSame(retained, partitioner.peekCurrentPartitionInfo(shrunkCluster));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    public void testAdaptivePartitioningIgnoresRemovedPartitions(boolean rackAware, boolean onlyRemovedPartitionInStats) {
+        SequentialPartitioner partitioner = new SequentialPartitioner(logContext, TOPIC_A, 1, rackAware, NODES[0].rack());
+        if (onlyRemovedPartitionInStats) {
+            partitioner.updatePartitionLoadStats(new int[] {0, 0, 0}, new int[] {2, 0, 1},
+                new String[] {NODES[2].rack(), NODES[0].rack(), NODES[1].rack()}, 1);
+        } else {
+            partitioner.updatePartitionLoadStats(new int[] {5, 5, 0}, new int[] {0, 1, 2},
+                new String[] {NODES[0].rack(), NODES[1].rack(), NODES[2].rack()}, 3);
+        }
+        partitioner.mockRandom.set(2);
+        Cluster shrunkCluster = new Cluster("clusterId", asList(NODES), asList(
+            new PartitionInfo(TOPIC_A, 0, NODES[0], NODES, NODES),
+            new PartitionInfo(TOPIC_A, 1, NODES[1], NODES, NODES)),
+            Collections.emptySet(), Collections.emptySet());
+
+        for (int i = 0; i < 8; i++) {
+            BuiltInPartitioner.StickyPartitionInfo partitionInfo = partitioner.peekCurrentPartitionInfo(shrunkCluster);
+            assertTrue(partitionInfo.partition() == 0 || partitionInfo.partition() == 1);
+            partitioner.updatePartitionInfo(partitionInfo, 1, shrunkCluster);
+        }
+    }
+
+    @Test
+    public void testUniformPartitioningUsesExistingLeaderlessPartitionIds() {
+        SequentialPartitioner partitioner = new SequentialPartitioner(logContext, TOPIC_A, 1, false, "");
+        Cluster cluster = new Cluster("clusterId", asList(NODES),
+            Collections.singletonList(new PartitionInfo(TOPIC_A, 2, null, NODES, NODES)),
+            Collections.emptySet(), Collections.emptySet());
+
+        assertEquals(2, partitioner.peekCurrentPartitionInfo(cluster).partition());
+    }
+
+    @Test
+    public void testStalePartitionUpdatePreservesCurrentStickyPartition() {
+        SequentialPartitioner partitioner = new SequentialPartitioner(logContext, TOPIC_A, 1, false, "");
+        Cluster cluster = new Cluster("clusterId", asList(NODES), asList(
+            new PartitionInfo(TOPIC_A, 0, NODES[0], NODES, NODES),
+            new PartitionInfo(TOPIC_A, 1, NODES[1], NODES, NODES)),
+            Collections.emptySet(), Collections.emptySet());
+        BuiltInPartitioner.StickyPartitionInfo original = partitioner.peekCurrentPartitionInfo(cluster);
+        partitioner.updatePartitionInfo(original, 1, cluster);
+        BuiltInPartitioner.StickyPartitionInfo current = partitioner.peekCurrentPartitionInfo(cluster);
+        assertEquals(1, current.partition());
+
+        partitioner.updatePartitionInfo(original, 1, cluster);
+
+        assertSame(current, partitioner.peekCurrentPartitionInfo(cluster));
     }
 
     @Test
