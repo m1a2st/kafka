@@ -2195,6 +2195,7 @@ public class KafkaAdminClient extends AdminClient {
                 MetadataResponse response = (MetadataResponse) abstractResponse;
                 // Handle server responses for particular topics.
                 Cluster cluster = response.buildCluster();
+                Set<TopicPartition> drainingPartitions = drainingPartitions(response);
                 Map<String, Errors> errors = response.errors();
                 for (Map.Entry<String, KafkaFutureImpl<TopicDescription>> entry : topicFutures.entrySet()) {
                     String topicName = entry.getKey();
@@ -2210,7 +2211,7 @@ public class KafkaAdminClient extends AdminClient {
                     }
                     Uuid topicId = cluster.topicId(topicName);
                     Integer authorizedOperations = response.topicAuthorizedOperations(topicName).get();
-                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations);
+                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations, drainingPartitions);
                     future.complete(topicDescription);
                 }
             }
@@ -2412,6 +2413,7 @@ public class KafkaAdminClient extends AdminClient {
                 MetadataResponse response = (MetadataResponse) abstractResponse;
                 // Handle server responses for particular topics.
                 Cluster cluster = response.buildCluster();
+                Set<TopicPartition> drainingPartitions = drainingPartitions(response);
                 Map<Uuid, Errors> errors = response.errorsByTopicId();
                 for (Map.Entry<Uuid, KafkaFutureImpl<TopicDescription>> entry : topicFutures.entrySet()) {
                     Uuid topicId = entry.getKey();
@@ -2429,7 +2431,7 @@ public class KafkaAdminClient extends AdminClient {
                     }
 
                     Integer authorizedOperations = response.topicAuthorizedOperations(topicName).get();
-                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations);
+                    TopicDescription topicDescription = getTopicDescriptionFromCluster(cluster, topicName, topicId, authorizedOperations, drainingPartitions);
                     future.complete(topicDescription);
                 }
             }
@@ -2460,18 +2462,27 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     private TopicDescription getTopicDescriptionFromCluster(Cluster cluster, String topicName, Uuid topicId,
-                                                            Integer authorizedOperations) {
+                                                            Integer authorizedOperations, Set<TopicPartition> drainingPartitions) {
         boolean isInternal = cluster.internalTopics().contains(topicName);
         List<PartitionInfo> partitionInfos = cluster.partitionsForTopic(topicName);
         List<TopicPartitionInfo> partitions = new ArrayList<>(partitionInfos.size());
         for (PartitionInfo partitionInfo : partitionInfos) {
             TopicPartitionInfo topicPartitionInfo = new TopicPartitionInfo(
                 partitionInfo.partition(), leader(partitionInfo), Arrays.asList(partitionInfo.replicas()),
-                Arrays.asList(partitionInfo.inSyncReplicas()));
+                Arrays.asList(partitionInfo.inSyncReplicas()), null, null,
+                drainingPartitions.contains(new TopicPartition(topicName, partitionInfo.partition())), -1L);
             partitions.add(topicPartitionInfo);
         }
         partitions.sort(Comparator.comparingInt(TopicPartitionInfo::partition));
         return new TopicDescription(topicName, isInternal, partitions, validAclOperations(authorizedOperations), topicId);
+    }
+
+    private Set<TopicPartition> drainingPartitions(MetadataResponse response) {
+        return response.topicMetadata().stream()
+            .flatMap(topic -> topic.partitionMetadata().stream())
+            .filter(partition -> partition.isDraining)
+            .map(partition -> partition.topicPartition)
+            .collect(Collectors.toSet());
     }
 
     private Node leader(PartitionInfo partitionInfo) {

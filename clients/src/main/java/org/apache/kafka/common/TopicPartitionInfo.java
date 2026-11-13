@@ -22,6 +22,7 @@ import org.apache.kafka.common.annotation.InterfaceAudience;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +36,8 @@ public class TopicPartitionInfo {
     private final List<Node> isr;
     private final List<Node> elr;
     private final List<Node> lastKnownElr;
+    private final boolean isDraining;
+    private final long drainDeadlineMs;
 
     /**
      * Create an instance of this class with the provided parameters.
@@ -55,21 +58,43 @@ public class TopicPartitionInfo {
         List<Node> elr,
         List<Node> lastKnownElr
     ) {
+        this(partition, leader, replicas, isr, elr, lastKnownElr, false, -1L);
+    }
+
+    /**
+     * Create an instance including partition draining information.
+     *
+     * @param partition the partition id
+     * @param leader the leader of the partition or null if there is none
+     * @param replicas the replicas in replica assignment order
+     * @param isr the in-sync replicas
+     * @param elr the eligible leader replicas, or null if unavailable
+     * @param lastKnownElr the last known eligible leader replicas, or null if unavailable
+     * @param isDraining whether the partition is draining before removal
+     * @param drainDeadlineMs the earliest removal time in milliseconds since the epoch, or -1 if unavailable
+     */
+    public TopicPartitionInfo(
+        int partition,
+        Node leader,
+        List<Node> replicas,
+        List<Node> isr,
+        List<Node> elr,
+        List<Node> lastKnownElr,
+        boolean isDraining,
+        long drainDeadlineMs
+    ) {
         this.partition = partition;
         this.leader = leader;
         this.replicas = Collections.unmodifiableList(replicas);
         this.isr = Collections.unmodifiableList(isr);
-        this.elr = Collections.unmodifiableList(elr);
-        this.lastKnownElr = Collections.unmodifiableList(lastKnownElr);
+        this.elr = elr == null ? null : Collections.unmodifiableList(elr);
+        this.lastKnownElr = lastKnownElr == null ? null : Collections.unmodifiableList(lastKnownElr);
+        this.isDraining = isDraining;
+        this.drainDeadlineMs = drainDeadlineMs;
     }
 
     public TopicPartitionInfo(int partition, Node leader, List<Node> replicas, List<Node> isr) {
-        this.partition = partition;
-        this.leader = leader;
-        this.replicas = Collections.unmodifiableList(replicas);
-        this.isr = Collections.unmodifiableList(isr);
-        this.elr = null;
-        this.lastKnownElr = null;
+        this(partition, leader, replicas, isr, null, null, false, -1L);
     }
 
     /**
@@ -117,12 +142,30 @@ public class TopicPartitionInfo {
         return lastKnownElr;
     }
 
+    /**
+     * Return whether the partition is draining before removal. A broker that does not support
+     * draining information reports false.
+     */
+    public boolean isDraining() {
+        return isDraining;
+    }
+
+    /**
+     * Return the earliest removal time in milliseconds since the epoch, if available.
+     * Removal may wait longer for replication and transaction safety. The deadline is unavailable
+     * when describing topics through the Metadata API, including descriptions by topic ID.
+     */
+    public OptionalLong drainDeadlineMs() {
+        return drainDeadlineMs < 0 ? OptionalLong.empty() : OptionalLong.of(drainDeadlineMs);
+    }
+
     public String toString() {
         String elrString = elr != null ? elr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         String lastKnownElrString = lastKnownElr != null ? lastKnownElr.stream().map(Node::toString).collect(Collectors.joining(", ")) : "N/A";
         return "(partition=" + partition + ", leader=" + leader + ", replicas=" +
             replicas.stream().map(Node::toString).collect(Collectors.joining(", ")) + ", isr=" + isr.stream().map(Node::toString).collect(Collectors.joining(", ")) +
-            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString + ")";
+            ", elr=" + elrString + ", lastKnownElr=" + lastKnownElrString +
+            (isDraining || drainDeadlineMs >= 0 ? ", isDraining=" + isDraining + ", drainDeadlineMs=" + drainDeadlineMs : "") + ")";
     }
 
     @Override
@@ -133,6 +176,8 @@ public class TopicPartitionInfo {
         TopicPartitionInfo that = (TopicPartitionInfo) o;
 
         return partition == that.partition &&
+            isDraining == that.isDraining &&
+            drainDeadlineMs == that.drainDeadlineMs &&
             Objects.equals(leader, that.leader) &&
             Objects.equals(replicas, that.replicas) &&
             Objects.equals(isr, that.isr) &&
@@ -148,6 +193,8 @@ public class TopicPartitionInfo {
         result = 31 * result + (isr != null ? isr.hashCode() : 0);
         result = 31 * result + (elr != null ? elr.hashCode() : 0);
         result = 31 * result + (lastKnownElr != null ? lastKnownElr.hashCode() : 0);
+        result = 31 * result + Boolean.hashCode(isDraining);
+        result = 31 * result + Long.hashCode(drainDeadlineMs);
         return result;
     }
 }
