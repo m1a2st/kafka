@@ -4,7 +4,7 @@
 
 A new `DeletePartitions` API (API key 94) that allows reducing the partition count of a topic by removing partitions
 from the tail. Partitions enter a "draining" state (stop accepting writes, allow reads) before being removed after a
-configurable timeout.
+configurable minimum interval and a transaction-safety check, unless explicitly forced.
 
 This requires:
 
@@ -62,7 +62,7 @@ Our partition removal (5 → 3) works identically in reverse:
 | Existing partition data | Untouched | Untouched |
 | Ordering guarantee | Preserved | Preserved |
 | Key affinity | Breaks | Breaks |
-| Data loss | None | Draining partitions expire per retention policy |
+| Data loss | None | Removed partition data is deleted after the drain |
 
 The only additional cost of removal is that historical data in the draining partitions will eventually be lost after
 the retention period. This is an explicit, operator-controlled trade-off — not an ordering violation.
@@ -117,10 +117,19 @@ File: `clients/src/main/resources/common/message/DeletePartitionsRequest.json`
           "about": "The topic name."
         },
         {
-          "name": "DeleteCount",
+          "name": "Count",
           "type": "int32",
           "versions": "0+",
-          "about": "The number of partitions to remove from the tail. For example, if a topic has 10 partitions and DeleteCount is 3, partitions 7, 8, 9 will be marked for deletion."
+          "about": "The new reduced partition count. For a topic with 10 partitions, Count=7 drains partitions 7, 8 and 9."
+        },
+        {
+          "name": "Force",
+          "type": "bool",
+          "versions": "0+",
+          "taggedVersions": "0+",
+          "tag": 0,
+          "default": "false",
+          "about": "Whether to bypass transaction safety checks after the drain deadline."
         }
       ]
     },
@@ -128,7 +137,14 @@ File: `clients/src/main/resources/common/message/DeletePartitionsRequest.json`
       "name": "TimeoutMs",
       "type": "int32",
       "versions": "0+",
-      "about": "The time in ms to wait for the controller to process the request. This is NOT the drain timeout; the drain timeout is configured per-topic via partition.drain.timeout.ms."
+      "about": "The time in ms to wait for controller acceptance, separate from the configured minimum drain interval."
+    },
+    {
+      "name": "ValidateOnly",
+      "type": "bool",
+      "versions": "0+",
+      "default": "false",
+      "about": "Whether to validate without changing metadata."
     }
   ]
 }
@@ -217,7 +233,7 @@ New field under `MetadataResponsePartition`:
   "versions": "14+",
   "default": "false",
   "ignorable": true,
-  "about": "True if this partition is in the draining state and will be removed after the drain deadline. Draining partitions do not accept produce requests."
+  "about": "True if this partition is draining and eligible for removal after its deadline and transaction safety checks. Draining partitions do not accept produce requests."
 }
 ```
 
@@ -259,7 +275,7 @@ New fields under `DescribeTopicPartitionsResponsePartition`:
 "versions": "1+",
 "default": "-1",
 "ignorable": true,
-"about": "The absolute timestamp in ms when this partition will be forcibly removed, or -1 if not draining."
+"about": "The earliest removal timestamp in ms, or -1 if not draining. Transaction safety may delay removal."
 }
 ```
 
@@ -269,115 +285,37 @@ File: `clients/src/main/resources/common/message/DescribeTopicPartitionsRequest.
 
 ---
 
+### Broker Heartbeat Readiness
+
+`BrokerHeartbeatRequest` adds `DrainingPartitions`, a flexible tagged array (tag 2, versions 0+, empty by default)
+of `PartitionDrainStatus`. The fields are `TopicId`, `PartitionId`, `LeaderEpoch`, `PartitionEpoch`,
+`MetadataOffset` (default -1), `Ready` (default false), and `BlockedReason` (default empty string). Each heartbeat
+reports the draining partitions currently led by that broker. Missing, stale or blocked reports cannot authorize
+normal removal. This adds no Describe response fields: `IsDraining` and `DrainDeadlineMs` remain the public
+partition-status fields, while controller logs expose blockers.
+
 ### New AdminClient Methods
 
-File: `clients/src/main/java/org/apache/kafka/clients/admin/Admin.java`
+The Admin API accepts reduced target counts:
 
 ```java
-/**
- * Delete partitions from the tail of the specified topics.
- *
- * <p>Partitions enter a "draining" state where they stop accepting writes but continue
- * serving reads. After the topic's configured partition.drain.timeout.ms expires,
- * the partitions are permanently removed.
- *
- * <p>This operation requires ALTER permission on the topic.
- *
- * @param deletions A map from topic name to the number of partitions to delete from the tail.
- * @return The DeletePartitionsResult.
- */
-default DeletePartitionsResult deletePartitions(Map<String, DeletePartitionsCount> deletions) {
-    return deletePartitions(deletions, new DeletePartitionsOptions());
-}
-
-/**
- * Delete partitions from the tail of the specified topics.
- *
- * @param deletions A map from topic name to the number of partitions to delete from the tail.
- * @param options   Additional options for the request.
- * @return The DeletePartitionsResult.
- */
-DeletePartitionsResult deletePartitions(
-        Map<String, DeletePartitionsCount> deletions,
-        DeletePartitionsOptions options
-);
+default DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts);
+DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts,
+                                       DeletePartitionsOptions options);
 ```
 
-#### DeletePartitionsCount.java
+`DeletePartitionsOptions` provides `validateOnly(boolean)` and `force(boolean)` with matching getters; both
+default to `false`. `force(true)` sets each requested topic's tagged `Force` field. For example, reducing a
+ten-partition topic to seven with the explicit transaction-safety override is:
 
 ```java
-package org.apache.kafka.clients.admin;
-
-/**
- * Specifies the number of partitions to delete from the tail of a topic.
- */
-public class DeletePartitionsCount {
-    private final int deleteCount;
-
-    /**
-     * @param deleteCount The number of partitions to remove from the tail. Must be positive and
-     *                    less than the current partition count (at least one partition must remain).
-     */
-    public DeletePartitionsCount(int deleteCount) {
-        this.deleteCount = deleteCount;
-    }
-
-    public int deleteCount() {
-        return deleteCount;
-    }
-}
+admin.deletePartitions(Map.of("orders", 7), new DeletePartitionsOptions().force(true)).all().get();
 ```
 
-#### DeletePartitionsOptions.java
-
-```java
-package org.apache.kafka.clients.admin;
-
-/**
- * Options for {@link Admin#deletePartitions(Map, DeletePartitionsOptions)}.
- */
-public class DeletePartitionsOptions extends AbstractOptions<DeletePartitionsOptions> {
-}
-```
-
-#### DeletePartitionsResult.java
-
-```java
-package org.apache.kafka.clients.admin;
-
-import org.apache.kafka.common.KafkaFuture;
-
-import java.util.Map;
-
-/**
- * Result of {@link Admin#deletePartitions(Map, DeletePartitionsOptions)}.
- *
- * <p>The futures complete when the controller has accepted the deletion request and written the
- * PartitionDrainingRecord. Completion does NOT mean the partitions have been removed — they
- * remain in draining state until the configured timeout expires.
- */
-public class DeletePartitionsResult {
-    private final Map<String, KafkaFuture<Void>> futures;
-
-    DeletePartitionsResult(Map<String, KafkaFuture<Void>> futures) {
-        this.futures = futures;
-    }
-
-    /**
-     * @return A map from topic name to a future that completes when draining has been initiated.
-     */
-    public Map<String, KafkaFuture<Void>> values() {
-        return futures;
-    }
-
-    /**
-     * @return A future that completes when all topics have entered draining state.
-     */
-    public KafkaFuture<Void> all() {
-        return KafkaFuture.allOf(futures.values().toArray(new KafkaFuture[0]));
-    }
-}
-```
+The result's `values()` and `all()` futures complete when the controller accepts and persists the drain or force
+upgrade. They do not wait for the deadline, transaction completion, removal, or storage cleanup. Without force,
+a drain can remain pending indefinitely when the controller cannot obtain a fresh safe report from its leader.
+With force, the configured minimum interval still applies, and unresolved transactional data may be discarded.
 
 ---
 
@@ -388,10 +326,10 @@ File: `clients/src/main/java/org/apache/kafka/common/config/TopicConfig.java`
 ```java
 public static final String PARTITION_DRAIN_TIMEOUT_MS_CONFIG = "partition.drain.timeout.ms";
 public static final String PARTITION_DRAIN_TIMEOUT_MS_DOC = "The time in milliseconds to wait " +
-        "after marking tail partitions as draining before forcibly removing them. During this window, " +
+        "after marking tail partitions as draining before removal becomes eligible. During this window, " +
         "consumers can continue to read from draining partitions but producers cannot write to them. " +
         "Set this value high enough for all consumer groups to drain their lag. " +
-        "A value of 0 means partitions are removed immediately (no drain period).";
+        "A value of 0 removes the minimum wait; transaction safety still applies unless force is explicit.";
 public static final long PARTITION_DRAIN_TIMEOUT_MS_DEFAULT = 3600000L; // 1 hour
 ```
 
@@ -409,7 +347,7 @@ TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DOC)
 
 **Notes:**
 
-- `atLeast(0)` validation — 0 is valid and means immediate removal (no drain period)
+- `atLeast(0)` validation — 0 is valid and means no minimum wait; transaction safety still applies unless force is explicit
 - This is a dynamic topic-level config; can be altered via `AlterConfigs` without broker restart
 - Config is only read at the time `DeletePartitionsRequest` is processed; changing it after draining starts has no
   effect on the existing deadline
@@ -440,7 +378,7 @@ INVALID_DELETE_PARTITION_COUNT(137,
 | 35 | `UNSUPPORTED_VERSION` | No | `DeletePartitions` | MetadataVersion < IBP_4_4_IV2 |
 | 42 | `INVALID_REQUEST` | No | `DeletePartitions` | Topic is internal (`__consumer_offsets`, etc.) |
 | 89 | `THROTTLING_QUOTA_EXCEEDED` | Yes | `DeletePartitions` | Controller mutation quota exhausted |
-| 136 | `PARTITION_OPERATION_IN_PROGRESS` | No | `DeletePartitions`, `CreatePartitions`, `AlterPartitionReassignments` | Topic already has draining partitions, OR a partition reassignment is in progress for targeted partitions |
+| 136 | `PARTITION_OPERATION_IN_PROGRESS` | No | `DeletePartitions`, `AlterPartitionReassignments` | Conflicting existing drain or targeted reassignment; force may upgrade the same target |
 | 137 | `INVALID_DELETE_PARTITION_COUNT` | No | `DeletePartitions` | deleteCount <= 0, OR deleteCount >= currentPartitionCount |
 
 #### Exception Classes
@@ -505,7 +443,7 @@ graph TB
 
     subgraph Controller
         RCM[ReplicationControlManager]
-        Scheduler[DrainScheduler\nScheduledExecutorService]
+        Scheduler[Controller periodic removal check]
         MetaLog[(KRaft Metadata Log)]
     end
 
@@ -518,14 +456,15 @@ graph TB
 
     AdminClient -->|DeletePartitionsRequest| RCM
     RCM -->|Write PartitionDrainingRecord| MetaLog
-    RCM -->|Schedule removal| Scheduler
-    Scheduler -->|On expiry: enqueue event| RCM
-    RCM -->|Write RemovePartitionRecord| MetaLog
+    RCM -->|Check deadline and safety| Scheduler
+    Scheduler -->|Eligible partitions| RCM
+    RCM -->|Safe or explicitly forced: RemovePartitionRecord| MetaLog
 
     MetaLog -->|Metadata propagation| ReplicaMgr
     ReplicaMgr -->|isDraining check| Producer
     Producer -->|NOT_LEADER_OR_FOLLOWER| Producer
     ReplicaMgr -->|Serve fetch normally| Consumer
+    ReplicaMgr -->|Heartbeat: readiness and BlockedReason| RCM
 
     ReplicaMgr -->|On removal| LogMgr
     LogMgr -->|asyncDelete| LogMgr
@@ -556,16 +495,25 @@ File: `metadata/src/main/resources/common/metadata/PartitionDrainingRecord.json`
       "about": "The unique ID of the topic whose partitions are being drained."
     },
     {
-      "name": "PartitionIds",
-      "type": "[]int32",
+      "name": "PartitionId",
+      "type": "int32",
       "versions": "0+",
-      "about": "The partition IDs entering the draining state. These are always the tail partitions: [currentCount - deleteCount, ..., currentCount - 1]."
+      "about": "The partition entering or leaving the draining state."
     },
     {
-      "name": "DrainDeadlineMs",
+      "name": "DeadlineMs",
       "type": "int64",
       "versions": "0+",
-      "about": "The absolute wall-clock timestamp (ms since epoch) after which the controller will write RemovePartitionRecords for these partitions."
+      "about": "Earliest removal time in epoch milliseconds; -1 cancels draining."
+    },
+    {
+      "name": "Force",
+      "type": "bool",
+      "versions": "0+",
+      "taggedVersions": "0+",
+      "tag": 0,
+      "default": "false",
+      "about": "Whether removal may bypass transaction safety checks."
     }
   ]
 }
@@ -604,11 +552,11 @@ File: `metadata/src/main/resources/common/metadata/RemovePartitionRecord.json`
 Separating draining initiation from removal provides:
 
 1. **Crash safety** — If the controller crashes between writing `PartitionDrainingRecord` and the deadline, the new
-   controller replays the record and knows exactly which partitions are draining and when they should be removed.
+   controller replays the record and restores which partitions are draining, their earliest removal times and force overrides. Fresh safety reports are required again.
 2. **Auditability** — Operators can inspect the metadata log and see exactly when draining started and when removal
    happened.
-3. **Cancellation (future)** — A future `CancelPartitionDrainingRecord` could revert the draining state without
-   requiring a removal record.
+3. **Cancellation** — CreatePartitions reopens retained partitions with PartitionDrainingRecord DeadlineMs=-1,
+   preserving the existing log and canceling its removal deadline.
 
 ---
 
@@ -618,7 +566,8 @@ Separating draining initiation from removal provides:
 stateDiagram-v2
     [*] --> ACTIVE : PartitionRecord created
     ACTIVE --> DRAINING : DeletePartitionsRequest accepted\n(write PartitionDrainingRecord)
-    DRAINING --> REMOVED : drain_deadline_ms expires\n(write RemovePartitionRecord)
+    DRAINING --> ACTIVE : CreatePartitions reopens retained ID\n(PartitionDrainingRecord DeadlineMs=-1)
+    DRAINING --> REMOVED : deadline reached and safe, or forced\n(write RemovePartitionRecord)
     ACTIVE --> REMOVED : DeleteTopics\n(RemoveTopicRecord)
     DRAINING --> REMOVED : DeleteTopics\n(RemoveTopicRecord, implicit cancel)
     REMOVED --> [*]
@@ -627,7 +576,8 @@ stateDiagram-v2
 **Invariant:** A partition is in exactly one state at any time. State is derived from metadata replay:
 
 - No `PartitionDrainingRecord` for this partition → ACTIVE
-- `PartitionDrainingRecord` written, no `RemovePartitionRecord` → DRAINING
+- Latest `PartitionDrainingRecord` has non-negative DeadlineMs, no `RemovePartitionRecord` → DRAINING
+- Latest `PartitionDrainingRecord` has DeadlineMs=-1 → ACTIVE again, retaining log and offsets
 - `RemovePartitionRecord` written → REMOVED (partition no longer in TopicImage)
 
 ---
@@ -642,10 +592,11 @@ replication, leader election, transactions, controlled shutdown, and log cleanup
 
 1. **Draining partitions maintain full replication** — Consumers need the partition to be available for reads;
    if the leader fails, a follower must be able to take over.
-2. **Removal does not wait for broker acknowledgment** — The controller writes `RemovePartitionRecord` regardless
-   of which brokers are online. Offline brokers clean up when they rejoin.
-3. **Drain deadline is a wall-clock hard deadline** — It never pauses, regardless of partition or broker availability.
-   This is consistent with `retention.ms` behavior.
+2. **Normal removal requires fresh leader confirmation** — The controller waits for transaction safety at the
+   current broker, leader and partition epochs after the drain metadata is applied. Offline followers clean up later.
+3. **The wall-clock deadline is an earliest removal time** — It never moves during outages, but normal removal
+   waits beyond it while transactions or unavailable/stale leader reports block safety. Explicit force bypasses
+   safety only after that same deadline.
 4. **Transaction control records bypass draining write block** — To allow in-flight transactions to resolve cleanly.
 
 #### During DRAINING: Replication Behavior
@@ -657,7 +608,7 @@ replication, leader election, transactions, controlled shutdown, and log cleanup
 | ISR shrink (follower falls behind)  | **Allowed**                       | Normal ISR mechanism; no special handling                                              |
 | Leader epoch increment              | **Allowed**                       | If leadership changes, epoch must advance                                              |
 | High watermark propagation          | **Continues**                     | Consumers rely on HW to determine readable data                                        |
-| `min.insync.replicas` enforcement   | **Not enforced** (no data writes) | min.isr only applies to produce with acks=all; draining partitions reject data produce |
+| `min.insync.replicas` enforcement | **Unchanged** | Transaction markers retain acks=all and normal ISR checks |
 | Preferred leader election           | **Allowed**                       | Consumer benefits from optimal read path                                               |
 | Unclean leader election             | **Follows topic config**          | If `unclean.leader.election.enable=true`, allow; no override for draining              |
 
@@ -683,7 +634,7 @@ B0 crashes:
   6. B2 continues fetching from new leader B1
 ```
 
-No special handling. Identical to ACTIVE partition leader failure.
+Normal leader election still applies. The old readiness confirmation is invalidated; the new leader must apply the drain metadata and report fresh transaction safety.
 
 ##### Scenario B: All ISR Members Crash (Leader Included)
 
@@ -701,20 +652,14 @@ Case 2: unclean.leader.election.enable=false
   → Consumers cannot fetch → they will experience errors
   → Drain deadline continues ticking (NOT paused)
   → If deadline expires while partition is unavailable:
-    - Controller writes RemovePartitionRecord
-    - When B0/B1 recover, they replay RemovePartitionRecord and delete local logs
-    - Data that was unavailable during the outage is permanently lost
+    - Normal drain waits for a recovered leader and a fresh transaction-safety confirmation
+    - Explicit force permits RemovePartitionRecord despite the unavailable leader
+    - After forced removal, recovered replicas replay the record and delete local logs
 ```
 
-**Design decision: Deadline does NOT pause during unavailability.**
-
-Rationale:
-
-- Pausing requires tracking "available time" vs "wall-clock time" — complex state
-- A partition where ALL replicas are permanently offline has no recoverable data anyway
-- If replicas are temporarily down and recover before deadline, consumers can resume
-- Operator set the timeout knowing their cluster's reliability characteristics
-- Consistent with `retention.ms` — retention doesn't pause during outages
+**The earliest removal time stays fixed during unavailability.** Normal removal cannot proceed without a
+fresh safe leader confirmation. Operators may explicitly force the same drain, preserving its deadline and
+accepting possible loss of unresolved transactional data.
 
 ##### Scenario C: Follower Crashes (Leader Alive)
 
@@ -762,71 +707,24 @@ When B0 restarts:
   - If partition already removed: B0 finds stale dir, deletes it
 ```
 
-No special handling. Standard controlled shutdown leadership migration applies to draining partitions.
+Standard controlled shutdown leadership migration applies. A new leader must establish a fresh transaction-safety confirmation before normal removal.
 
 #### During DRAINING: Transaction Control Records
 
-When a transactional producer has an open transaction that includes a draining partition, the transaction must
-be resolved (committed or aborted). This requires writing a COMMIT or ABORT control record to the partition.
+COMMIT and ABORT markers use `AppendOrigin.COORDINATOR` and bypass the draining data-write
+block. The actual `KafkaApis.handleWriteTxnMarkersRequest` path keeps
+`TransactionCoordinator.EnforcedRequiredAcks = -1`: normal `min.insync.replicas` validation
+and follower acknowledgement remain required. Draining does not reduce transaction durability.
 
-```
-Transaction T1: partitions=[P5, P8], state=ONGOING
-P8 enters DRAINING
+If ISR is too small, the transaction coordinator retries. A normal drain remains blocked beyond its deadline
+while transactions remain ongoing or their completion is not replicated. The leader must report readiness
+after applying the drain metadata. An explicit force override permits removal after the original deadline even
+with pending transactions; only then can metadata propagation cause the coordinator to drop the removed
+partition from its pending marker set. Force does not relax marker replication or min ISR checks.
 
-  1. Producer's next Produce(data) to P8 → NOT_LEADER_OR_FOLLOWER
-  2. Producer calls abortTransaction() (or transaction.timeout.ms expires)
-  3. TransactionCoordinator transitions T1 to PREPARE_ABORT
-  4. TransactionCoordinator writes ABORT marker to P8:
-     - This is a control batch (ControlRecordType.ABORT)
-     - Draining partition ALLOWS control batch writes
-     - ISR requirement relaxed: acks=1 (leader-only) sufficient
-       (partition is being deleted; marker durability is low priority)
-  5. TransactionCoordinator completes abort → T1 state = COMPLETE_ABORT
-```
-
-**Implementation: Produce handler draining bypass logic**
-
-```java
-// In ReplicaManager / Partition appendRecords path:
-if(partition.isDraining()){
-        if(batch.
-
-isControlBatch()){
-
-// Allow COMMIT/ABORT markers through with relaxed acks
-// Reason: transaction must resolve; partition will be deleted soon anyway
-appendToLocalLog(records);
-// Do NOT require ISR ack — just leader write is sufficient
-    }else{
-            // Reject normal data writes
-            return Errors.NOT_LEADER_OR_FOLLOWER;
-    }
-            }
-```
-
-**Why relax ISR requirement for control records?**
-
-- If ISR has shrunk below `min.insync.replicas` (due to follower failures during drain), a strict `acks=all`
-  requirement would block the transaction abort marker forever
-- This creates a deadlock: transaction can't resolve → TransactionCoordinator keeps retrying → partition
-  can't be removed → operator is stuck
-- Since the partition is being deleted, the durability of the marker is irrelevant — what matters is that
-  the TransactionCoordinator transitions the transaction to a terminal state
-- If the leader crashes after writing the marker locally (before follower replication), the
-  TransactionCoordinator will retry the marker write to the new leader
-
-**Edge case: Transaction COMMIT marker to draining partition**
-
-Same behavior as ABORT — allowed through with relaxed acks. The committed data in the draining partition
-will eventually be lost when the partition is removed. The important thing is that the transaction reaches
-a terminal state so the producer can proceed with new transactions.
-
-**Edge case: AddPartitionsToTxn for draining partition**
-
-- Not possible. After metadata refresh, the draining partition doesn't appear in the producer's partition
-  list. The producer cannot add a draining partition to a new transaction.
-- For pre-existing transactions that already include the draining partition (added before draining started),
-  only COMMIT/ABORT markers need to flow.
+A stale or explicitly addressed `AddPartitionsToTxn` request can still reference a draining
+partition. Metadata filtering improves new producer routing; the broker draining check is the
+authoritative block on data writes. Existing transactions may send their control markers normally.
 
 #### On REMOVAL: Broker-Side Replica Cleanup
 
@@ -967,9 +865,9 @@ Timeline:
 |------------------------------------|-----------------------------------------------------------------------|--------------------------------------|-----------------------------------------------------------------------|
 | Partition enters DRAINING          | Rejects data produce; allows control batches; continues serving fetch | Continues fetching from leader       | Writes PartitionDrainingRecord                                        |
 | Leader crashes during DRAINING     | N/A (dead)                                                            | One follower elected leader from ISR | Writes PartitionChangeRecord (new leader)                             |
-| All replicas crash during DRAINING | N/A                                                                   | N/A                                  | Deadline continues; on expiry writes RemovePartitionRecord regardless |
+| All replicas crash during DRAINING | N/A                                                                   | N/A                                  | Normal removal waits for a fresh safe leader report; force may bypass safety after deadline |
 | Controlled shutdown of leader      | Steps down leadership                                                 | New leader elected                   | Writes PartitionChangeRecord                                          |
-| Drain deadline expires             | Still serving fetch until RemovePartitionRecord arrives               | Still fetching                       | Writes RemovePartitionRecord per partition                            |
+| Drain deadline expires             | Still serving fetch until RemovePartitionRecord arrives               | Still fetching                       | Removes only when fresh safety confirmation is valid, or explicit force applies                            |
 | RemovePartitionRecord replayed     | Stops serving; deletes log                                            | Stops fetching; deletes log          | N/A (already written)                                                 |
 | Broker recovers after removal      | Finds stale dir; async delete                                         | Finds stale dir; async delete        | No action needed                                                      |
 
@@ -984,15 +882,15 @@ sequenceDiagram
     participant Client as Admin Client
     participant Broker as Broker
     participant Controller as Active Controller
-    participant Scheduler as DrainScheduler
+    participant Scheduler as Controller periodic check
     participant Replicas as Replica Brokers
 
-    Client->>Broker: DeletePartitionsRequest(topic, deleteCount)
+    Client->>Broker: DeletePartitionsRequest(topic, targetCount, force=false)
     Broker->>Controller: Forward request
     Controller->>Controller: Validate (feature gate, auth, counts, no conflict)
     Controller->>Controller: Compute deadline = now + partition.drain.timeout.ms
     Controller->>Controller: Write PartitionDrainingRecord to metadata log
-    Controller->>Scheduler: schedule(RemovePartitionsEvent, delay)
+    Controller->>Scheduler: Track deadline and transaction safety
     Controller-->>Broker: DeletePartitionsResponse(success)
     Broker-->>Client: Response(success)
 
@@ -1000,9 +898,10 @@ sequenceDiagram
     Replicas->>Replicas: Replay PartitionDrainingRecord
     Replicas->>Replicas: Mark partitions as draining (reject produce, allow fetch)
 
-    Note over Scheduler: After partition.drain.timeout.ms expires
-    Scheduler->>Controller: Enqueue RemovePartitionsEvent
-    Controller->>Controller: Verify topic still exists, partitions still draining
+    Replicas->>Controller: Heartbeat with applied metadata, matching epochs, Ready=true
+    Note over Scheduler: At or after the minimum drain deadline
+    Scheduler->>Controller: Check eligible removals
+    Controller->>Controller: Verify fresh current-leader safety confirmation
     Controller->>Controller: Write RemovePartitionRecord (per partition)
 
     Note over Replicas: Metadata propagation
@@ -1061,7 +960,7 @@ sequenceDiagram
     Producer->>TxnCoord: EndTxnRequest(ABORT)
     TxnCoord->>TxnCoord: Transition T1 → PREPARE_ABORT
     TxnCoord->>Broker: WriteTxnMarkers(partition=8, ABORT)
-    Note over Broker: Control batch bypasses draining check (acks=1)
+    Note over Broker: Control batch bypasses draining check; normal acks=all and min ISR
     Broker->>Broker: Append ABORT marker to partition 8 log
     Broker-->>TxnCoord: Success
     TxnCoord->>TxnCoord: T1 → COMPLETE_ABORT
@@ -1073,217 +972,66 @@ sequenceDiagram
 
 #### Processing DeletePartitionsRequest
 
-Location: `metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java`
+The controller resolves and authorizes each topic, checks the metadata-version gate, rejects internal topics,
+validates the reduced target `Count` and targeted reassignments, and applies mutation quota. `ValidateOnly`
+performs validation without changing metadata. `Count` must leave at least one active partition.
 
-```mermaid
-flowchart TD
-    A[Receive DeletePartitionsRequest] --> B{MetadataVersion >= IBP_4_4_IV2?}
-    B -->|No| Z1[Return UNSUPPORTED_VERSION]
-    B -->|Yes| C{Topic exists?}
-    C -->|No| Z2[Return UNKNOWN_TOPIC_OR_PARTITION]
-    C -->|Yes| D{ALTER authorized?}
-    D -->|No| Z3[Return TOPIC_AUTHORIZATION_FAILED]
-    D -->|Yes| E{Internal topic?}
-    E -->|Yes| Z4[Return INVALID_REQUEST]
-    E -->|No| F{deleteCount valid?\n0 < count < partitionCount}
-    F -->|No| Z5[Return INVALID_DELETE_PARTITION_COUNT]
-    F -->|Yes| G{Any partition already draining?}
-    G -->|Yes| Z6[Return PARTITION_OPERATION_IN_PROGRESS]
-    G -->|No| H{Any target partition reassigning?}
-    H -->|Yes| Z6
-    H -->|No| I{Mutation quota available?}
-    I -->|No| Z7[Return THROTTLING_QUOTA_EXCEEDED]
-    I -->|Yes| J[Read partition.drain.timeout.ms]
-    J --> K[Compute deadline = now + timeout]
-    K --> L[Write PartitionDrainingRecord]
-    L --> M[Schedule deferred removal at deadline]
-    M --> N[Return SUCCESS]
-```
+For a new drain, the controller writes one `PartitionDrainingRecord` per targeted tail partition with an absolute
+`DeadlineMs = now + partition.drain.timeout.ms` and the topic request's `Force` flag (default `false`). Success
+means the drain was accepted; it does not mean physical removal completed.
 
-```
-For each topic in request:
-  1. Feature gate: if metadataVersion < IBP_4_4_IV2 → UnsupportedVersionException
-  2. Resolve topic name → TopicControlInfo
-     - Not found → UNKNOWN_TOPIC_OR_PARTITION (3)
-  3. Authorization: require ALTER on topic
-     - Denied → TOPIC_AUTHORIZATION_FAILED (29)
-  4. Internal topic check: if Topic.isInternal(name) → INVALID_REQUEST (42)
-     - Cannot delete partitions from __consumer_offsets, __transaction_state, etc.
-  5. Validate deleteCount:
-     - deleteCount <= 0 → INVALID_DELETE_PARTITION_COUNT (137)
-     - deleteCount >= currentPartitionCount → INVALID_DELETE_PARTITION_COUNT (137)
-  6. Check no existing draining operation:
-     - Any partition in this topic already in DRAINING state → PARTITION_OPERATION_IN_PROGRESS (136)
-  7. Check no active reassignment on targeted partitions:
-     - Compute targetPartitionIds = [currentCount - deleteCount, ..., currentCount - 1]
-     - For each targetPartitionId: if partitionRegistration.isReassigning() → PARTITION_OPERATION_IN_PROGRESS (136)
-       (isReassigning = removingReplicas non-empty OR addingReplicas non-empty)
-  8. Apply partition mutation quota:
-     - context.applyPartitionChangeQuota(deleteCount)
-     - If throttled → THROTTLING_QUOTA_EXCEEDED (89)
-  9. Read topic config: partition.drain.timeout.ms (default 3600000)
-  10. Compute absolute deadline: controller.time.milliseconds() + drainTimeoutMs
-  11. Write PartitionDrainingRecord { topicId, targetPartitionIds, drainDeadlineMs }
-  12. Schedule deferred removal event at drainDeadlineMs
-  13. Return success
-```
+A normal request cannot replace an existing drain. A force request for the same target may upgrade the existing
+drain by writing `Force=true` while preserving every original deadline. It neither restarts nor shortens the
+minimum drain interval. A force request may include additional validated tail partitions; these receive a new
+minimum interval while existing drains retain their deadlines. After partial
+tail removal, force upgrades visit only the actual retained draining IDs for that target. They neither regenerate
+draining records for removed IDs nor infer retained IDs from the size of the partition map.
 
-#### Deferred Removal Event (Deadline Expiry) — Timer Mechanism
+#### Removal Eligibility and Transaction Safety
 
-The KRaft controller does not have a native wall-clock timer for deferred events. The existing `DeferredEventQueue`
-is offset-based (completes when metadata log advances past an offset). We need a wall-clock scheduling mechanism
-for drain deadlines.
+The active controller checks draining partitions on its periodic event loop. The deadline is the earliest time
+removal may occur. A normal drain remains DRAINING beyond that time until its current leader confirms it is
+safe to remove. Missing leaders, open transactions, unreplicated transaction completion, and missing or stale
+reports block removal; elapsed time alone never overrides them.
 
-```mermaid
-sequenceDiagram
-    participant CM as Controller Main Thread
-    participant SE as ScheduledExecutorService
-    participant EQ as Controller Event Queue
+Within each topic the controller considers actual retained partition IDs in descending order, starting at the
+highest ID. It removes only an eligible tail: the first retained partition that is not draining, has not reached
+its deadline, or lacks required safety confirmation stops removal of every lower ID in that topic. A safe lower
+partition cannot be removed around a blocked higher partition, so retained partition IDs remain a contiguous
+prefix. A blocked topic does not prevent eligible tail removals in other topics. Force bypasses transaction
+safety for the selected drain; it does not bypass the minimum interval or this tail-order requirement.
 
-    Note over CM: PartitionDrainingRecord written
-    CM->>SE: schedule(callback, delay=drainTimeoutMs)
-    Note over SE: Timer running in background
+The leader reports transaction safety in the tagged `BrokerHeartbeatRequest.DrainingPartitions` array. Each
+`PartitionDrainStatus` includes `TopicId`, `PartitionId`, `LeaderEpoch`, `PartitionEpoch`, `MetadataOffset`,
+`Ready`, and `BlockedReason`. The broker evaluates status after applying the draining metadata and installing
+the write fence. Ready requires no ongoing transaction and no unreplicated transaction completion.
 
-    alt Normal expiry
-        SE->>EQ: enqueue(RemovePartitionsEvent)
-        EQ->>CM: dequeue RemovePartitionsEvent
-        CM->>CM: Write RemovePartitionRecord(s)
-    else Topic deleted while waiting
-        CM->>SE: future.cancel(false)
-        Note over SE: Timer cancelled, no event fires
-    else Controller failover
-        Note over CM: New controller activates
-        CM->>CM: Replay metadata log, find draining partitions
-        CM->>CM: remaining = deadline - now()
-        alt remaining <= 0
-            CM->>EQ: enqueue(RemovePartitionsEvent) immediately
-        else remaining > 0
-            CM->>SE: schedule(callback, remaining)
-        end
-    end
-```
+The controller accepts a report only from the current, unfenced leader at its current broker, leader and
+partition epochs, with applied metadata covering the drain record. A later blocked report or omitted status
+invalidates readiness. Reports are soft state: leadership or partition-epoch changes, broker fencing, a new
+drain or cancellation, and controller activation/deactivation invalidate cached confirmations. The controller
+logs blockers, including the broker's `BlockedReason`, and retries on later checks. Describe responses retain
+`IsDraining` and `DrainDeadlineMs`; they do not add a blocker field or promise a completion time.
 
-**Chosen approach: `ScheduledExecutorService` + Controller Event Queue**
+With explicit `Force=true`, the controller may remove the partition once the original deadline is reached even
+without a ready leader report. Force can discard unresolved transactional data. It bypasses the removal safety
+gate only: transaction markers still use `acks=all` and normal `min.insync.replicas` enforcement.
 
-```java
-// In QuorumController:
-private final ScheduledExecutorService drainScheduler =
-    Executors.newSingleThreadScheduledExecutor(
-        new ThreadFactory("controller-drain-scheduler"));
+#### Metadata Replay and Snapshots
 
-// Maps topicId → scheduled future (for cancellation on topic deletion)
-private final Map<Uuid, ScheduledFuture<?>> pendingDrainRemovals = new ConcurrentHashMap<>();
-```
+`PartitionDrainingRecord.Force` is a tagged boolean (tag 0, default `false`). Controller replay persists the
+per-partition override alongside the deadline. `TopicImage.forcedDrainingPartitions()` is an immutable subset
+of the currently draining IDs; snapshot records include each partition's force setting. Unrelated deltas retain
+it. Cancellation (`DeadlineMs=-1`) and removal clear it; a subsequent normal drain starts with `Force=false`.
 
-**Scheduling flow:**
+Broker readiness confirmations are neither logged nor snapshotted. After controller failover, the new active
+controller restores deadlines and force overrides, clears all cached readiness, and requests fresh leader
+confirmations. An expired normal drain waits for them. An expired forced drain remains eligible for removal.
 
-```
-On PartitionDrainingRecord write:
-  1. Compute delay = drainDeadlineMs - controller.time.milliseconds()
-  2. If delay <= 0:
-     - Enqueue RemovePartitionsEvent immediately
-  3. If delay > 0:
-     - ScheduledFuture<?> future = drainScheduler.schedule(() -> {
-         controllerEventQueue.enqueue(new RemovePartitionsEvent(topicId, partitionIds));
-       }, delay, TimeUnit.MILLISECONDS);
-     - pendingDrainRemovals.put(topicId, future);
-```
+#### Topic Deletion During Draining
 
-**RemovePartitionsEvent handler (runs on controller thread):**
-
-```
-1. Verify topic still exists (may have been deleted while waiting)
-2. Verify partitions are still in DRAINING state (defensive check)
-3. For each partitionId:
-   - Write RemovePartitionRecord { topicId, partitionId }
-4. pendingDrainRemovals.remove(topicId)
-```
-
-**Cancellation (topic deleted while draining):**
-
-```
-On RemoveTopicRecord replay:
-  ScheduledFuture<?> future = pendingDrainRemovals.remove(topicId);
-  if (future != null) {
-      future.cancel(false);  // Don't interrupt if already running
-  }
-```
-
-**Controller failover recovery:**
-
-```
-On controller activation (after metadata log replay):
-  For each topic with draining partitions in TopicImage:
-    long remaining = drainDeadlineMs - controller.time.milliseconds();
-    if (remaining <= 0):
-      // Deadline already passed; schedule immediate removal
-      controllerEventQueue.enqueue(new RemovePartitionsEvent(topicId, partitionIds));
-    else:
-      // Re-schedule for remaining time
-      drainScheduler.schedule(() -> {
-          controllerEventQueue.enqueue(new RemovePartitionsEvent(topicId, partitionIds));
-      }, remaining, TimeUnit.MILLISECONDS);
-```
-
-**Why ScheduledExecutorService over other approaches:**
-
-| Approach | Precision | CPU Cost | Complexity | Chosen? |
-|----------|:---------:|:--------:|:----------:|:-------:|
-| Tick-based polling (check on every tick) | ~500ms | O(N) per tick for N draining topics | Low | No — wasteful if many topics drain; imprecise |
-| Purgatory TimingWheel | O(1) | O(1) | High — needs extra thread, synchronization, not designed for controller | No — over-engineered for this use case |
-| ScheduledExecutorService | ms-level | O(1) — fires only when needed | Medium | **Yes** |
-
-**Thread safety guarantee:** The `ScheduledExecutorService` callback does NOT write metadata directly. It only
-enqueues an event onto `controllerEventQueue`. The actual `RemovePartitionRecord` write happens on the single
-controller thread, maintaining the controller's single-writer guarantee.
-
-**Shutdown:** On controller deactivation, `drainScheduler.shutdownNow()` cancels all pending tasks.
-On reactivation, tasks are re-scheduled from replayed metadata state.
-
-#### Replay of PartitionDrainingRecord (MetadataDelta)
-
-```java
-// In TopicsDelta.java
-public void replay(PartitionDrainingRecord record) {
-    TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
-    topicDelta.replayPartitionDraining(record);
-}
-
-// In TopicDelta.java
-public void replayPartitionDraining(PartitionDrainingRecord record) {
-    for (int partitionId : record.partitionIds()) {
-        PartitionRegistration existing = image.partitions().get(partitionId);
-        if (existing != null) {
-            partitionChanges.put(partitionId, existing.toBuilder().setDraining(true).build());
-        }
-    }
-    this.drainDeadlineMs = record.drainDeadlineMs();
-}
-```
-
-#### Replay of RemovePartitionRecord (MetadataDelta)
-
-```java
-// In TopicsDelta.java
-public void replay(RemovePartitionRecord record) {
-    TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
-    topicDelta.replayRemovePartition(record);
-}
-
-// In TopicDelta.java
-public void replayRemovePartition(RemovePartitionRecord record) {
-    partitionChanges.put(record.partitionId(), null); // null signals removal from TopicImage
-}
-```
-
-#### Controller Failover Recovery
-
-On new controller activation (replay of metadata log):
-
-1. All `PartitionDrainingRecord` entries are replayed → draining state restored in TopicImage
-2. Controller checks all draining sets against current wall-clock time
-3. If deadline already passed → immediately schedule `RemovePartitionRecord` writes
-4. If deadline in future → register for checking on next tick
+`DeleteTopics` supersedes the drain. Replaying `RemoveTopicRecord` discards its deadlines, force overrides and
+cached readiness; later removal checks skip the absent topic.
 
 ---
 
@@ -1298,7 +1046,7 @@ flowchart TD
     B -->|Yes| C{P.isDraining()?}
     C -->|No| D[Normal produce path]
     C -->|Yes| E{Is control batch?\nCOMMIT/ABORT marker}
-    E -->|Yes| F[Allow through with acks=1\nRelaxed ISR requirement]
+    E -->|Yes| F[Allow coordinator origin; retain acks=all and min ISR]
     E -->|No| Z2[Return NOT_LEADER_OR_FOLLOWER]
     F --> G[Append to local log]
     D --> H[Append to local log + ISR ack]
@@ -1377,9 +1125,8 @@ This means:
 
 **For producers using MetadataResponse v14:**
 
-Draining partitions appear with `IsDraining=true`. The producer's `Cluster.availablePartitionsForTopic()` method
-filters them out. Same effective behavior, but the producer can log a warning about draining partitions for
-observability.
+Draining partitions appear with `IsDraining=true`. `ProducerMetadata` excludes them from its cached partition
+metadata, so both keyed and sticky partitioning use only active partitions. Consumer metadata retains them for reads.
 
 **Sticky partitioner impact:**
 
@@ -1400,7 +1147,7 @@ Timeline:
   T3: Broker returns NOT_LEADER_OR_FOLLOWER (partition-level error)
   T4: Producer calls metadata.requestUpdate(false) — forces immediate metadata refresh
   T5: Producer receives new metadata (draining partition excluded or IsDraining=true)
-  T6: Producer retries batch → routed to active partition
+  T6: Newly partitioned records are routed to active partitions
 
   Convergence time: T6 - T2 ≈ 1-2 network RTTs (typically 2-10ms in same DC)
 ```
@@ -1428,14 +1175,10 @@ actively writing to it. No impact on data flow — they just hold stale metadata
 has received the draining metadata update but the producer hasn't learned yet. During this window:
 - Batch is in-flight → broker returns NOT_LEADER_OR_FOLLOWER
 - Producer retries the batch (if `retries > 0` and `delivery.timeout.ms` not exceeded)
-- Each retry takes ~1 RTT until metadata is refreshed
+- Retries keep the original partition; refreshing metadata does not repartition an existing batch
 
-**Maximum message delay due to partition draining:**
-```
-delay = time_for_produce_attempt + time_for_metadata_refresh + time_for_retry
-      ≈ retry_backoff_ms + metadata_fetch_RTT + produce_RTT
-      ≈ 100ms + 5ms + 5ms = ~110ms (typical)
-```
+Records already assigned to a draining partition may fail after exhausting retries or `delivery.timeout.ms`.
+There is no bounded successful-delivery delay for those records. Explicitly targeting a draining partition also fails.
 
 #### Producer Retry Behavior with retries + delivery.timeout.ms
 
@@ -1451,7 +1194,7 @@ boolean canRetry =
 // If canRetry == true:
 //   1. metadata.requestUpdate(false) — schedule metadata refresh
 //   2. reenqueueBatch(batch, now) — re-queue batch for retry after backoff
-//   3. Next attempt uses refreshed metadata → routes to active partition
+//   3. Next attempt keeps the original partition; newly partitioned sends use active partitions
 
 // If canRetry == false (delivery.timeout.ms exceeded):
 //   1. batch.done() with TimeoutException
@@ -1517,7 +1260,7 @@ Timeline for a consumer fetching from draining partition 8:
   T4: Consumer remains assigned to partition 8, polling returns empty batches
   ...
   T(deadline): partition.drain.timeout.ms expires
-  T(deadline+1): RemovePartitionRecord written → partition removed → rebalance
+  T(ready, at or after deadline): fresh safety confirmation → RemovePartitionRecord → rebalance
 ```
 
 **After lag reaches 0:**
@@ -1530,7 +1273,7 @@ Timeline for a consumer fetching from draining partition 8:
 - Not all consumers are in registered consumer groups (manual assign, Streams)
 - New consumers could start consuming during the drain period
 - "All known consumer groups at lag=0" is not the same as "all consumers have consumed everything"
-- Fixed timeout is predictable and eliminates this class of ambiguity
+- A fixed minimum interval with explicit force is predictable and eliminates this class of ambiguity
 
 #### Consumer Disconnect and Reconnect During Draining
 
@@ -1686,8 +1429,9 @@ failure semantics and recovery strategies for each layer.
 - If the controller is fenced before the record is committed, the write is lost
 - The draining state persists (PartitionDrainingRecord still in log)
 - New controller activates → sees draining partitions → re-schedules removal
-- On next deadline check, new controller writes RemovePartitionRecord
-- **No data loss, no stuck state.** Self-healing via failover.
+- On a later check, the new controller removes only after fresh safety confirmation or an explicit force override
+- Failover restores the drain and force policy. Normal removal remains pending until its safety conditions
+  are satisfied; explicit force retains its documented unresolved-transaction risk.
 
 #### Layer 2: Broker Log Deletion (LogManager.asyncDelete) — Failure
 
@@ -1715,7 +1459,7 @@ try {
 ```
 Step 1: asyncDelete() renames directory:
   "topic-8" → "topic-8.{uuid}-delete"
-  
+
   If rename fails:
     → KafkaStorageException thrown
     → errorHandler callback invoked (ReplicaManager logs it)
@@ -1725,7 +1469,7 @@ Step 1: asyncDelete() renames directory:
     → Next LogManager startup scan detects orphan dir → retries deletion
 
 Step 2: Background deletion thread processes ".delete" directories:
-  
+
   If file deletion fails:
     → Logged at ERROR level
     → Directory remains on disk with ".delete" suffix
@@ -1788,23 +1532,16 @@ Recovery:
 
 #### Layer 4: Offset Tombstone Generation (OffsetMetadataManager) — Failure
 
-**What can fail:**
-- `__consumer_offsets` partition's leader is unavailable
-- Group coordinator is being restarted
+A loading or unavailable offsets shard may miss the immediate partition deletion event.
+The coordinator reconciles committed and pending transactional offsets against durable deletion
+metadata on shard load and metadata updates. Scheduled cleanup regenerates tombstones after
+failed appends. Entries remain in memory until tombstones replay successfully.
 
-**Behavior:**
-```
-If tombstone generation fails:
-  → Orphaned offsets remain in __consumer_offsets
-  → They are harmless: just stale key-value pairs taking up space
-  → __consumer_offsets topic compaction will eventually remove them
-    (offsets expire based on offsets.retention.minutes, default 7 days)
-  → After expiry, compaction removes the records
-```
-
-**No retry needed.** Orphaned offsets are not harmful. They simply take up space in `__consumer_offsets`
-until natural expiry + compaction removes them. This is the same behavior as when a consumer group is
-deleted without explicitly committing tombstones.
+Only allocated-and-removed partition IDs are reconciled; arbitrary never-created IDs and
+absent-topic offsets retain existing behavior. A topic ID mismatch never authorizes cleanup of
+a newer topic incarnation. Retention is not a reliable fallback because an actively subscribed
+group can retain offsets indefinitely. Physically removed IDs cannot be reused within the same
+topic UUID, so missed cleanup cannot seed offsets for a replacement partition.
 
 #### Summary: Failure Impact Matrix
 
@@ -1814,7 +1551,7 @@ deleted without explicitly committing tombstones.
 | Broker log rename (asyncDelete step 1) | None — partition already gone from metadata | Disk space not freed | Retry on broker restart (stale dir detection) |
 | Broker log file deletion (asyncDelete step 2) | None | Disk space not freed | Background thread retries every 60s; survives restarts |
 | Remote storage deletion | None | Cloud storage cost (orphaned segments) | Background cleanup or manual; segments inaccessible to clients |
-| Offset tombstone generation | None | Stale offsets in __consumer_offsets | Natural expiry (7 days) + compaction |
+| Offset tombstone generation | None | Stale offsets in __consumer_offsets | Reconcile durable removed IDs and retry tombstones |
 
 **Design principle:** Partition removal from metadata is the **authoritative action**. All local/remote cleanup
 is best-effort and eventually consistent. No cleanup failure can cause the partition to "come back" or become
@@ -1824,22 +1561,22 @@ accessible to clients again.
 
 ### Impact on CreatePartitions API
 
-File: `metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java`
+`CreatePartitions` may increase the active partition count while a drain is in progress. The controller first
+validates the complete request, then reopens retained draining IDs below the requested target by writing
+`PartitionDrainingRecord` with `DeadlineMs=-1`. Reopening keeps the same topic UUID, partition ID, local log,
+producer state, data and offsets. Brokers clear the write fence; cancellation clears both the removal deadline
+and force override. Retained IDs above the target keep draining with their original deadlines and force settings.
 
-In `createPartitions()` validation (around line 1908), add:
+For example, with five retained partitions and IDs 3 and 4 draining, `CreatePartitions(totalCount=4)` reopens ID 3
+and leaves ID 4 draining. A target above the retained count reopens the retained draining IDs first and creates
+new IDs only if the requested contiguous prefix contains no physically removed ID. Validation-only or rejected
+requests write neither cancellation nor creation records.
 
-```java
-// Block CreatePartitions if topic has draining partitions
-if(topicControlInfo.hasDrainingPartitions()){
-        return new
-
-ApiError(Errors.PARTITION_OPERATION_IN_PROGRESS,
-        "Cannot create partitions while a partition deletion is in progress for topic '"+topicName +"'.");
-}
-```
-
-**Rationale:** Simultaneous expansion and shrinking is semantically contradictory and creates partition ID
-conflicts. The operator must wait for draining to complete before expanding.
+Physically removed IDs cannot be reused within the same topic UUID. `TopicRecord.PartitionIdHighWatermark`
+records the highest allocated ID plus one and survives replay and snapshots even after tail removal. If an
+increase would cross a removed ID, the controller returns `INVALID_PARTITIONS`; a fresh local log cannot fence
+delayed requests to that old topic UUID and partition ID. Reopening before removal preserves the existing log,
+while recreating an already removed ID requires a new topic UUID.
 
 ---
 
@@ -1867,52 +1604,24 @@ Two interactions:
 
 ### Interaction with Transactional Producers
 
-**Scenario:** A transactional producer has an open transaction writing to partition 8 when partition 8 enters DRAINING.
+A normal drain fences all producer data writes, including transactional data, before its leader reports
+readiness. Existing COMMIT and ABORT markers use the coordinator append path and bypass that data-write fence,
+with unchanged `acks=all`, follower acknowledgement and `min.insync.replicas` checks. The leader reports blocked
+while an ongoing transaction or an unreplicated transaction completion exists.
 
-**Behavior:**
+The controller removes a normal draining partition only after both its deadline and a fresh matching-epoch
+leader confirmation. A missing leader, stale report, unavailable log or unavailable ISR may keep it draining
+indefinitely. The heartbeat `BlockedReason` and controller logs explain why; Describe retains only its existing
+draining flag and deadline. Readiness is soft state and must be re-established after failover or leadership changes.
 
-1. The next `Produce` request to partition 8 returns `NOT_LEADER_OR_FOLLOWER`
-2. The producer calls `abortTransaction()` (or the transaction times out)
-3. Transaction coordinator sees the abort and writes abort markers
-4. **For the abort marker write to partition 8:** The broker MUST allow writing the abort marker even though the
-   partition is draining. Transaction markers (ABORT/COMMIT) bypass the draining check. This is necessary to cleanly
-   resolve the transaction.
+`DeletePartitionsOptions.force(true)` and CLI `--force` explicitly bypass this transaction-safety gate after the
+same minimum interval. The per-topic request flag becomes per-partition metadata and survives snapshots.
+Upgrading an existing drain for the same target preserves its deadline. Force can discard unresolved transactional
+data, including one participant of a transaction spanning retained partitions.
 
-**Implementation detail:**
-
-In the produce handler's draining check:
-
-```java
-if(partition.isDraining() &&!request.
-
-isTransactional()){
-        return Errors.NOT_LEADER_OR_FOLLOWER;
-}
-// For transactional requests: only allow COMMIT/ABORT control records, not data records
-        if(partition.
-
-isDraining() &&request.
-
-isTransactional()){
-        if(
-
-isControlBatch(records)){
-        // Allow transaction markers (COMMIT/ABORT) through
-        }else{
-        return Errors.NOT_LEADER_OR_FOLLOWER;
-    }
-            }
-```
-
-**Edge case: Transaction started AFTER draining begins:**
-
-- Not possible. The producer refreshes metadata, doesn't see the draining partition, and never calls
-  `AddPartitionsToTxn` for it.
-
-**Edge case: TransactionCoordinator is on the draining partition's broker:**
-
-- The transaction coordinator lives on `__transaction_state` topic, not on user topic partitions.
-  No interaction.
+After a metadata refresh, producer routing avoids draining partitions. Stale or explicit `AddPartitionsToTxn`
+requests can still reference them; the broker's data-write fence remains authoritative. The transaction
+coordinator uses the separate `__transaction_state` internal topic, which partition deletion cannot target.
 
 #### WriteTxnMarkers Retry After Partition Removal
 
@@ -1952,7 +1661,8 @@ sequenceDiagram
   which is keyed by partition ID. A removed partition simply won't have an entry. ✓
 - **Convergence window:** Between `RemovePartitionRecord` replay on the coordinator's broker and the metadata
   cache update, the coordinator retries. This window is typically < 1s (metadata propagates via Raft log).
-- **No data loss, no stuck transactions.** The coordinator will always converge.
+- The metadata retry path converges. This is a liveness property, not a transaction-safety guarantee:
+  forced deletion can discard unresolved transactional data. Normal deletion requires the separate safety gate.
 
 **Design decision: No new error code needed.**
 
@@ -1974,8 +1684,9 @@ for the now-removed partition.
 3. Transaction coordinator retries → metadata cache shows partition gone → drops from pending set
 4. Transaction finalizes without the marker on the removed partition
 
-**Why this is safe:**
-- The partition's data is being deleted — the marker has no consumer-visible effect
+**Removal policy and late markers:**
+- Normal deletion already required a fresh leader safety confirmation. Explicit force accepts the risk of
+  discarding unresolved transactional data; a late marker does not undo that choice.
 - The transaction's state in `__transaction_state` will record COMMIT/ABORT regardless
 - No divergence between coordinator state and partition log because the partition log ceases to exist
 
@@ -2004,25 +1715,18 @@ written. The transaction coordinator simply skips the partition. There is no ris
    `deleteProducerSnapshots(deletedSegments, false)` which renames `.snapshot` → `.snapshot.deleted`,
    then physically deletes. `LocalLog.deleteEmptyDir()` does recursive `Utils.delete(dir)` as safety net.
 
-**Partition ID reuse safety (DeletePartitions + later CreatePartitions):**
+**Partition ID reuse fencing:**
 
-When partition 8 is deleted and later a new partition 8 is created on the same topic:
+A physically removed partition ID cannot be allocated again within the same topic UUID.
+CreatePartitions returns INVALID_PARTITIONS if the requested prefix contains a deleted ID.
+The highest allocated ID plus one is retained in TopicImage and controller timeline state;
+TopicRecord snapshots persist it through the tagged PartitionIdHighWatermark field.
 
-```
-Safety guarantees:
-1. logCreationOrDeletionLock: Both asyncDelete() and createLog() synchronize on this lock.
-   Old "topic-8" is renamed to "topic-8.<uuid>-delete" BEFORE new "topic-8" can be created.
-2. Fresh empty directory: Files.createDirectories() creates brand new "topic-8" dir.
-   ProducerStateManager scans it → zero snapshots → fresh state.
-3. Restart protection: Directories with "-delete" suffix are recognized as pending-deletion
-   on broker restart, never confused with active partitions.
-4. Topic UUID unchanged: Unlike topic deletion + recreation, DeletePartitions keeps the same
-   topic UUID. However, safety is still guaranteed by the directory rename + lock ordering.
-   The ProducerStateManager for the new partition 8 starts completely clean.
-```
-
-**Invariant:** A new partition with a reused ID NEVER sees stale producer state from the old partition.
-The `logCreationOrDeletionLock` serializes the rename-then-create sequence on each broker.
+A fresh log or producer snapshot would not fence delayed old Produce requests and transaction
+markers, which still address the same topic UUID and partition index. A new topic UUID is
+required for a new incarnation. Reopening before physical removal is safe: it cancels the
+pending deadline and preserves the same log, producer state, committed offsets and partition
+registration.
 
 ---
 
@@ -2087,62 +1791,21 @@ removing entries from `TopicImage.partitions()`).
 
 ### Interaction with Kafka Streams
 
-**When a partition enters DRAINING:**
+During draining, source partitions remain readable and tasks keep processing. After removal,
+both classic and Streams protocols derive fewer source tasks and revoke ownership for removed
+tasks. Previously assigned active, standby and warmup ownership is accepted while reconciliation
+revokes it; arbitrary invalid tasks are still rejected.
 
-- Streams applications subscribed to the topic continue consuming from the draining partition
-- Tasks assigned to the draining partition continue processing
+Existing changelog topics may have more partitions than the current source-derived task count.
+Both client and coordinator validation accept that surplus only for changelog topics. Every
+active task must still have a changelog partition. The spare changelog data is not assigned a
+source task and is not automatically deleted.
 
-**When a partition is REMOVED:**
-
-- Metadata update triggers consumer group rebalance
-- `StreamsPartitionAssignor` recalculates task assignments with fewer partitions
-- `StreamsRebalanceListener.onPartitionsRevoked()` is called
-- `TaskManager.handleRevocation()` commits state and closes tasks for removed partitions
-- State stores associated with removed partition tasks are cleaned up
-
-**Repartition topics:**
-
-- If the draining topic is an internal repartition topic → **Reject with INVALID_REQUEST.** Internal Streams topics
-  should not have partitions deleted (they are managed by the Streams app). Detection: check if topic name matches
-  the Streams internal topic naming pattern or if Topic.isInternal() returns true.
-- Actually, internal Streams topics are not in `Topic.INTERNAL_TOPICS`; they use app-id prefixed names. The
-  protection here is the same as any user topic — the operator must know what they are doing.
-
-**Key consideration for Streams operators:**
-
-- If Streams uses `hash(key) % partitionCount` for routing to a repartition topic, and that topic has partitions
-  deleted, the repartition data becomes inconsistent. Operators must ensure no active Streams app is using the topic
-  before deleting partitions, or perform a full application restart + state cleanup.
-
-**Changelog/Repartition topic partition count mismatch:**
-
-When a source topic has partitions deleted, any derived changelog or repartition topic retains its original
-partition count. This creates a mismatch:
-
-```
-Before: source-topic (10 partitions) → changelog-topic (10 partitions)
-After:  source-topic (7 partitions) → changelog-topic (10 partitions, 3 now orphaned)
-
-StreamThread tasks:
-  - Tasks 0-6: source partition matches changelog partition ✓
-  - Tasks 7-9: no source partition, but changelog partition still exists
-              → StreamsPartitionAssignor won't assign these tasks (no input partition)
-              → Changelog partitions 7-9 become orphaned state stores
-```
-
-**No automatic detection mechanism exists.** The `StreamsPartitionAssignor` computes tasks from source topic
-partition count. If the source shrinks, tasks for the deleted partitions are simply never assigned. The
-changelog data remains on disk but is never accessed.
-
-**Operator action required:**
-1. Stop all Streams application instances
-2. Delete partitions from the source topic
-3. Reset the application (`kafka-streams-application-reset.sh --input-topics ...`)
-4. The application will recreate internal topics with correct partition count on restart
-5. State stores will be rebuilt from changelog
-
-**Alternative (avoid mismatch):** Delete the internal topics manually before restarting the Streams app.
-The app will recreate them with the correct partition count based on the source topic.
+Repartition topic counts remain exact, including a topic also used as a changelog. Co-partitioned
+join inputs must match; operators must coordinate changes to all affected inputs or stop and
+reset/migrate the application. The broker does not recognize application-prefixed Streams
+internal names through Topic.isInternal(), so operators must protect application-managed
+changelog and repartition topics from direct partition removal.
 
 ---
 
@@ -2295,37 +1958,29 @@ This removes the last 3 partitions from `my-topic`, placing them in draining sta
 
 ### Partition Numbering After Delete + CreatePartitions
 
-**Example:** Topic with partitions [0..9], delete 3 → partitions [0..6]. Then `CreatePartitions(count=9)` →
-partitions [0..8].
-
-**Invariant:** Partition IDs ALWAYS form a contiguous range `[0, count-1]`. IDs are reused after deletion.
-
-**Justification:**
-
-- After `RemovePartitionRecord` is replayed, the partition ceases to exist in `TopicImage`
-- `CreatePartitions` adds new partitions starting from the current count (which is now 7), so new partitions get
-  IDs 7 and 8
-- The `PartitionRecord` written for new partition 7 creates a fresh partition with empty log — there is no
-  confusion with the old partition 7's data (which was fully deleted)
-- Consumer committed offsets for old partition 7 were cleaned up via tombstones (see Orphaned Offsets section)
-- `hash(key) % 9` with new count is entirely new routing; no expectations from old routing carry over
+Partition IDs form a contiguous retained prefix after completed removal. Removed IDs are never
+reused within the same topic UUID. The controller returns INVALID_PARTITIONS for an expansion
+that would reuse one; a new topic is required for a new incarnation. The historical allocation
+high watermark survives snapshots and controller failover.
 
 ### CreatePartitions During Draining
 
-**Blocked** with `PARTITION_OPERATION_IN_PROGRESS` (136).
+Expansion targets the active count. It first reopens existing draining IDs within the target
+prefix by writing PartitionDrainingRecord with DeadlineMs=-1. IDs above the target remain
+draining with their original deadlines. New PartitionRecords are written only above the
+physically retained count, provided no deleted ID would be reused.
 
-**Why not allow it?**
-
-- If topic has partitions 0-9 and partitions 7-9 are draining, what does `CreatePartitions(count=12)` mean?
-    - Should new partitions be 10, 11? But the topic currently reports 7 active partitions.
-    - Should new partitions be 7, 8? But 7-9 still exist in draining state.
-- The semantics are ambiguous and the workaround is simple: wait for drain to complete, then create.
+For retained IDs 0-4 with IDs 3-4 draining: target4 reopens3, target5 reopens3-4, target6 also
+creates5. Reopened partitions retain their original data and registration. Manual assignments
+apply only to newly created partitions, not reopened ones. Quotas count both resumed and newly
+created partitions. Validation-only and rejected requests do not cancel deadlines. Brokers
+clear the write fence on resume; snapshots store only the remaining positive deadlines.
 
 ### DeletePartitions During Existing Drain
 
-**Blocked** with `PARTITION_OPERATION_IN_PROGRESS` (136).
-
-Only one drain operation per topic at a time. Operator must wait for current drain to complete.
+A normal or conflicting drain request returns `PARTITION_OPERATION_IN_PROGRESS`. An explicit force request for
+the same target upgrades existing draining partitions to `Force=true` and preserves their original deadlines.
+It does not shorten the minimum interval or extend it by starting a second countdown.
 
 ### Topic Deletion During Draining
 
@@ -2339,13 +1994,10 @@ When `RemoveTopicRecord` is replayed:
 
 ### Controller Failover During Draining
 
-**Guaranteed recovery.** The `PartitionDrainingRecord` is persisted in the metadata log. New controller:
-
-1. Replays all metadata records
-2. Rebuilds draining state in `TopicImage`
-3. On first tick: checks all draining sets against current wall-clock
-4. Deadline passed → immediately writes `RemovePartitionRecord` (with small delay for log catch-up)
-5. Deadline in future → checks again on next tick
+The new controller restores deadlines and per-partition force flags from replay or snapshots and clears all
+cached readiness reports. For an expired normal drain it waits for fresh applied-metadata confirmation from the
+current leader with matching epochs. An expired forced drain is eligible without that confirmation. Future
+deadlines keep their original earliest removal time.
 
 ### Broker Restart During Draining
 
@@ -2366,9 +2018,10 @@ cannot write `PartitionDrainingRecord` or `RemovePartitionRecord`.
 
 ### partition.drain.timeout.ms = 0
 
-**Allowed.** Means immediate removal with no drain period. The controller writes `PartitionDrainingRecord` and
-immediately follows with `RemovePartitionRecord` in the same batch (or next tick). This is useful for operators
-who have already drained consumers manually.
+Zero makes removal eligible without a consumer-drain wait. A normal drain still waits for its current leader to
+apply the write fence and report transaction safety. Zero does not imply same-batch or immediate removal.
+Explicit force bypasses safety after that zero minimum interval, while still following metadata commit and
+broker cleanup asynchronously.
 
 ### Concurrent Requests for Different Topics
 
@@ -2380,7 +2033,8 @@ proceed in parallel.
 - If a broker cannot communicate with the controller, it won't receive the metadata update about draining
 - The broker continues serving produce requests to the partition until it catches up
 - Eventually (when network heals), broker gets the update and starts rejecting produces
-- This is the same eventual-consistency model as all Kafka metadata propagation
+- The controller rejects safety reports that do not cover the applied drain metadata, so normal removal waits
+- Explicit force can bypass that safety requirement only after the original deadline
 
 ### What If Producer Ignores NOT_LEADER_OR_FOLLOWER?
 
@@ -2597,7 +2251,7 @@ The cleanup process is crash-safe because:
 | Name | Type | MBean | Description |
 |------|------|-------|-------------|
 | `DrainingPartitionCount` | Gauge | `kafka.controller:type=KafkaController,name=DrainingPartitionCount` | Number of partitions currently in DRAINING state across all topics. Only reported by the active controller. |
-| `PendingDrainRemovals` | Gauge | `kafka.controller:type=KafkaController,name=PendingDrainRemovals` | Number of scheduled deferred removal events pending in the DrainScheduler. |
+| `PendingDrainRemovals` | Gauge | `kafka.controller:type=KafkaController,name=PendingDrainRemovals` | Number of draining removals still pending deadline or transaction safety. |
 | `DrainCompletedTotal` | Meter | `kafka.controller:type=KafkaController,name=DrainCompletedTotal` | Cumulative count of partitions that transitioned from DRAINING to REMOVED. |
 | `DeletePartitionsRequestsPerSec` | Meter | `kafka.network:type=RequestMetrics,name=RequestsPerSec,request=DeletePartitions` | Rate of DeletePartitions requests received by the broker. |
 | `DeletePartitionsTotalTimeMs` | Histogram | `kafka.network:type=RequestMetrics,name=TotalTimeMs,request=DeletePartitions` | Total time to process DeletePartitions requests. |
@@ -2619,15 +2273,15 @@ The cleanup process is crash-safe because:
 
 ### Controller Impact
 
-- **PartitionDrainingRecord write**: Single metadata record per `DeletePartitions` call, comparable to a `PartitionChangeRecord`. Negligible impact on Raft append latency.
+- **PartitionDrainingRecord writes**: One record per targeted partition, including its deadline and force flag; force upgrades also preserve that deadline.
 - **RemovePartitionRecord writes**: One record per partition removed. For a topic with 100 partitions deleting 50, this is 50 records in a batch — similar to a 50-partition topic deletion. Batch amortizes Raft commit overhead.
-- **ScheduledExecutorService memory**: Each pending drain holds one `ScheduledFuture<?>` reference (~64 bytes). Even 10,000 concurrent drains require < 1 MB.
+- **Readiness state**: Cached leader confirmations are proportional to draining partitions and are cleared on controller failover. The existing controller periodic task checks removal eligibility.
 - **Failover recovery**: On controller activation, iterating all topics with draining partitions is O(drainingTopics). In practice, very few topics drain simultaneously, so this adds negligible startup latency.
 
 ### Broker Impact
 
 - **Produce rejection overhead**: A single boolean check (`partition.isDraining()`) on each produce request for draining partitions. The hot path (non-draining) adds one field read — effectively zero cost.
-- **Metadata propagation**: Draining/removal records propagate via the existing metadata update path. No additional network round trips required.
+- **Metadata and readiness propagation**: Draining/removal records use the existing metadata path. Leader transaction-safety status is included in the existing broker heartbeat; normal removal waits for its application confirmation.
 - **Log deletion**: `asyncDelete()` renames the directory (O(1) filesystem operation) then queues background deletion. Background thread deletes segment files sequentially. Deleting a 100 GB partition log takes proportional time but does not block serving.
 - **Remote storage deletion**: Async, fire-and-forget with retries. Does not block broker serving or replication.
 - **Checkpoint file rewrites**: One atomic file write per log directory to update offset checkpoint files. Existing code path, same as topic deletion.
@@ -2642,7 +2296,7 @@ The cleanup process is crash-safe because:
 
 | Dimension | Practical Limit | Bottleneck |
 |-----------|----------------|------------|
-| Concurrent draining topics | ~10,000 | ScheduledExecutorService queue size (unbounded, but controller memory) |
+| Concurrent draining topics | ~10,000 | Controller state size and periodic readiness checks |
 | Partitions per single DeletePartitions call | ~10,000 | Metadata batch size (default 5MB); each PartitionDrainingRecord is ~50 bytes |
 | Drain timeout range | 0 to ~292 years (int64 ms) | Wall-clock overflow not a concern in practice |
 | Removal batch size | Limited by controller batch size | Same constraint as topic deletion |
@@ -2676,19 +2330,32 @@ Topic: orders   TopicId: abc123   PartitionCount: 10   ReplicationFactor: 3
   Partition: 9   Leader: 1   Replicas: 1,2,3   Isr: 1,2,3   Draining: true   Deadline: 2026-07-15T15:00:00Z
 ```
 
-**Set drain timeout before deletion (immediate removal):**
+Set the minimum interval to zero to make removal eligible without a consumer-drain wait. Normal deletion
+still requires fresh transaction-safety confirmation:
 
 ```bash
-$ bin/kafka-configs.sh --bootstrap-server localhost:9092 \
+bin/kafka-configs.sh --bootstrap-server localhost:9092 \
     --entity-type topics --entity-name orders \
     --alter --add-config partition.drain.timeout.ms=0
-Completed updating config for topic orders.
-
-$ bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-    --alter --topic orders \
-    --delete-partitions 3
-Initiated partition deletion for topic 'orders': partitions [7, 8, 9] removed immediately (drain timeout = 0).
+bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    --alter --topic orders --delete-partitions 3
 ```
+
+To explicitly bypass transaction safety after the deadline, pass `--force`. This also upgrades an existing drain
+for the same target while preserving its original deadline:
+
+```bash
+bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    --alter --topic orders --delete-partitions 3 --force
+# Equivalent target-count form for a ten-partition topic:
+bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    --alter --topic orders --partitions 7 --force
+```
+
+`--force` is valid only for an alteration that decreases partition counts. With a topic pattern, every matched
+topic must pass that validation before any mutation is submitted. The command reports initiation, including for
+zero-timeout or forced deletion; it does not promise that removal is complete. Describe continues to show the
+draining flag and original deadline. Controller logs explain transaction-safety blockers.
 
 **Error: draining already in progress:**
 
@@ -2713,7 +2380,9 @@ Cannot delete all partitions; at least one partition must remain.
 
 | Option | Description | Mutually Exclusive With |
 |--------|-------------|------------------------|
-| `--delete-partitions <count>` | Number of partitions to remove from the tail | `--partitions` (increase) |
+| `--delete-partitions <count>` | Number of partitions to remove from the tail | `--partitions` |
+| `--partitions <count>` | Target total count; a lower count initiates partition deletion | `--delete-partitions` |
+| `--force` | Explicit transaction-safety override for a decrease; validates all matched topics before mutation | Increases or non-alter operations |
 
 ---
 
@@ -2729,7 +2398,7 @@ Cannot delete all partitions; at least one partition must remain.
 | Producers | Any version | No code changes. v0-v13 metadata: draining partitions excluded. v14: IsDraining field. |
 | Consumers (group) | Any version | No code changes. Standard rebalance handles removal. |
 | Consumers (manual assign) | Any version | Application must detect UNKNOWN_TOPIC_OR_PARTITION and update assignment. |
-| Kafka Streams | Any version | Rebalance handles task reassignment automatically. |
+| Kafka Streams | Updated client/coordinator | Surplus changelog accepted; repartition and join constraints remain. |
 | Kafka Connect | Any version | Connector rebalance handles removal automatically. |
 | MirrorMaker 2 | Any version | Detects partition deletion on source. Does NOT propagate to target. |
 
@@ -2760,9 +2429,8 @@ flowchart LR
 If issues are found after enabling:
 
 - Partitions already REMOVED cannot be recovered (data is deleted)
-- Partitions in DRAINING can be "unblocked" by downgrading MetadataVersion, but the draining records remain in the
-  log. On downgrade, the new controller ignores unknown record types (standard KRaft behavior for forward
-  compatibility)
+- Reopen retained draining partitions with CreatePartitions before removal. Downgrading across IBP_4_4_IV2
+  is rejected because metadata changed; older controllers must not discard draining state or historical ID allocation.
 - **Recommendation:** Test thoroughly with non-critical topics first
 
 ### Release Phases
@@ -2786,7 +2454,6 @@ If issues are found after enabling:
 | `metadata/src/main/resources/common/metadata/RemovePartitionRecord.json`                          | Metadata record schema |
 | `clients/src/main/java/org/apache/kafka/common/errors/PartitionOperationInProgressException.java` | Exception              |
 | `clients/src/main/java/org/apache/kafka/common/errors/InvalidDeletePartitionCountException.java`  | Exception              |
-| `clients/src/main/java/org/apache/kafka/clients/admin/DeletePartitionsCount.java`                 | AdminClient DTO        |
 | `clients/src/main/java/org/apache/kafka/clients/admin/DeletePartitionsOptions.java`               | AdminClient options    |
 | `clients/src/main/java/org/apache/kafka/clients/admin/DeletePartitionsResult.java`                | AdminClient result     |
 
@@ -2809,7 +2476,7 @@ If issues are found after enabling:
 | `metadata/src/main/java/org/apache/kafka/image/MetadataDelta.java`                              | Add replay dispatch for new records                                        |
 | `metadata/src/main/java/org/apache/kafka/controller/Controller.java`                            | Add `deletePartitions()` interface method                                  |
 | `metadata/src/main/java/org/apache/kafka/controller/QuorumController.java`                      | Wire `deletePartitions()`, add deadline tick check                         |
-| `metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java`             | Implement `deletePartitions()`, block `createPartitions()` during draining |
+| `metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java`             | Implement deletion safety gate, heartbeat readiness and force upgrades; reopen retained IDs on increase |
 | `core/src/main/scala/kafka/server/ControllerApis.scala`                                         | Add `handleDeletePartitions()` request handler                             |
 | `group-coordinator/src/main/java/org/apache/kafka/coordinator/group/OffsetMetadataManager.java` | Add `onPartitionsDeleted()` for offset tombstones                          |
 | `tools/src/main/java/org/apache/kafka/tools/TopicCommand.java`                                  | Add `--delete-partitions` CLI option                                       |
@@ -2824,10 +2491,10 @@ If issues are found after enabling:
 |-------------------------------------------------|------------------------------------------------------------------------------------------------------------|
 | `ReplicationControlManager`                     | All validation paths (invalid count, internal topic, unauthorized, reassignment conflict, duplicate drain) |
 | `ReplicationControlManager`                     | State machine: ACTIVE→DRAINING on PartitionDrainingRecord write                                            |
-| `ReplicationControlManager`                     | Deadline tick: writes RemovePartitionRecord when time exceeds deadline                                     |
-| `ReplicationControlManager`                     | CreatePartitions blocked during draining                                                                   |
+| `ReplicationControlManager`                     | Removal check requires deadline plus fresh leader readiness, or explicit force                                     |
+| `ReplicationControlManager`                     | CreatePartitions reopens retained draining IDs; removed IDs cannot be reused                                                                   |
 | `ReplicationControlManager`                     | AlterPartitionReassignments blocked for draining partitions                                                |
-| `ReplicationControlManager`                     | DeletePartitions blocked during existing drain (same topic)                                                |
+| `ReplicationControlManager`                     | Conflicting drain blocked; same-target force upgrade preserves deadline                                                |
 | `TopicDelta`                                    | Replay `PartitionDrainingRecord` → marks partitions as draining                                            |
 | `TopicDelta`                                    | Replay `RemovePartitionRecord` → removes partition from map                                                |
 | `MetadataDelta`                                 | Dispatch to TopicsDelta for both new record types                                                          |
@@ -2838,25 +2505,30 @@ If issues are found after enabling:
 | `DescribeTopicPartitionsResponse` serialization | v1 includes IsDraining and DrainDeadlineMs                                                                 |
 | `Errors`                                        | New error codes serialize/deserialize correctly                                                            |
 | `TopicConfig`                                   | New config validates (type=long, atLeast(0))                                                               |
+| Broker heartbeat readiness                     | Safe/blocked status, applied drain metadata and current epochs; stale, omitted or fenced reports rejected |
+| Controller failover                             | Clear cached readiness while preserving deadlines and force; normal removal waits for fresh report |
+| Force policy                                    | No early removal; same-target upgrade visits only retained draining IDs and keeps deadlines; resume/remove clear force; snapshot round-trip |
+| Contiguous tail removal                         | Highest blocked ID prevents lower removal; descending eligible suffix removes; other topics proceed |
+| Admin and CLI force                             | Default false; serialize per-topic flag; reject increases/non-alter and mixed matched topics before mutation |
 | `DeletePartitionsRequest/Response`              | Serde round-trip                                                                                           |
 
 ### Integration Tests
 
 | Scenario                             | Verification                                                                                                                                   |
 |--------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| Happy path: full lifecycle           | DeletePartitions → drain period → timeout → RemovePartitionRecord → log cleanup verified                                                       |
+| Happy path: full lifecycle           | DeletePartitions → minimum interval → fresh leader safety confirmation → RemovePartitionRecord → log cleanup verified                                                       |
 | Producer during draining             | Produce to draining partition → NOT_LEADER_OR_FOLLOWER → metadata refresh → produce to active partition succeeds                               |
 | Consumer during draining             | Consumer fetches from draining partition → data received → partition removed → rebalance → consumer assigned remaining partitions              |
 | Transactional producer               | Open txn writing to partition → partition enters draining → data produce rejected → abort marker allowed through → transaction aborted cleanly |
-| CreatePartitions blocked             | CreatePartitions during drain → PARTITION_OPERATION_IN_PROGRESS                                                                                |
+| CreatePartitions during drain | Reopens retained draining IDs, preserving data; creates new IDs only beyond retained count |
 | AlterPartitionReassignments blocked  | Reassign draining partition → PARTITION_OPERATION_IN_PROGRESS                                                                                  |
 | DeletePartitions during reassignment | Partition being reassigned → DeletePartitions returns PARTITION_OPERATION_IN_PROGRESS                                                          |
 | Topic deletion during drain          | DeleteTopics → drain cancelled implicitly → topic removed                                                                                      |
 | Multiple topics concurrently         | DeletePartitions on 3 different topics simultaneously → all succeed independently                                                              |
 | Consumer group offset cleanup        | After partition removed → verify offsets tombstoned in __consumer_offsets                                                                      |
-| Partition reuse after delete         | Delete 3 → CreatePartitions +3 → new partitions get reused IDs, fresh logs                                                                     |
+| Partition reuse after delete | Deleted ID reuse rejected, including after snapshot restore |
 | CLI: --delete-partitions             | kafka-topics.sh --alter --delete-partitions 2 → succeeds                                                                                       |
-| partition.drain.timeout.ms=0         | Immediate removal, no drain period                                                                                                             |
+| partition.drain.timeout.ms=0         | No minimum wait; fresh safety confirmation still required unless explicitly forced                                                                                                             |
 | MetadataVersion check                | DeletePartitions with version < IBP_4_4_IV2 → UnsupportedVersionException                                                                      |
 | Internal topic protection            | DeletePartitions on __consumer_offsets → INVALID_REQUEST                                                                                       |
 | Mutation quota                       | Large deleteCount with low quota → THROTTLING_QUOTA_EXCEEDED                                                                                   |
@@ -2865,8 +2537,8 @@ If issues are found after enabling:
 
 | Scenario                                  | Verification                                                                                                                    |
 |-------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| Controller failover during drain          | New controller replays PartitionDrainingRecord → resumes countdown → partitions removed on schedule                             |
-| Controller failover after deadline passed | New controller detects expired deadline → immediately removes partitions                                                        |
+| Controller failover during drain          | Restores deadlines/force, clears readiness; normal removal waits for fresh confirmation                             |
+| Controller failover after deadline passed | Clears cached readiness; normal drain waits for fresh confirmation; force remains persisted                                                        |
 | Broker restart during drain               | Broker replays metadata → resumes serving fetch for draining partition → rejects produce                                        |
 | Broker restart after removal              | Broker catches up → deletes local log segments for removed partition                                                            |
 | deleteCount = partitionCount - 1          | Only partition 0 remains. Topic still functional.                                                                               |
@@ -2880,12 +2552,12 @@ If issues are found after enabling:
 
 | Scenario                                            | Verification                                                                                               |
 |-----------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| Leader crash during draining                        | New leader elected from ISR → consumer reconnects → draining state preserved → drain completes on schedule |
-| All replicas crash during draining                  | Deadline continues → RemovePartitionRecord written → on broker recovery, stale dirs cleaned up             |
+| Leader crash during draining                        | New leader elected from ISR; draining preserved; old safety confirmation invalidated |
+| All replicas crash during draining                  | Deadline stays fixed; normal removal waits for leader safety; force permits removal and later stale-dir cleanup             |
 | Follower crash + recovery before deadline           | Follower rejoins ISR → no impact on drain                                                                  |
 | Follower crash + recovery after removal             | Stale log dir detected → async deleted                                                                     |
 | Controlled shutdown of leader during drain          | Leadership migrated to follower → consumer reconnects → drain unaffected                                   |
-| Txn abort marker with min.isr unsatisfied           | Marker written with acks=1 (leader only) → transaction resolves → no deadlock                              |
+| Txn abort marker with min.isr unsatisfied | Actual WriteTxnMarkers returns ISR error; retries until recovery; normal removal waits, explicit force may override removal safety |
 | Txn commit marker during drain                      | Allowed through → transaction terminally committed → data eventually lost with partition                   |
 | In-flight acks=all produce when drain starts        | Already-appended produce completes successfully → subsequent produces rejected                             |
 | Unclean leader election during drain                | Follows topic config; if enabled, out-of-ISR follower becomes leader; consumer may see data loss           |
@@ -2941,7 +2613,7 @@ Delete partitions immediately without a draining phase.
 
 - Data loss for consumers that haven't caught up
 - Existing in-flight transactions may fail uncleanly
-- However, this IS supported via `partition.drain.timeout.ms=0` for operators who want it
+- Zero minimum wait is supported via `partition.drain.timeout.ms=0`; bypassing transaction safety additionally requires explicit force
 
 ### Alternative 5: Drain Until Lag = 0 (Smart Completion)
 
@@ -2952,7 +2624,7 @@ Instead of a fixed timeout, monitor consumer group lag and delete when all consu
 - Not all consumers are registered consumer groups (manual assignment, Streams internal consumers)
 - Determining "all consumers" is impossible — there may be consumers unknown to the broker
 - A stuck consumer would block deletion indefinitely
-- Simple timeout is predictable and gives operators explicit control
+- A minimum interval plus transaction safety protects normal deletion; explicit force gives operators control
 - Can be added as a future enhancement without breaking the current design
 
 ---
@@ -2971,8 +2643,7 @@ Instead of a fixed timeout, monitor consumer group lag and delete when all consu
 ## Out of Scope (MVP)
 
 - Deleting arbitrary (non-tail) partitions
-- Cancelling an in-progress drain
+- A separate cancellation API (CreatePartitions can reopen retained draining IDs)
 - Early completion when lag reaches 0
-- Allowing CreatePartitions during draining
 - Automatic MirrorMaker target shrinking
 - Kafka Streams automatic state store cleanup for deleted partitions (handled by existing rebalance)
