@@ -221,7 +221,8 @@ public class KRaftMetadataCache implements MetadataCache {
                 .setOfflineReplicas(offlineReplicas)
                 .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
                 .setLastKnownElr(Replicas.toList(partition.lastKnownElr))
-                .setIsDraining(draining.contains(partitionId)));
+                .setIsDraining(draining.contains(partitionId))
+                .setDrainDeadlineMs(topic.drainingPartitionDeadlines().getOrDefault(partitionId, -1L)));
         }
         return Map.entry(Optional.of(result), (upperIndex < partitions.size()) ? upperIndex : -1);
     }

@@ -40,12 +40,16 @@ public final class TopicDelta {
     private final TopicImage image;
     private final Map<Integer, PartitionRegistration> partitionChanges = new HashMap<>();
     private final Set<Integer> removedPartitions = new HashSet<>();
-    private final Set<Integer> drainingPartitions = new HashSet<>();
+    private final Set<Integer> resumedPartitions = new HashSet<>();
+    private int partitionIdHighWatermark;
+    private final Map<Integer, Long> drainingPartitionDeadlines = new HashMap<>();
+    private final Set<Integer> forcedDrainingPartitions = new HashSet<>();
     private final Map<Integer, Integer> partitionToUncleanLeaderElectionCount = new HashMap<>();
     private final Map<Integer, Integer> partitionToElrElectionCount = new HashMap<>();
 
     public TopicDelta(TopicImage image) {
         this.image = image;
+        this.partitionIdHighWatermark = image.partitionIdHighWatermark();
     }
 
     public TopicImage image() {
@@ -63,15 +67,37 @@ public final class TopicDelta {
     public void replayRemovePartition(int partitionId) {
         partitionChanges.remove(partitionId);
         removedPartitions.add(partitionId);
-        drainingPartitions.remove(partitionId);
+        drainingPartitionDeadlines.remove(partitionId);
+        forcedDrainingPartitions.remove(partitionId);
+        resumedPartitions.remove(partitionId);
     }
 
-    public void replayPartitionDraining(int partitionId) {
-        drainingPartitions.add(partitionId);
+    public void replayPartitionDraining(int partitionId, long deadlineMs) {
+        replayPartitionDraining(partitionId, deadlineMs, false);
+    }
+
+    public void replayPartitionDraining(int partitionId, long deadlineMs, boolean force) {
+        if (deadlineMs < 0) {
+            drainingPartitionDeadlines.remove(partitionId);
+            forcedDrainingPartitions.remove(partitionId);
+            resumedPartitions.add(partitionId);
+        } else {
+            drainingPartitionDeadlines.put(partitionId, deadlineMs);
+            if (force) {
+                forcedDrainingPartitions.add(partitionId);
+            } else {
+                forcedDrainingPartitions.remove(partitionId);
+            }
+            resumedPartitions.remove(partitionId);
+        }
     }
 
     public Set<Integer> drainingPartitions() {
-        return drainingPartitions;
+        return drainingPartitionDeadlines.keySet();
+    }
+
+    public Set<Integer> resumedPartitions() {
+        return resumedPartitions;
     }
 
     public Map<Integer, PartitionRegistration> newPartitions() {
@@ -99,6 +125,10 @@ public final class TopicDelta {
 
     public void replay(PartitionRecord record) {
         int partitionId = record.partitionId();
+        partitionIdHighWatermark = Math.max(partitionIdHighWatermark, partitionId + 1);
+        if (removedPartitions.remove(partitionId)) {
+            resumedPartitions.add(partitionId);
+        }
         PartitionRegistration prevPartition = partitionChanges.get(partitionId);
         if (prevPartition == null) {
             prevPartition = image.partitions().get(partitionId);
@@ -174,10 +204,16 @@ public final class TopicDelta {
                 newPartitions.put(entry.getKey(), entry.getValue());
             }
         }
-        Set<Integer> newDraining = new HashSet<>(image.drainingPartitions());
-        newDraining.addAll(drainingPartitions);
-        newDraining.removeAll(removedPartitions);
-        return new TopicImage(image.name(), image.id(), newPartitions, newDraining);
+        Map<Integer, Long> newDraining = new HashMap<>(image.drainingPartitionDeadlines());
+        newDraining.putAll(drainingPartitionDeadlines);
+        newDraining.keySet().removeAll(resumedPartitions);
+        newDraining.keySet().removeAll(removedPartitions);
+        Set<Integer> newForcedDraining = new HashSet<>(image.forcedDrainingPartitions());
+        // A new drain record replaces the previous override, including when force is false.
+        newForcedDraining.removeAll(drainingPartitionDeadlines.keySet());
+        newForcedDraining.addAll(forcedDrainingPartitions);
+        newForcedDraining.retainAll(newDraining.keySet());
+        return new TopicImage(image.name(), image.id(), newPartitions, newDraining, partitionIdHighWatermark, newForcedDraining);
     }
 
     /**
@@ -256,17 +292,28 @@ public final class TopicDelta {
         }
 
         Set<TopicPartition> draining = new HashSet<>();
-        for (int drainingId : drainingPartitions) {
-            PartitionRegistration partition = partitionChanges.get(drainingId);
-            if (partition == null) {
-                partition = image.partitions().get(drainingId);
+        Set<TopicPartition> resumed = new HashSet<>();
+        Set<Integer> changedState = new HashSet<>(partitionChanges.keySet());
+        changedState.addAll(drainingPartitionDeadlines.keySet());
+        changedState.addAll(resumedPartitions);
+        for (int partitionId : changedState) {
+            if (removedPartitions.contains(partitionId)) {
+                continue;
             }
+            PartitionRegistration partition = partitionChanges.getOrDefault(partitionId, image.partitions().get(partitionId));
             if (partition != null && Replicas.contains(partition.replicas, brokerId)) {
-                draining.add(new TopicPartition(name(), drainingId));
+                TopicPartition topicPartition = new TopicPartition(name(), partitionId);
+                if (!resumedPartitions.contains(partitionId) &&
+                        (drainingPartitionDeadlines.containsKey(partitionId) || image.drainingPartitions().contains(partitionId))) {
+                    draining.add(topicPartition);
+                } else {
+                    // Full snapshots omit canceled drains; reconcile active state for every touched replica.
+                    resumed.add(topicPartition);
+                }
             }
         }
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, draining);
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, draining, resumed);
     }
 
     @Override

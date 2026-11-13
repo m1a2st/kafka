@@ -1109,6 +1109,33 @@ public class MetadataCacheTest {
     }
 
     @Test
+    public void testDescribeTopicResponseIncludesDrainingDeadline() {
+        KRaftMetadataCache cache = new KRaftMetadataCache(0, () -> KRaftVersion.KRAFT_VERSION_0);
+        Uuid topicId = Uuid.randomUuid();
+        updateCache(cache, List.of(
+            new TopicRecord().setName("test-topic").setTopicId(topicId),
+            new PartitionRecord().setTopicId(topicId).setPartitionId(0)
+                .setLeader(0).setIsr(List.of(0)).setReplicas(List.of(0)),
+            new PartitionRecord().setTopicId(topicId).setPartitionId(1)
+                .setLeader(0).setIsr(List.of(0)).setReplicas(List.of(0)),
+            new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(1)
+                .setDeadlineMs(1234567890123L)
+        ));
+
+        List<DescribeTopicPartitionsResponsePartition> partitions = cache.describeTopicResponse(
+            List.of("test-topic").iterator(),
+            ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
+            topic -> 0, 10, false
+        ).topics().find("test-topic").partitions();
+
+        assertEquals(2, partitions.size());
+        assertFalse(partitions.get(0).isDraining());
+        assertEquals(-1L, partitions.get(0).drainDeadlineMs());
+        assertTrue(partitions.get(1).isDraining());
+        assertEquals(1234567890123L, partitions.get(1).drainDeadlineMs());
+    }
+
+    @Test
     public void testGetTopicMetadataDrainingPartitionsFilteredForOldVersions() {
         MetadataCache cache = createCache();
         Uuid topicId = Uuid.randomUuid();

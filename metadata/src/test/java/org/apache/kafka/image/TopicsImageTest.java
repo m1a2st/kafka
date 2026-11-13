@@ -22,7 +22,9 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.ClearElrRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.image.writer.ImageWriterOptions;
@@ -701,6 +703,117 @@ public class TopicsImageTest {
         List<ApiMessageAndVersion> imageRecords = getImageRecords(image);
         imageRecords.addAll(topicRecords);
         testToImage(finalImage, Optional.of(imageRecords));
+    }
+
+    @Test
+    public void testDrainingDeadlinesSurviveSnapshotRoundTrip() {
+        TopicsDelta delta = new TopicsDelta(IMAGE1);
+        PartitionDrainingRecord fooDraining = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(1234567890123L).setForce(true);
+        PartitionDrainingRecord barDraining = new PartitionDrainingRecord()
+            .setTopicId(BAR_UUID).setPartitionId(0).setDeadlineMs(1234567890456L);
+        delta.replay(fooDraining);
+        delta.replay(barDraining);
+
+        TopicsImage image = delta.apply();
+        List<ApiMessageAndVersion> snapshotRecords = getImageRecords(image);
+        Set<PartitionDrainingRecord> drainingRecords = new HashSet<>();
+        for (ApiMessageAndVersion record : snapshotRecords) {
+            if (record.message() instanceof PartitionDrainingRecord drainingRecord) {
+                drainingRecords.add(drainingRecord);
+            }
+        }
+        assertEquals(Set.of(fooDraining, barDraining), drainingRecords);
+
+        TopicsDelta restoredDelta = new TopicsDelta(TopicsImage.EMPTY);
+        RecordTestUtils.replayAll(restoredDelta, snapshotRecords);
+        assertEquals(image, restoredDelta.apply());
+    }
+
+    @Test
+    public void testDrainingDeadlineSurvivesSubsequentTopicDelta() {
+        TopicsDelta delta = new TopicsDelta(IMAGE1);
+        PartitionDrainingRecord drainingRecord = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(1234567890123L).setForce(true);
+        delta.replay(drainingRecord);
+
+        TopicsDelta subsequentDelta = new TopicsDelta(delta.apply());
+        subsequentDelta.replay(new PartitionChangeRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setLeader(3));
+
+        List<PartitionDrainingRecord> drainingRecords = getImageRecords(subsequentDelta.apply()).stream()
+            .map(ApiMessageAndVersion::message)
+            .filter(PartitionDrainingRecord.class::isInstance)
+            .map(PartitionDrainingRecord.class::cast)
+            .toList();
+        assertEquals(List.of(drainingRecord), drainingRecords);
+    }
+
+    @Test
+    public void testCancelClearsForcedDrainingState() {
+        TopicsDelta draining = new TopicsDelta(IMAGE1);
+        PartitionDrainingRecord drainingRecord = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(1000L).setForce(true);
+        draining.replay(drainingRecord);
+        TopicsImage drainingImage = draining.apply();
+        assertEquals(List.of(drainingRecord), getDrainingRecords(drainingImage));
+
+        TopicsDelta resumed = new TopicsDelta(drainingImage);
+        resumed.replay(new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(-1L).setForce(true));
+        TopicsImage resumedImage = resumed.apply();
+        assertEquals(List.of(), getDrainingRecords(resumedImage));
+        assertEquals(IMAGE1.getTopic(FOO_UUID).partitions(), resumedImage.getTopic(FOO_UUID).partitions());
+        testToImage(resumedImage);
+
+        TopicsDelta redraining = new TopicsDelta(resumedImage);
+        PartitionDrainingRecord normalDrain = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(2000L);
+        redraining.replay(normalDrain);
+        assertEquals(List.of(normalDrain), getDrainingRecords(redraining.apply()));
+    }
+
+    @Test
+    public void testRemoveClearsForcedDrainingState() {
+        TopicsDelta draining = new TopicsDelta(IMAGE1);
+        PartitionDrainingRecord drainingRecord = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(1000L).setForce(true);
+        draining.replay(drainingRecord);
+        TopicsImage drainingImage = draining.apply();
+        assertEquals(List.of(drainingRecord), getDrainingRecords(drainingImage));
+
+        TopicsDelta removed = new TopicsDelta(drainingImage);
+        removed.replay(new RemovePartitionRecord().setTopicId(FOO_UUID).setPartitionId(0));
+        TopicsImage removedImage = removed.apply();
+        assertEquals(List.of(), getDrainingRecords(removedImage));
+        assertFalse(removedImage.getTopic(FOO_UUID).partitions().containsKey(0));
+        testToImage(removedImage);
+    }
+
+    @Test
+    public void testNormalDrainReplacesInheritedForceOverride() {
+        TopicsDelta draining = new TopicsDelta(IMAGE1);
+        PartitionDrainingRecord forcedDrain = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(1000L).setForce(true);
+        draining.replay(forcedDrain);
+        TopicsImage drainingImage = draining.apply();
+        assertEquals(List.of(forcedDrain), getDrainingRecords(drainingImage));
+
+        TopicsDelta redraining = new TopicsDelta(drainingImage);
+        PartitionDrainingRecord normalDrain = new PartitionDrainingRecord()
+            .setTopicId(FOO_UUID).setPartitionId(0).setDeadlineMs(2000L);
+        redraining.replay(normalDrain);
+        TopicsImage redrainingImage = redraining.apply();
+        assertEquals(List.of(normalDrain), getDrainingRecords(redrainingImage));
+        testToImage(redrainingImage);
+    }
+
+    private static List<PartitionDrainingRecord> getDrainingRecords(TopicsImage image) {
+        return getImageRecords(image).stream()
+            .map(ApiMessageAndVersion::message)
+            .filter(PartitionDrainingRecord.class::isInstance)
+            .map(PartitionDrainingRecord.class::cast)
+            .toList();
     }
 
     @Test

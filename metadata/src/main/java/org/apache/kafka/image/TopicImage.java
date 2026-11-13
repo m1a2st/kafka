@@ -26,6 +26,7 @@ import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.PartitionRegistration;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -36,29 +37,55 @@ import java.util.Set;
  *
  * This class is thread-safe.
  */
-public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions, Set<Integer> drainingPartitions) {
+public record TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions,
+                         Map<Integer, Long> drainingPartitionDeadlines, int partitionIdHighWatermark,
+                         Set<Integer> forcedDrainingPartitions) {
     public TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions) {
-        this(name, id, partitions, Set.of());
+        this(name, id, partitions, Map.of(), 0, Set.of());
+    }
+
+    public TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions,
+                      Map<Integer, Long> drainingPartitionDeadlines) {
+        this(name, id, partitions, drainingPartitionDeadlines, 0, Set.of());
+    }
+
+    public TopicImage(String name, Uuid id, Map<Integer, PartitionRegistration> partitions,
+                      Map<Integer, Long> drainingPartitionDeadlines, int partitionIdHighWatermark) {
+        this(name, id, partitions, drainingPartitionDeadlines, partitionIdHighWatermark, Set.of());
     }
 
     public TopicImage {
+        partitionIdHighWatermark = Math.max(partitionIdHighWatermark,
+            partitions.keySet().stream().mapToInt(idValue -> idValue + 1).max().orElse(0));
         partitions = Collections.unmodifiableMap(partitions);
-        drainingPartitions = Set.copyOf(drainingPartitions);
+        drainingPartitionDeadlines = Map.copyOf(drainingPartitionDeadlines);
+        Set<Integer> forced = new HashSet<>(forcedDrainingPartitions);
+        forced.retainAll(drainingPartitionDeadlines.keySet());
+        forcedDrainingPartitions = Set.copyOf(forced);
+    }
+
+    public Set<Integer> drainingPartitions() {
+        return drainingPartitionDeadlines.keySet();
     }
 
     public void write(ImageWriter writer, ImageWriterOptions options) {
-        writer.write(0, new TopicRecord().
-            setName(name).
-            setTopicId(id));
+        TopicRecord topicRecord = new TopicRecord().setName(name).setTopicId(id);
+        int currentHighWatermark = partitions.keySet().stream().mapToInt(partitionId -> partitionId + 1).max().orElse(0);
+        if (partitionIdHighWatermark > currentHighWatermark) {
+            topicRecord.setPartitionIdHighWatermark(partitionIdHighWatermark);
+        }
+        writer.write(0, topicRecord);
         for (Entry<Integer, PartitionRegistration> entry : partitions.entrySet()) {
             int partitionId = entry.getKey();
             PartitionRegistration partition = entry.getValue();
             writer.write(partition.toRecord(id, partitionId, options));
         }
-        for (int partitionId : drainingPartitions) {
+        for (Entry<Integer, Long> entry : drainingPartitionDeadlines.entrySet()) {
             writer.write(0, new PartitionDrainingRecord().
                 setTopicId(id).
-                setPartitionId(partitionId));
+                setPartitionId(entry.getKey()).
+                setDeadlineMs(entry.getValue()).
+                setForce(forcedDrainingPartitions.contains(entry.getKey())));
         }
     }
 

@@ -25,10 +25,13 @@ import org.apache.kafka.metadata.PartitionRegistration;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class TopicDeltaTest {
@@ -61,8 +64,8 @@ public class TopicDeltaTest {
         TopicImage image = createTopicImage(4, 0, 1, 2);
         TopicDelta delta = new TopicDelta(image);
 
-        delta.replayPartitionDraining(2);
-        delta.replayPartitionDraining(3);
+        delta.replayPartitionDraining(2, 1000L);
+        delta.replayPartitionDraining(3, 1000L);
 
         // Broker 0 is a replica of all partitions, should see draining for partitions 2 and 3
         LocalReplicaChanges changes = delta.localChanges(0);
@@ -79,7 +82,7 @@ public class TopicDeltaTest {
         TopicImage image = createTopicImage(4, 0, 1);
         TopicDelta delta = new TopicDelta(image);
 
-        delta.replayPartitionDraining(2);
+        delta.replayPartitionDraining(2, 1000L);
 
         // Broker 5 is NOT a replica, should not see draining
         LocalReplicaChanges changes = delta.localChanges(5);
@@ -91,7 +94,7 @@ public class TopicDeltaTest {
         TopicImage image = createTopicImage(4, 0, 1, 2);
         TopicDelta delta = new TopicDelta(image);
 
-        delta.replayPartitionDraining(3);
+        delta.replayPartitionDraining(3, 1000L);
         assertTrue(delta.drainingPartitions().contains(3));
 
         delta.replayRemovePartition(3);
@@ -114,4 +117,83 @@ public class TopicDeltaTest {
         assertEquals(3, applied.partitions().size());
         assertFalse(applied.partitions().containsKey(3));
     }
+    @Test
+    public void testResumeClearsInheritedDrainingDeadline() {
+        TopicImage image = createTopicImage(3, 0, 1);
+        TopicDelta draining = new TopicDelta(image);
+        draining.replayPartitionDraining(2, 1000L);
+        TopicDelta resumed = new TopicDelta(draining.apply());
+        resumed.replayPartitionDraining(2, -1L);
+        assertTrue(resumed.apply().drainingPartitions().isEmpty());
+        assertTrue(resumed.localChanges(0).drainingPartitions().isEmpty());
+        assertEquals(image.partitions(), resumed.apply().partitions());
+    }
+
+    @Test
+    public void testRemoveThenRecreateInSameDelta() {
+        TopicImage image = createTopicImage(3, 0, 1);
+        TopicDelta delta = new TopicDelta(image);
+        delta.replayRemovePartition(2);
+        delta.replay(new org.apache.kafka.common.metadata.PartitionRecord()
+            .setTopicId(TOPIC_ID).setPartitionId(2).setReplicas(java.util.List.of(0, 1))
+            .setIsr(java.util.List.of(0, 1)).setLeader(1).setLeaderEpoch(1).setPartitionEpoch(1));
+        assertEquals(3, delta.apply().partitions().size());
+        assertEquals(1, delta.apply().partitions().get(2).leader);
+        assertTrue(delta.removedPartitions().isEmpty());
+        assertTrue(delta.localChanges(0).deletes().isEmpty());
+    }
+
+    @Test
+    public void testInheritedDrainingStateFollowsNewReplica() {
+        TopicImage image = createTopicImage(3, 0, 1);
+        TopicDelta draining = new TopicDelta(image);
+        draining.replayPartitionDraining(2, 1000L);
+        TopicDelta reassigned = new TopicDelta(draining.apply());
+        reassigned.replay(new org.apache.kafka.common.metadata.PartitionChangeRecord()
+            .setTopicId(TOPIC_ID).setPartitionId(2).setReplicas(java.util.List.of(0, 1, 2))
+            .setDirectories(java.util.List.of(DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED)));
+        assertEquals(java.util.Set.of(new TopicPartition(TOPIC_NAME, 2)),
+            reassigned.localChanges(2).drainingPartitions());
+    }
+
+    @Test
+    public void testForcedDrainingPartitionsAreImmutableAndLimitedToDrainingPartitions() {
+        TopicImage original = createTopicImage(3, 0, 1);
+        Set<Integer> forced = new HashSet<>(Set.of(1, 2));
+        TopicImage image = new TopicImage(original.name(), original.id(), original.partitions(),
+            Map.of(1, 1000L), original.partitionIdHighWatermark(), forced);
+        assertEquals(Set.of(1), image.forcedDrainingPartitions());
+        forced.clear();
+        assertEquals(Set.of(1), image.forcedDrainingPartitions());
+        assertThrows(UnsupportedOperationException.class, () -> image.forcedDrainingPartitions().clear());
+    }
+
+    @Test
+    public void testNormalDrainReplacesForceOverrideWithinSameDelta() {
+        TopicDelta delta = new TopicDelta(createTopicImage(3, 0, 1));
+        delta.replayPartitionDraining(2, 1000L, true);
+        assertEquals(Set.of(2), delta.apply().forcedDrainingPartitions());
+        delta.replayPartitionDraining(2, 2000L);
+        assertEquals(Map.of(2, 2000L), delta.apply().drainingPartitionDeadlines());
+        assertEquals(Set.of(), delta.apply().forcedDrainingPartitions());
+    }
+
+    @Test
+    public void testCancelClearsForceOverrideWithinSameDelta() {
+        TopicDelta delta = new TopicDelta(createTopicImage(3, 0, 1));
+        delta.replayPartitionDraining(2, 1000L, true);
+        delta.replayPartitionDraining(2, -1L, true);
+        assertEquals(Set.of(), delta.apply().drainingPartitions());
+        assertEquals(Set.of(), delta.apply().forcedDrainingPartitions());
+    }
+
+    @Test
+    public void testRemovalClearsForceOverrideWithinSameDelta() {
+        TopicDelta delta = new TopicDelta(createTopicImage(3, 0, 1));
+        delta.replayPartitionDraining(2, 1000L, true);
+        delta.replayRemovePartition(2);
+        assertEquals(Set.of(), delta.apply().drainingPartitions());
+        assertEquals(Set.of(), delta.apply().forcedDrainingPartitions());
+    }
+
 }

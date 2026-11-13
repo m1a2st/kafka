@@ -40,6 +40,7 @@ public final class LocalReplicaChanges {
     private final Map<TopicIdPartition, Uuid> directoryIds;
     // partitions that have entered the DRAINING state (produces should be rejected)
     private final Set<TopicPartition> drainingPartitions;
+    private final Set<TopicPartition> resumedPartitions;
 
     LocalReplicaChanges(
         Set<TopicPartition> deletes,
@@ -61,6 +62,19 @@ public final class LocalReplicaChanges {
         Map<TopicIdPartition, Uuid> directoryIds,
         Set<TopicPartition> drainingPartitions
     ) {
+        this(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, drainingPartitions, Set.of());
+    }
+
+    LocalReplicaChanges(
+        Set<TopicPartition> deletes,
+        Map<TopicPartition, PartitionInfo> electedLeaders,
+        Map<TopicPartition, PartitionInfo> leaders,
+        Map<TopicPartition, PartitionInfo> followers,
+        Map<String, Uuid> topicIds,
+        Map<TopicIdPartition, Uuid> directoryIds,
+        Set<TopicPartition> drainingPartitions,
+        Set<TopicPartition> resumedPartitions
+    ) {
         this.deletes = deletes;
         this.electedLeaders = electedLeaders;
         this.leaders = leaders;
@@ -68,6 +82,7 @@ public final class LocalReplicaChanges {
         this.topicIds = topicIds;
         this.directoryIds = directoryIds;
         this.drainingPartitions = drainingPartitions;
+        this.resumedPartitions = resumedPartitions;
     }
 
     public Set<TopicPartition> deletes() {
@@ -98,17 +113,22 @@ public final class LocalReplicaChanges {
         return drainingPartitions;
     }
 
+    public Set<TopicPartition> resumedPartitions() {
+        return resumedPartitions;
+    }
+
     @Override
     public String toString() {
         return String.format(
-            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, drainingPartitions = %s)",
+            "LocalReplicaChanges(deletes = %s, newly elected leaders = %s, leaders = %s, followers = %s, topicIds = %s, directoryIds = %s, drainingPartitions = %s, resumedPartitions = %s)",
             deletes,
             electedLeaders,
             leaders,
             followers,
             topicIds,
             directoryIds,
-            drainingPartitions
+            drainingPartitions,
+            resumedPartitions
         );
     }
 

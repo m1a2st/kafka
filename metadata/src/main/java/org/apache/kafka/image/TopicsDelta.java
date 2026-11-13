@@ -73,7 +73,7 @@ public final class TopicsDelta {
 
     public void replay(TopicRecord record) {
         TopicDelta delta = new TopicDelta(
-            new TopicImage(record.name(), record.topicId(), Map.of()));
+            new TopicImage(record.name(), record.topicId(), Map.of(), Map.of(), record.partitionIdHighWatermark()));
         changedTopics.put(record.topicId(), delta);
         createdTopics.put(record.name(), record.topicId());
     }
@@ -99,7 +99,7 @@ public final class TopicsDelta {
 
     public void replay(PartitionDrainingRecord record) {
         TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
-        topicDelta.replayPartitionDraining(record.partitionId());
+        topicDelta.replayPartitionDraining(record.partitionId(), record.deadlineMs(), record.force());
     }
 
     public void replay(RemovePartitionRecord record) {
@@ -252,6 +252,7 @@ public final class TopicsDelta {
         Map<String, Uuid> topicIds = new HashMap<>();
         Map<TopicIdPartition, Uuid> directoryIds = new HashMap<>();
         Set<TopicPartition> drainingPartitions = new HashSet<>();
+        Set<TopicPartition> resumedPartitions = new HashSet<>();
 
         for (TopicDelta delta : changedTopics.values()) {
             LocalReplicaChanges changes = delta.localChanges(brokerId);
@@ -263,6 +264,7 @@ public final class TopicsDelta {
             topicIds.putAll(changes.topicIds());
             directoryIds.putAll(changes.directoryIds());
             drainingPartitions.addAll(changes.drainingPartitions());
+            resumedPartitions.addAll(changes.resumedPartitions());
         }
 
         // Add all of the removed topic partitions to the set of locally removed partitions
@@ -275,7 +277,7 @@ public final class TopicsDelta {
             });
         });
 
-        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, drainingPartitions);
+        return new LocalReplicaChanges(deletes, electedLeaders, leaders, followers, topicIds, directoryIds, drainingPartitions, resumedPartitions);
     }
 
     @Override
