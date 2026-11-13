@@ -246,4 +246,29 @@ public class ControllerMetricsChangesTest {
         assertEquals(1, changes.uncleanLeaderElection());
         assertEquals(1, changes.electionFromElr());
     }
+    @Test
+    public void testRemovalUpdatesPartitionMetrics() {
+        TopicImage image = TOPIC_DELTA1.apply();
+        TopicDelta delta = new TopicDelta(image);
+        delta.replayRemovePartition(0);
+        ControllerMetricsChanges changes = new ControllerMetricsChanges();
+        changes.handleTopicChange(image, delta);
+        assertEquals(-1, changes.globalPartitionsChange());
+    }
+
+    @Test
+    public void testDrainingMetricsTrackNetState() {
+        TopicImage base = TOPIC_DELTA1.apply();
+        TopicImage draining = new TopicImage(base.name(), base.id(), base.partitions(), Map.of(4, 1000L));
+        try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.empty())) {
+            metrics.setDrainingPartitionCount(1);
+            TopicDelta delta = new TopicDelta(draining);
+            delta.replayPartitionDraining(4, -1L);
+            ControllerMetricsChanges changes = new ControllerMetricsChanges();
+            changes.handleTopicChange(draining, delta);
+            changes.apply(metrics);
+            assertEquals(0, metrics.drainingPartitionCount());
+        }
+    }
+
 }

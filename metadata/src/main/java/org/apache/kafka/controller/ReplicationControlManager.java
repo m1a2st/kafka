@@ -28,12 +28,12 @@ import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.InvalidDeletePartitionCountException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
-import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidReplicationFactorException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.NoReassignmentInProgressException;
+import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
 import org.apache.kafka.common.errors.UnknownServerException;
@@ -53,10 +53,9 @@ import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
-import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
-import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableReplicaAssignment;
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic;
@@ -64,6 +63,8 @@ import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicCol
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopicConfigCollection;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersRequestData.TopicPartitions;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
@@ -107,6 +108,7 @@ import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.timeline.SnapshotRegistry;
 import org.apache.kafka.timeline.TimelineHashMap;
 import org.apache.kafka.timeline.TimelineHashSet;
+import org.apache.kafka.timeline.TimelineInteger;
 
 import org.slf4j.Logger;
 
@@ -258,11 +260,13 @@ public class ReplicationControlManager {
         private final String name;
         private final Uuid id;
         private final TimelineHashMap<Integer, PartitionRegistration> parts;
+        private final TimelineInteger partitionIdHighWatermark;
 
         TopicControlInfo(String name, SnapshotRegistry snapshotRegistry, Uuid id) {
             this.name = name;
             this.id = id;
             this.parts = new TimelineHashMap<>(snapshotRegistry, 0);
+            this.partitionIdHighWatermark = new TimelineInteger(snapshotRegistry);
         }
 
         public String name() {
@@ -384,6 +388,15 @@ public class ReplicationControlManager {
      * Partitions currently in DRAINING state, mapped to their wall-clock deadline (epoch ms).
      */
     private final TimelineHashMap<TopicIdPartition, Long> drainingPartitions;
+    private final TimelineHashMap<TopicIdPartition, Long> partitionDrainOffsets;
+    private final TimelineHashSet<TopicIdPartition> forcedDrainingPartitions;
+
+    // Readiness is deliberately soft state: every controller activation needs fresh leader reports.
+    private record ReportedPartitionDrainStatus(int brokerId, long brokerEpoch, PartitionDrainStatus status) { }
+
+    private final Map<TopicIdPartition, ReportedPartitionDrainStatus> partitionDrainReports = new HashMap<>();
+    private final Map<TopicIdPartition, String> partitionDrainBlockers = new HashMap<>();
+    private BrokerHeartbeatManager partitionDrainHeartbeatManager;
 
     /**
      * A ClusterDescriber which supplies cluster information to our ReplicaPlacer.
@@ -419,6 +432,8 @@ public class ReplicationControlManager {
         this.imbalancedPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
         this.directoriesToPartitions = new TimelineHashMap<>(snapshotRegistry, 0);
         this.drainingPartitions = new TimelineHashMap<>(snapshotRegistry, 0);
+        this.partitionDrainOffsets = new TimelineHashMap<>(snapshotRegistry, 0);
+        this.forcedDrainingPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
     }
 
     public void replay(TopicRecord record) {
@@ -444,8 +459,9 @@ public class ReplicationControlManager {
             }
             topicNames.add(record.name());
         }
-        topics.put(record.topicId(),
-            new TopicControlInfo(record.name(), snapshotRegistry, record.topicId()));
+        TopicControlInfo topicInfo = new TopicControlInfo(record.name(), snapshotRegistry, record.topicId());
+        topicInfo.partitionIdHighWatermark.set(record.partitionIdHighWatermark());
+        topics.put(record.topicId(), topicInfo);
         log.info("Replayed TopicRecord for topic {} with topic ID {}.", record.name(), record.topicId());
     }
 
@@ -455,6 +471,7 @@ public class ReplicationControlManager {
             throw new RuntimeException("Tried to create partition " + record.topicId() +
                 ":" + record.partitionId() + ", but no topic with that ID was found.");
         }
+        topicInfo.partitionIdHighWatermark.set(Math.max(topicInfo.partitionIdHighWatermark.get(), record.partitionId() + 1));
         PartitionRegistration newPartInfo = new PartitionRegistration(record);
         PartitionRegistration prevPartInfo = topicInfo.parts.get(record.partitionId());
         String description = topicInfo.name + "-" + record.partitionId() +
@@ -518,6 +535,7 @@ public class ReplicationControlManager {
         updateReassigningTopicsIfNeeded(record.topicId(), record.partitionId(),
                 isReassignmentInProgress(prevPartitionInfo), isReassignmentInProgress(newPartitionInfo));
         topicInfo.parts.put(record.partitionId(), newPartitionInfo);
+        partitionDrainReports.remove(new TopicIdPartition(record.topicId(), record.partitionId()));
         updatePartitionInfo(record.topicId(), record.partitionId(), prevPartitionInfo, newPartitionInfo);
         updatePartitionDirectories(record.topicId(), record.partitionId(), prevPartitionInfo.directories, newPartitionInfo.directories);
         String topicPart = topicInfo.name + "-" + record.partitionId() + " with topic ID " +
@@ -565,7 +583,7 @@ public class ReplicationControlManager {
 
         // Remove any draining partitions for this topic.
         for (int partitionId : topic.parts.keySet()) {
-            drainingPartitions.remove(new TopicIdPartition(record.topicId(), partitionId));
+            clearPartitionDrain(new TopicIdPartition(record.topicId(), partitionId));
         }
 
         // Delete the configurations associated with this topic.
@@ -1114,10 +1132,16 @@ public class ReplicationControlManager {
                 " currently has " + currentCount + " partition(s); " + newCount +
                 " would not be a decrease.");
         }
-        int numToDelete = currentCount - newCount;
-        for (int i = newCount; i < currentCount; i++) {
+        List<Integer> partitionsToDelete = topicInfo.parts.keySet().stream()
+            .filter(partitionId -> partitionId >= newCount).sorted().toList();
+        int numToDelete = partitionsToDelete.size();
+        if (numToDelete != currentCount - newCount) {
+            throw new InvalidDeletePartitionCountException("The topic " + topic.name() +
+                " has a missing partition below the requested count " + newCount + ".");
+        }
+        for (int i : partitionsToDelete) {
             TopicIdPartition tp = new TopicIdPartition(topicId, i);
-            if (drainingPartitions.containsKey(tp)) {
+            if (drainingPartitions.containsKey(tp) && !topic.force()) {
                 throw new PartitionOperationInProgressException("Partition " + topic.name() +
                     "-" + i + " is already being drained.");
             }
@@ -1144,24 +1168,63 @@ public class ReplicationControlManager {
             drainTimeoutMs = TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DEFAULT;
         }
         long deadlineMs = System.currentTimeMillis() + drainTimeoutMs;
-        for (int i = newCount; i < currentCount; i++) {
+        for (int i : partitionsToDelete) {
+            TopicIdPartition tp = new TopicIdPartition(topicId, i);
+            // Force may upgrade a blocked drain, without restarting its consumer grace period.
+            if (forcedDrainingPartitions.contains(tp)) {
+                continue;
+            }
             records.add(new ApiMessageAndVersion(new PartitionDrainingRecord().
                 setTopicId(topicId).
                 setPartitionId(i).
-                setDeadlineMs(deadlineMs), (short) 0));
+                setDeadlineMs(drainingPartitions.getOrDefault(tp, deadlineMs)).
+                setForce(topic.force()), (short) 0));
         }
     }
 
     public void replay(PartitionDrainingRecord record) {
+        replay(record, 0L);
+    }
+
+    public void replay(PartitionDrainingRecord record, long offset) {
         TopicControlInfo topicInfo = topics.get(record.topicId());
         if (topicInfo == null) {
             throw new RuntimeException("Unable to find topic with ID " + record.topicId() +
                 " for partition draining.");
         }
         TopicIdPartition tp = new TopicIdPartition(record.topicId(), record.partitionId());
-        drainingPartitions.put(tp, record.deadlineMs());
-        log.info("Replayed PartitionDrainingRecord for topic {} partition {} with deadline {}.",
-            topicInfo.name, record.partitionId(), record.deadlineMs());
+        clearPartitionDrain(tp);
+        if (record.deadlineMs() >= 0) {
+            drainingPartitions.put(tp, record.deadlineMs());
+            partitionDrainOffsets.put(tp, offset);
+            if (record.force()) {
+                forcedDrainingPartitions.add(tp);
+            }
+        }
+        log.info("Replayed PartitionDrainingRecord for topic {} partition {} with deadline {} and force={}.",
+            topicInfo.name, record.partitionId(), record.deadlineMs(), record.force());
+    }
+
+    private void clearPartitionDrain(TopicIdPartition tp) {
+        drainingPartitions.remove(tp);
+        partitionDrainOffsets.remove(tp);
+        forcedDrainingPartitions.remove(tp);
+        partitionDrainReports.remove(tp);
+        partitionDrainBlockers.remove(tp);
+    }
+
+    void clearPartitionDrainReadiness() {
+        partitionDrainReports.clear();
+        partitionDrainBlockers.clear();
+        partitionDrainHeartbeatManager = null;
+    }
+
+    private void refreshPartitionDrainHeartbeatManager() {
+        BrokerHeartbeatManager heartbeatManager = clusterControl.heartbeatManager();
+        if (partitionDrainHeartbeatManager != heartbeatManager) {
+            clearPartitionDrainReadiness();
+            partitionDrainHeartbeatManager = heartbeatManager;
+        }
     }
 
     public void replay(RemovePartitionRecord record) {
@@ -1175,15 +1238,13 @@ public class ReplicationControlManager {
             throw new RuntimeException("Unable to find partition " + record.topicId() +
                 ":" + record.partitionId() + " to remove.");
         }
-        for (int i = 0; i < partition.isr.length; i++) {
-            brokersToIsrs.removeTopicEntryForBroker(record.topicId(), partition.isr[i]);
-        }
-        for (int elrMember : partition.elr) {
-            brokersToElrs.removeTopicEntryForBroker(record.topicId(), elrMember);
-        }
+        brokersToIsrs.update(record.topicId(), record.partitionId(), partition.isr, null,
+            partition.leader, NO_LEADER);
+        brokersToElrs.update(record.topicId(), record.partitionId(), partition.elr, null);
+        updatePartitionDirectories(record.topicId(), record.partitionId(), partition.directories, null);
         TopicIdPartition tp = new TopicIdPartition(record.topicId(), record.partitionId());
         imbalancedPartitions.remove(tp);
-        drainingPartitions.remove(tp);
+        clearPartitionDrain(tp);
         log.info("Replayed RemovePartitionRecord for topic {} partition {}.",
             topicInfo.name, record.partitionId());
     }
@@ -1845,12 +1906,38 @@ public class ReplicationControlManager {
         if (featureControl.metadataVersionOrThrow().isCordonedLogDirsSupported()) {
             handleDirectoriesCordoned(brokerId, brokerEpoch, request.cordonedLogDirs(), records);
         }
+        updatePartitionDrainReports(request, states.next());
         boolean isCaughtUp = request.currentMetadataOffset() >= registerBrokerRecordOffset;
         BrokerHeartbeatReply reply = new BrokerHeartbeatReply(isCaughtUp,
                 states.next().fenced(),
                 states.next().inControlledShutdown(),
                 states.next().shouldShutDown());
         return ControllerResult.of(records, reply);
+    }
+
+    private void updatePartitionDrainReports(BrokerHeartbeatRequestData request, BrokerControlState state) {
+        refreshPartitionDrainHeartbeatManager();
+        int brokerId = request.brokerId();
+        // Each heartbeat is a complete report. Omission must revoke a previously ready status.
+        partitionDrainReports.entrySet().removeIf(entry -> entry.getValue().brokerId() == brokerId);
+        if (state.fenced() || state.inControlledShutdown()) {
+            return;
+        }
+        Set<TopicIdPartition> seen = new HashSet<>();
+        for (PartitionDrainStatus status : request.drainingPartitions()) {
+            TopicIdPartition tp = new TopicIdPartition(status.topicId(), status.partitionId());
+            if (!seen.add(tp)) {
+                partitionDrainReports.remove(tp);
+                continue;
+            }
+            PartitionRegistration partition = getPartition(status.topicId(), status.partitionId());
+            if (matchesPartitionDrainLeader(partition, status, brokerId) && drainingPartitions.containsKey(tp) &&
+                    status.metadataOffset() >= partitionDrainOffsets.get(tp) &&
+                    status.metadataOffset() <= request.currentMetadataOffset()) {
+                partitionDrainReports.put(tp, new ReportedPartitionDrainStatus(
+                    brokerId, request.brokerEpoch(), status.duplicate()));
+            }
+        }
     }
 
     /**
@@ -1863,6 +1950,8 @@ public class ReplicationControlManager {
     void processExpiredBrokerHeartbeat(BrokerHeartbeatRequestData request) {
         int brokerId = request.brokerId();
         clusterControl.checkBrokerEpoch(brokerId, request.brokerEpoch());
+        // An expired heartbeat may keep the broker session alive, but cannot renew deletion readiness.
+        partitionDrainReports.entrySet().removeIf(entry -> entry.getValue().brokerId() == brokerId);
         clusterControl.heartbeatManager().touch(brokerId,
                 clusterControl.brokerRegistrations().get(brokerId).fenced(),
                 request.currentMetadataOffset());
@@ -2024,16 +2113,73 @@ public class ReplicationControlManager {
             partition.leaderEpoch);
     }
 
+    private static boolean matchesPartitionDrainLeader(
+        PartitionRegistration partition, PartitionDrainStatus status, int brokerId
+    ) {
+        return partition != null && partition.leader == brokerId &&
+            partition.leaderEpoch == status.leaderEpoch() && partition.partitionEpoch == status.partitionEpoch();
+    }
+
+    private String partitionDrainBlocker(TopicIdPartition tp) {
+        PartitionRegistration partition = getPartition(tp.topicId(), tp.partitionId());
+        ReportedPartitionDrainStatus report = partitionDrainReports.get(tp);
+        if (partition == null || partition.leader == NO_LEADER || report == null) {
+            return "awaiting transaction-safety confirmation from the current leader";
+        }
+        BrokerRegistration broker = clusterControl.registration(report.brokerId());
+        PartitionDrainStatus status = report.status();
+        if (broker == null || broker.epoch() != report.brokerEpoch() ||
+                !clusterControl.isActive(report.brokerId()) ||
+                !clusterControl.heartbeatManager().hasValidSession(report.brokerId(), report.brokerEpoch())) {
+            return "awaiting fresh transaction-safety confirmation from the current leader";
+        }
+        if (!matchesPartitionDrainLeader(partition, status, report.brokerId()) ||
+                status.metadataOffset() < partitionDrainOffsets.get(tp)) {
+            return "awaiting fresh transaction-safety confirmation from the current leader";
+        }
+        if (!status.ready()) {
+            return status.blockedReason().isEmpty() ? "leader has not confirmed transaction safety" : status.blockedReason();
+        }
+        return null;
+    }
+
     ControllerResult<Boolean> maybeRemoveExpiredDrainingPartitions() {
+        refreshPartitionDrainHeartbeatManager();
         long nowMs = System.currentTimeMillis();
         List<ApiMessageAndVersion> records = new ArrayList<>();
-        Iterator<Map.Entry<TopicIdPartition, Long>> iterator = drainingPartitions.entrySet().iterator();
-        while (iterator.hasNext() && records.size() < MAX_PARTITIONS_PER_BATCH) {
-            Map.Entry<TopicIdPartition, Long> entry = iterator.next();
-            if (entry.getValue() <= nowMs) {
+        Map<Uuid, List<Integer>> drainingByTopic = new HashMap<>();
+        for (TopicIdPartition tp : drainingPartitions.keySet()) {
+            drainingByTopic.computeIfAbsent(tp.topicId(), __ -> new ArrayList<>()).add(tp.partitionId());
+        }
+        for (Map.Entry<Uuid, List<Integer>> entry : drainingByTopic.entrySet()) {
+            List<Integer> partitionIds = entry.getValue();
+            partitionIds.sort(Collections.reverseOrder());
+            int nextTailId = Collections.max(topics.get(entry.getKey()).parts.keySet());
+            for (int partitionId : partitionIds) {
+                TopicIdPartition tp = new TopicIdPartition(entry.getKey(), partitionId);
+                // Preserve a contiguous physical tail even when transactions finish in a different order.
+                if (partitionId != nextTailId || drainingPartitions.get(tp) > nowMs) {
+                    break;
+                }
+                if (!forcedDrainingPartitions.contains(tp)) {
+                    String blocker = partitionDrainBlocker(tp);
+                    if (blocker != null) {
+                        if (!blocker.equals(partitionDrainBlockers.put(tp, blocker))) {
+                            log.info("Keeping expired partition {} draining: {}.", tp, blocker);
+                        }
+                        break;
+                    }
+                }
+                partitionDrainBlockers.remove(tp);
                 records.add(new ApiMessageAndVersion(new RemovePartitionRecord().
-                    setTopicId(entry.getKey().topicId()).
-                    setPartitionId(entry.getKey().partitionId()), (short) 0));
+                    setTopicId(tp.topicId()).setPartitionId(partitionId), (short) 0));
+                nextTailId--;
+                if (records.size() >= MAX_PARTITIONS_PER_BATCH) {
+                    break;
+                }
+            }
+            if (records.size() >= MAX_PARTITIONS_PER_BATCH) {
+                break;
             }
         }
         if (!records.isEmpty()) {
@@ -2077,22 +2223,22 @@ public class ReplicationControlManager {
         if (topicInfo == null) {
             throw new UnknownTopicOrPartitionException();
         }
-        for (int i = 0; i < topicInfo.parts.size(); i++) {
-            if (drainingPartitions.containsKey(new TopicIdPartition(topicId, i))) {
-                throw new PartitionOperationInProgressException(
-                    "Cannot create partitions while a partition deletion is in progress for topic '" +
-                    topic.name() + "'.");
+        int physicalCount = topicInfo.parts.size();
+        int activeCount = (int) topicInfo.parts.keySet().stream()
+            .filter(id -> !drainingPartitions.containsKey(new TopicIdPartition(topicId, id))).count();
+        if (topic.count() == activeCount) {
+            throw new InvalidPartitionsException("Topic already has " + activeCount + " partition(s).");
+        } else if (topic.count() < activeCount) {
+            throw new InvalidPartitionsException("The topic " + topic.name() + " currently has " +
+                activeCount + " partition(s); " + topic.count() + " would not be an increase.");
+        }
+        for (int id = 0; id < Math.min(topic.count(), topicInfo.partitionIdHighWatermark.get()); id++) {
+            if (!topicInfo.parts.containsKey(id)) {
+                throw new InvalidPartitionsException("Cannot reuse deleted partition ID " + id +
+                    " in topic '" + topic.name() + "'. Create a new topic to use a new partition incarnation.");
             }
         }
-        if (topic.count() == topicInfo.parts.size()) {
-            throw new InvalidPartitionsException("Topic already has " +
-                topicInfo.parts.size() + " partition(s).");
-        } else if (topic.count() < topicInfo.parts.size()) {
-            throw new InvalidPartitionsException("The topic " + topic.name() + " currently " +
-                "has " + topicInfo.parts.size() + " partition(s); " + topic.count() +
-                " would not be an increase.");
-        }
-        int additional = topic.count() - topicInfo.parts.size();
+        int additional = Math.max(0, topic.count() - physicalCount);
         if (topic.assignments() != null) {
             if (topic.assignments().size() != additional) {
                 throw new InvalidReplicaAssignmentException("Attempted to add " + additional +
@@ -2101,12 +2247,23 @@ public class ReplicationControlManager {
             }
         }
         try {
-            context.applyPartitionChangeQuota(additional); // check controller mutation quota
+            context.applyPartitionChangeQuota(topic.count() - activeCount); // check controller mutation quota
         } catch (ThrottlingQuotaExceededException e) {
             // log a message and rethrow the exception
             log.debug("Partition creation of {} partitions not allowed because quota is violated. Delay time: {}",
                 additional, e.throttleTimeMs());
             throw e;
+        }
+        List<ApiMessageAndVersion> newRecords = new ArrayList<>();
+        for (int id = 0; id < Math.min(topic.count(), physicalCount); id++) {
+            if (drainingPartitions.containsKey(new TopicIdPartition(topicId, id))) {
+                newRecords.add(new ApiMessageAndVersion(new PartitionDrainingRecord()
+                    .setTopicId(topicId).setPartitionId(id).setDeadlineMs(-1L), (short) 0));
+            }
+        }
+        if (additional == 0) {
+            records.addAll(newRecords);
+            return;
         }
         Iterator<PartitionRegistration> iterator = topicInfo.parts.values().iterator();
         if (!iterator.hasNext()) {
@@ -2161,12 +2318,13 @@ public class ReplicationControlManager {
                     "Unable to replicate the partition " + replicationFactor +
                         " time(s): All brokers are currently fenced or in controlled shutdown.");
             }
-            records.add(buildPartitionRegistration(partitionAssignment, isr)
+            newRecords.add(buildPartitionRegistration(partitionAssignment, isr)
                 .toRecord(topicId, partitionId, new ImageWriterOptions.Builder(featureControl.metadataVersionOrThrow()).
                         setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled()).
                         build()));
             partitionId++;
         }
+        records.addAll(newRecords);
     }
 
     void validateManualPartitionAssignment(

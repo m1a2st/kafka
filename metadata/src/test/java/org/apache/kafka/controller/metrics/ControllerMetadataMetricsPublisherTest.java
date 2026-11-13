@@ -18,6 +18,8 @@
 package org.apache.kafka.controller.metrics;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metadata.PartitionDrainingRecord;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.image.AclsImage;
 import org.apache.kafka.image.ClientQuotasImage;
 import org.apache.kafka.image.ClusterImage;
@@ -158,4 +160,30 @@ public class ControllerMetadataMetricsPublisherTest {
             assertEquals(0, env.metrics.metadataErrorCount());
         }
     }
+    @Test
+    public void testDrainingMetricsAfterSnapshotResumeAndRemoval() {
+        try (TestEnv env = new TestEnv()) {
+            Uuid topicId = TOPICS_IMAGE1.getTopic("bar").id();
+            MetadataDelta draining = new MetadataDelta.Builder().setImage(IMAGE1).build();
+            draining.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(2).setDeadlineMs(1000));
+            MetadataImage drainingImage = draining.apply(MetadataProvenance.EMPTY);
+            env.publisher.onMetadataUpdate(draining, drainingImage, fakeManifest(true));
+            assertEquals(1, env.metrics.drainingPartitionCount());
+
+            MetadataDelta resume = new MetadataDelta.Builder().setImage(drainingImage).build();
+            resume.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(2).setDeadlineMs(-1));
+            MetadataImage resumedImage = resume.apply(MetadataProvenance.EMPTY);
+            env.publisher.onMetadataUpdate(resume, resumedImage, fakeManifest(false));
+            assertEquals(0, env.metrics.drainingPartitionCount());
+            assertEquals(7, env.metrics.globalPartitionCount());
+
+            MetadataDelta removed = new MetadataDelta.Builder().setImage(resumedImage).build();
+            removed.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(2).setDeadlineMs(2000));
+            removed.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(2));
+            env.publisher.onMetadataUpdate(removed, removed.apply(MetadataProvenance.EMPTY), fakeManifest(false));
+            assertEquals(0, env.metrics.drainingPartitionCount());
+            assertEquals(6, env.metrics.globalPartitionCount());
+        }
+    }
+
 }

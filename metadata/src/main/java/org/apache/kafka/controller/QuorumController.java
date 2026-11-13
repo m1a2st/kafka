@@ -45,10 +45,10 @@ import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
-import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
-import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeletePartitionsRequestData.DeletePartitionsTopic;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -1173,6 +1173,7 @@ public final class QuorumController implements Controller {
             curClaimEpoch = epoch;
             offsetControl.activate(newNextWriteOffset);
             clusterControl.activate();
+            replicationControl.clearPartitionDrainReadiness();
 
             // Prepend the activate event. It is important that this event go at the beginning
             // of the queue rather than the end (hence prepend rather than append). It's also
@@ -1226,6 +1227,7 @@ public final class QuorumController implements Controller {
                     newWrongControllerException(OptionalInt.empty()));
             offsetControl.deactivate();
             clusterControl.deactivate();
+            replicationControl.clearPartitionDrainReadiness();
             periodicControl.deactivate();
         } catch (Throwable e) {
             fatalFaultHandler.handleFault("exception while renouncing leadership", e);
@@ -1333,7 +1335,7 @@ public final class QuorumController implements Controller {
                 replicationControl.replay((ClearElrRecord) message);
                 break;
             case PARTITION_DRAINING_RECORD:
-                replicationControl.replay((PartitionDrainingRecord) message);
+                replicationControl.replay((PartitionDrainingRecord) message, offset);
                 break;
             case REMOVE_PARTITION_RECORD:
                 replicationControl.replay((RemovePartitionRecord) message);

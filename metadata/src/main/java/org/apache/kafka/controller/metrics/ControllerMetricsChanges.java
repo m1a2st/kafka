@@ -22,7 +22,9 @@ import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
 
+import java.util.HashSet;
 import java.util.Map.Entry;
+import java.util.Set;
 
 
 /**
@@ -120,6 +122,7 @@ class ControllerMetricsChanges {
 
     void handleDeletedTopic(TopicImage deletedTopic) {
         deletedTopic.partitions().values().forEach(prev -> handlePartitionChange(prev, null));
+        drainingPartitionsChange -= deletedTopic.drainingPartitions().size();
         globalTopicsChange--;
     }
 
@@ -137,8 +140,20 @@ class ControllerMetricsChanges {
                 handlePartitionChange(prevPartition, nextPartition);
             }
         }
-        drainingPartitionsChange += topicDelta.drainingPartitions().size();
-        drainingPartitionsChange -= topicDelta.removedPartitions().size();
+        for (int removedPartition : topicDelta.removedPartitions()) {
+            PartitionRegistration previous = prev == null ? null : prev.partitions().get(removedPartition);
+            handlePartitionChange(previous, null);
+        }
+        Set<Integer> drainingChanges = new HashSet<>(topicDelta.drainingPartitions());
+        drainingChanges.addAll(topicDelta.resumedPartitions());
+        drainingChanges.addAll(topicDelta.removedPartitions());
+        for (int partitionId : drainingChanges) {
+            boolean wasDraining = prev != null && prev.drainingPartitions().contains(partitionId);
+            boolean isDraining = !topicDelta.removedPartitions().contains(partitionId) &&
+                !topicDelta.resumedPartitions().contains(partitionId) &&
+                (wasDraining || topicDelta.drainingPartitions().contains(partitionId));
+            drainingPartitionsChange += delta(wasDraining, isDraining);
+        }
         topicDelta.partitionToUncleanLeaderElectionCount().forEach((partitionId, count) -> uncleanLeaderElection += count);
         topicDelta.partitionToElrElectionCount().forEach((partitionId, count) -> electionFromElr += count);
     }

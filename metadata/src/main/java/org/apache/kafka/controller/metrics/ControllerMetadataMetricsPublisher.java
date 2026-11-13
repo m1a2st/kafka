@@ -136,9 +136,11 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setControlledShutdownBrokerCount(controlledShutdownBrokers);
 
         int totalPartitions = 0;
+        int drainingPartitions = 0;
         int offlinePartitions = 0;
         int partitionsWithoutPreferredLeader = 0;
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
+            drainingPartitions += topicImage.drainingPartitions().size();
             for (PartitionRegistration partition : topicImage.partitions().values()) {
                 if (!partition.hasLeader()) {
                     offlinePartitions++;
@@ -152,7 +154,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setGlobalPartitionCount(totalPartitions);
         metrics.setOfflinePartitionCount(offlinePartitions);
         metrics.setPreferredReplicaImbalanceCount(partitionsWithoutPreferredLeader);
-        metrics.setDrainingPartitionCount(0);
+        metrics.setDrainingPartitionCount(drainingPartitions);
     }
 
     @Override
