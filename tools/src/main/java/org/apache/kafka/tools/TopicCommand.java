@@ -270,13 +270,15 @@ public abstract class TopicCommand {
         private final String topic;
         private final Uuid topicId;
         private final int numPartitions;
+        private final int numDrainingPartitions;
         private final int replicationFactor;
         private final Config config;
 
-        TopicDescription(String topic, Uuid topicId, int numPartitions, int replicationFactor, Config config) {
+        TopicDescription(String topic, Uuid topicId, int numPartitions, int numDrainingPartitions, int replicationFactor, Config config) {
             this.topic = topic;
             this.topicId = topicId;
             this.numPartitions = numPartitions;
+            this.numDrainingPartitions = numDrainingPartitions;
             this.replicationFactor = replicationFactor;
             this.config = config;
         }
@@ -290,6 +292,10 @@ public abstract class TopicCommand {
             if (!topicId.equals(Uuid.ZERO_UUID))
                 System.out.print("\tTopicId: " + topicId);
             System.out.print("\tPartitionCount: " + numPartitions);
+            if (numDrainingPartitions > 0) {
+                System.out.print("\tActivePartitionCount: " + (numPartitions - numDrainingPartitions));
+                System.out.print("\tDrainingPartitionCount: " + numDrainingPartitions);
+            }
             System.out.print("\tReplicationFactor: " + replicationFactor);
             System.out.print("\tConfigs: " + configsAsString);
             System.out.println();
@@ -346,6 +352,11 @@ public abstract class TopicCommand {
             System.out.print("\tIsr: " + info.isr().stream()
                 .map(node -> Integer.toString(node.id()))
                 .collect(Collectors.joining(",")));
+            if (info.isDraining()) {
+                System.out.print("\tDraining: true");
+                System.out.print("\tDrainDeadlineMs: " + (info.drainDeadlineMs().isPresent() ?
+                    Long.toString(info.drainDeadlineMs().getAsLong()) : "unknown"));
+            }
             if (reassignment != null) {
                 System.out.print("\tAdding Replicas: " + reassignment.addingReplicas().stream()
                     .map(Object::toString)
@@ -485,53 +496,104 @@ public abstract class TopicCommand {
                 Map<String, KafkaFuture<org.apache.kafka.clients.admin.TopicDescription>> topicsInfo = adminClient.describeTopics(topics).topicNameValues();
 
                 if (opts.deletePartitions().isPresent()) {
-                    int deleteCount = opts.deletePartitions().get();
-                    if (deleteCount <= 0) {
-                        throw new IllegalArgumentException("--delete-partitions must be a positive integer");
-                    }
-                    Map<String, Integer> decreases = new HashMap<>();
-                    for (String topicName : topics) {
-                        int currentCount;
-                        try {
-                            currentCount = topicsInfo.get(topicName).get().partitions().size();
-                        } catch (InterruptedException | ExecutionException e) {
-                            throw new RuntimeException(e);
-                        }
-                        int targetCount = currentCount - deleteCount;
-                        if (targetCount < 1) {
-                            throw new IllegalArgumentException("Cannot delete " + deleteCount +
-                                " partitions from topic '" + topicName + "' which only has " + currentCount + " partitions");
-                        }
-                        decreases.put(topicName, targetCount);
-                    }
-                    adminClient.deletePartitions(decreases, new DeletePartitionsOptions().force(opts.force())).all().get();
+                    initiatePartitionDeletion(relativePartitionDeletionTargets(opts, topics, topicsInfo), opts.force());
                 } else {
                     Map<String, NewPartitions> increases = new HashMap<>();
                     Map<String, Integer> decreases = new HashMap<>();
-
                     for (String topicName : topics) {
-                        int currentCount;
-                        try {
-                            currentCount = topicsInfo.get(topicName).get().partitions().size();
-                        } catch (InterruptedException | ExecutionException e) {
-                            throw new RuntimeException(e);
-                        }
-                        int targetCount = topic.partitions.get();
-                        if (opts.force() && targetCount >= currentCount) {
-                            throw new IllegalArgumentException("--force requires decreasing the partition count for every matched topic");
-                        }
-                        if (targetCount > currentCount) {
-                            increases.put(topicName, topicNewPartitions(topic, topicsInfo, topicName).getValue());
-                        } else if (targetCount < currentCount) {
-                            decreases.put(topicName, targetCount);
-                        }
+                        planPartitionAlteration(topic, opts, topicsInfo.get(topicName).get(), topicsInfo, increases, decreases);
                     }
-
                     if (!increases.isEmpty()) {
                         adminClient.createPartitions(increases, new CreatePartitionsOptions().retryOnQuotaViolation(false)).all().get();
                     }
                     if (!decreases.isEmpty()) {
-                        adminClient.deletePartitions(decreases, new DeletePartitionsOptions().force(opts.force())).all().get();
+                        initiatePartitionDeletion(decreases, opts.force());
+                    }
+                }
+            }
+        }
+
+        private static Map<String, Integer> relativePartitionDeletionTargets(
+            TopicCommandOptions opts,
+            List<String> topics,
+            Map<String, KafkaFuture<org.apache.kafka.clients.admin.TopicDescription>> topicsInfo
+        ) throws ExecutionException, InterruptedException {
+            int deleteCount = opts.deletePartitions().get();
+            if (deleteCount <= 0) {
+                throw new IllegalArgumentException("--delete-partitions must be a positive integer");
+            }
+            Map<String, Integer> decreases = new HashMap<>();
+            for (String topicName : topics) {
+                org.apache.kafka.clients.admin.TopicDescription description = topicsInfo.get(topicName).get();
+                int currentCount = activePartitionCount(description);
+                if (opts.force() && currentCount < description.partitions().size()) {
+                    throw new IllegalArgumentException("Use --partitions <target> --force to upgrade an existing drain; " +
+                        "--delete-partitions is relative to the active partition count");
+                }
+                int targetCount = currentCount - deleteCount;
+                if (targetCount < 1) {
+                    throw new IllegalArgumentException("Cannot delete " + deleteCount +
+                        " partitions from topic '" + topicName + "' which only has " + currentCount + " active partitions");
+                }
+                decreases.put(topicName, targetCount);
+            }
+            return decreases;
+        }
+
+        private void planPartitionAlteration(
+            CommandTopicPartition topic,
+            TopicCommandOptions opts,
+            org.apache.kafka.clients.admin.TopicDescription description,
+            Map<String, KafkaFuture<org.apache.kafka.clients.admin.TopicDescription>> topicsInfo,
+            Map<String, NewPartitions> increases,
+            Map<String, Integer> decreases
+        ) {
+            int currentCount = activePartitionCount(description);
+            int retainedCount = description.partitions().size();
+            int targetCount = topic.partitions.get();
+            if (opts.force() && (targetCount > currentCount ||
+                    (targetCount == currentCount && currentCount == retainedCount))) {
+                throw new IllegalArgumentException("--force requires decreasing the partition count for every matched topic " +
+                    "or upgrading an existing drain at its active target");
+            }
+            if (topic.hasReplicaAssignment() && targetCount <= currentCount) {
+                throw new IllegalArgumentException("--replica-assignment requires increasing the active partition count");
+            }
+            if (targetCount > currentCount) {
+                if (topic.hasReplicaAssignment() && currentCount < retainedCount) {
+                    validateRetainedReplicaAssignments(topic, description);
+                }
+                increases.put(description.name(), topicNewPartitions(topic, topicsInfo, description.name()).getValue());
+            } else if (targetCount < currentCount || (opts.force() && currentCount < retainedCount)) {
+                decreases.put(description.name(), targetCount);
+            }
+        }
+
+        private static int activePartitionCount(org.apache.kafka.clients.admin.TopicDescription description) {
+            return (int) description.partitions().stream().filter(partition -> !partition.isDraining()).count();
+        }
+
+        private void initiatePartitionDeletion(Map<String, Integer> targets, boolean force) throws ExecutionException, InterruptedException {
+            adminClient.deletePartitions(targets, new DeletePartitionsOptions()
+                .force(force).retryOnQuotaViolation(false)).all().get();
+            targets.forEach((topicName, count) -> System.out.println("Initiated partition deletion for topic '" +
+                topicName + "' to target count " + count + ". Removal is asynchronous."));
+        }
+
+        private static void validateRetainedReplicaAssignments(
+            CommandTopicPartition topic,
+            org.apache.kafka.clients.admin.TopicDescription description
+        ) {
+            if (topic.replicaAssignment.size() != topic.partitions.get()) {
+                throw new IllegalArgumentException("--replica-assignment must contain exactly " + topic.partitions.get() +
+                    " partition assignments when reopening draining partitions");
+            }
+            for (TopicPartitionInfo partition : description.partitions()) {
+                if (partition.partition() < topic.partitions.get()) {
+                    List<Integer> replicas = partition.replicas().stream().map(Node::id).toList();
+                    if (!replicas.equals(topic.replicaAssignment.get(partition.partition()))) {
+                        throw new IllegalArgumentException("Cannot change the replica assignment for retained partition '" +
+                            description.name() + "-" + partition.partition() + "' while reopening draining partitions");
                     }
                 }
             }
@@ -663,7 +725,8 @@ public abstract class TopicCommand {
                     PartitionReassignment reassignment =
                         reassignments.get(new TopicPartition(td.name(), firstPartition.partition()));
                     TopicDescription topicDesc = new TopicDescription(topicName, topicId,
-                        td.partitions().size(), getReplicationFactor(firstPartition, reassignment), config);
+                        td.partitions().size(), td.partitions().size() - activePartitionCount(td),
+                        getReplicationFactor(firstPartition, reassignment), config);
                     topicDesc.printDescription();
                 }
             }
@@ -819,7 +882,8 @@ public abstract class TopicCommand {
                 .describedAs("replication factor")
                 .ofType(java.lang.Integer.class);
             deletePartitionsOpt = parser.accepts("delete-partitions", "The number of partitions to delete from " +
-                    "the tail of a topic. Used with --alter. Mutually exclusive with --partitions.")
+                    "the active tail of a topic. Used with --alter. Mutually exclusive with --partitions. " +
+                    "Use an absolute --partitions target with --force when a drain is already in progress.")
                 .withRequiredArg()
                 .describedAs("# of partitions to delete")
                 .ofType(java.lang.Integer.class);
@@ -1010,6 +1074,7 @@ public abstract class TopicCommand {
             CommandLineUtils.checkInvalidArgs(parser, options, configOpt, invalidOptions(List.of(alterOpt, createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, partitionsOpt, invalidOptions(List.of(alterOpt, createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, deletePartitionsOpt, invalidOptions(List.of(alterOpt)));
+            CommandLineUtils.checkInvalidArgs(parser, options, deletePartitionsOpt, replicaAssignmentOpt);
             CommandLineUtils.checkInvalidArgs(parser, options, forceOpt, invalidOptions(List.of(alterOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, forceOpt, replicaAssignmentOpt);
             CommandLineUtils.checkInvalidArgs(parser, options, replicationFactorOpt, invalidOptions(List.of(createOpt)));
