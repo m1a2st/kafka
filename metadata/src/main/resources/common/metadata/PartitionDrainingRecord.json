@@ -25,6 +25,8 @@
     { "name": "PartitionId", "type": "int32", "versions": "0+",
       "about": "The partition ID being transitioned to DRAINING state." },
     { "name": "DeadlineMs", "type": "int64", "versions": "0+",
-      "about": "The wall-clock deadline (epoch ms) after which the partition will be forcibly removed." }
+      "about": "The wall-clock deadline (epoch ms) after which partition removal is attempted; -1 cancels draining and reopens the existing partition." },
+    { "name": "Force", "type": "bool", "versions": "0+", "taggedVersions": "0+", "tag": 0, "default": "false",
+      "about": "Whether partition removal may bypass open transaction safety checks." }
   ]
 }

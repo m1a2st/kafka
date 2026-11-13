@@ -56,7 +56,7 @@
         { "name": "IsDraining", "type": "bool", "versions": "1+", "default": "false", "ignorable": true,
           "about": "True if this partition is in the draining state." },
         { "name": "DrainDeadlineMs", "type": "int64", "versions": "1+", "default": "-1", "ignorable": true,
-          "about": "The absolute timestamp in ms when this partition will be forcibly removed, or -1 if not draining." }]},
+          "about": "The earliest removal timestamp in ms, or -1 if not draining. Pending transactions can extend draining unless force is enabled." }]},
       { "name": "TopicAuthorizedOperations", "type": "int32", "versions": "0+", "default": "-2147483648",
         "about": "32-bit bitfield to represent authorized operations for this topic." }]
     },

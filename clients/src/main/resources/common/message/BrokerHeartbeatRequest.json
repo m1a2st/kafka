@@ -37,6 +37,23 @@
       "about": "Log directories that failed and went offline." },
     { "name": "CordonedLogDirs", "type":  "[]uuid", "versions": "2+", "taggedVersions": "2+", "tag": 1,
       "nullableVersions": "2+", "default": "null",
-      "about": "List of log directories that are cordoned. This is null before the broker reaches the RECOVERY state." }
+      "about": "List of log directories that are cordoned. This is null before the broker reaches the RECOVERY state." },
+    { "name": "DrainingPartitions", "type": "[]PartitionDrainStatus", "versions": "0+", "taggedVersions": "0+", "tag": 2,
+      "about": "Transaction-safety status of draining partitions led by this broker.", "fields": [
+      { "name": "TopicId", "type": "uuid", "versions": "0+",
+        "about": "The topic ID." },
+      { "name": "PartitionId", "type": "int32", "versions": "0+",
+        "about": "The draining partition ID." },
+      { "name": "LeaderEpoch", "type": "int32", "versions": "0+",
+        "about": "The leader epoch used to evaluate this status." },
+      { "name": "PartitionEpoch", "type": "int32", "versions": "0+",
+        "about": "The partition epoch used to evaluate this status." },
+      { "name": "MetadataOffset", "type": "int64", "versions": "0+", "default": "-1",
+        "about": "The metadata offset applied when evaluating this status." },
+      { "name": "Ready", "type": "bool", "versions": "0+", "default": "false",
+        "about": "True if transaction safety permits partition removal." },
+      { "name": "BlockedReason", "type": "string", "versions": "0+", "default": "",
+        "about": "The reason transaction safety currently blocks removal, or empty if ready." }
+    ]}
   ]
 }

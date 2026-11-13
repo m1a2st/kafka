@@ -26,7 +26,9 @@
       { "name": "Name", "type": "string", "versions": "0+", "mapKey": true, "entityType": "topicName",
         "about": "The topic name." },
       { "name": "Count", "type": "int32", "versions": "0+",
-        "about": "The new (reduced) partition count for the topic." }
+        "about": "The new (reduced) partition count for the topic." },
+      { "name": "Force", "type": "bool", "versions": "0+", "taggedVersions": "0+", "tag": 0, "default": "false",
+        "about": "If true, remove draining partitions after the deadline even when transactions are pending." }
     ]},
     { "name": "TimeoutMs", "type": "int32", "versions": "0+",
       "about": "The time in ms to wait for the partition deletion to be started." },

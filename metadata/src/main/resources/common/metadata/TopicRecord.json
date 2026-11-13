@@ -23,6 +23,9 @@
     { "name": "Name", "type": "string", "versions": "0+", "entityType": "topicName",
       "about": "The topic name." },
     { "name": "TopicId", "type": "uuid", "versions": "0+",
-      "about": "The unique ID of this topic." }
+      "about": "The unique ID of this topic." },
+    { "name": "PartitionIdHighWatermark", "type": "int32", "versions": "0+",
+      "taggedVersions": "0+", "tag": 0, "default": "0",
+      "about": "Highest allocated partition ID plus one. Snapshots preserve this after partition removal to prevent ID reuse." }
   ]
 }
