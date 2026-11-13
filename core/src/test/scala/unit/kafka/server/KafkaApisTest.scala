@@ -30,7 +30,7 @@ import org.apache.kafka.clients.consumer.AcknowledgeType
 import org.apache.kafka.common._
 import org.apache.kafka.common.acl.AclOperation
 import org.apache.kafka.common.compress.Compression
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER}
 import org.apache.kafka.common.errors.{ClusterAuthorizationException, UnsupportedVersionException}
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -87,7 +87,7 @@ import org.apache.kafka.coordinator.group.streams.StreamsGroupHeartbeatResult
 import org.apache.kafka.coordinator.share.{ShareCoordinator, ShareCoordinatorTestConfig}
 import org.apache.kafka.coordinator.transaction.{InitProducerIdResult, TransactionLogConfig}
 import org.apache.kafka.image.{MetadataDelta, MetadataImage, MetadataProvenance}
-import org.apache.kafka.metadata.{ConfigRepository, KRaftMetadataCache, MetadataCache, MetadataCacheFixtures, MockConfigRepository}
+import org.apache.kafka.metadata.{ConfigRepository, KRaftMetadataCache, MetadataCache, MetadataCacheFixtures, MockConfigRepository, PartitionRegistration}
 import org.apache.kafka.network.{Request, SendResponse, Session}
 import org.apache.kafka.network.metrics.{RequestChannelMetrics, RequestMetrics}
 import org.apache.kafka.raft.{KRaftConfigs, QuorumConfig}
@@ -98,6 +98,7 @@ import org.apache.kafka.server.authorizer.{Action, AuthorizationResult, Authoriz
 import org.apache.kafka.server.common.{FeatureVersion, FinalizedFeatures, GroupVersion, KRaftVersion, MetadataVersion, RequestLocal, ShareVersion, StreamsVersion, TransactionVersion}
 import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.logger.LoggingController
+import org.apache.kafka.server.partition.AlterPartitionManager
 import org.apache.kafka.server.metrics.{ClientMetricsTestUtils, KafkaYammerMetrics}
 import org.apache.kafka.server.share.{CachedSharePartition, ErroneousAndValidPartitionData, SharePartitionKey}
 import org.apache.kafka.server.quota.{ClientQuotaManager, ClientRequestQuotaManager, ControllerMutationQuota, ControllerMutationQuotaManager, ReplicaQuota, ReplicationQuotaManager, ThrottleCallback}
@@ -106,8 +107,9 @@ import org.apache.kafka.server.share.context.{FinalContext, ShareSessionContext}
 import org.apache.kafka.server.share.session.{ShareSession, ShareSessionKey}
 import org.apache.kafka.server.storage.log.{FetchParams, FetchPartitionData}
 import org.apache.kafka.server.util.ServerTestUtils
-import org.apache.kafka.server.util.MockTime
-import org.apache.kafka.storage.internals.log.{AppendOrigin, LogConfig, RecordValidationStats, UnifiedLog}
+import org.apache.kafka.server.util.{MockScheduler, MockTime}
+import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
+import org.apache.kafka.storage.internals.log.{AppendOrigin, LogConfig, LogDirFailureChannel, RecordValidationStats, UnifiedLog}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, Test}
@@ -117,6 +119,7 @@ import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.{ArgumentCaptor, ArgumentMatchers, Mockito}
 
+import java.io.File
 import java.lang.{Byte => JByte}
 import java.net.InetAddress
 import java.nio.ByteBuffer
@@ -175,7 +178,8 @@ class KafkaApisTest extends Logging {
     configRepository: ConfigRepository = new MockConfigRepository(),
     overrideProperties: Map[String, String] = Map.empty,
     featureVersions: Seq[FeatureVersion] = Seq.empty,
-    autoTopicCreationManager: Option[AutoTopicCreationManager] = None
+    autoTopicCreationManager: Option[AutoTopicCreationManager] = None,
+    replicaManagerOverride: Option[ReplicaManager] = None
   ): KafkaApis = {
 
     val properties = TestUtils.createBrokerConfig(brokerId)
@@ -197,7 +201,7 @@ class KafkaApisTest extends Logging {
     new KafkaApis(
       requestChannel = requestChannel,
       forwardingManager = forwardingManager,
-      replicaManager = replicaManager,
+      replicaManager = replicaManagerOverride.getOrElse(replicaManager),
       groupCoordinator = groupCoordinator,
       txnCoordinator = txnCoordinator,
       shareCoordinator = shareCoordinator,
@@ -3258,6 +3262,69 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
+  def testWriteTxnMarkersOnDrainingPartitionHonorsMinIsr(): Unit = {
+    val topicPartition = new TopicPartition("draining-topic", 0)
+    val topicId = Uuid.randomUuid()
+    val partitionRecord = new PartitionRecord().setTopicId(topicId).setPartitionId(0)
+      .setReplicas(util.List.of[Integer](brokerId, brokerId + 1)).setIsr(util.List.of[Integer](brokerId))
+      .setLeader(brokerId).setLeaderEpoch(0).setPartitionEpoch(0)
+    MetadataCacheFixtures.updateCache(metadataCache, util.List.of(
+      new FeatureLevelRecord().setName(MetadataVersion.FEATURE_NAME)
+        .setFeatureLevel(MetadataVersion.latestProduction().featureLevel()),
+      new TopicRecord().setName(topicPartition.topic()).setTopicId(topicId),
+      partitionRecord
+    ))
+
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(brokerId))
+    val logProperties = new Properties()
+    logProperties.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
+    val logManager = TestUtils.createLogManager(config.logDirs.asScala.map(new File(_)), new LogConfig(logProperties))
+    val realReplicaManager = new ReplicaManager(
+      config = config,
+      metrics = metrics,
+      time = time,
+      scheduler = new MockScheduler(time),
+      logManager = logManager,
+      quotaManagers = quotas,
+      metadataCache = metadataCache,
+      logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size),
+      alterPartitionManager = mock(classOf[AlterPartitionManager]),
+      brokerTopicStats = brokerTopicStats)
+
+    try {
+      val partition = realReplicaManager.createPartition(topicPartition)
+      val offsetCheckpoints = new LazyOffsetCheckpoints(realReplicaManager.highWatermarkCheckpoints.asJava)
+      partition.makeLeader(new PartitionRegistration(partitionRecord), isNew = true, offsetCheckpoints, Some(topicId))
+      realReplicaManager.drainingPartitions.add(topicPartition)
+      kafkaApis = createKafkaApis(replicaManagerOverride = Some(realReplicaManager))
+
+      val (_, insufficientIsrRequest) = createWriteTxnMarkersRequest(util.List.of(topicPartition))
+      kafkaApis.handleWriteTxnMarkersRequest(insufficientIsrRequest, RequestLocal.noCaching)
+      val insufficientIsrResponse = verifyNoThrottling[WriteTxnMarkersResponse](insufficientIsrRequest)
+      assertEquals(Errors.NOT_ENOUGH_REPLICAS, insufficientIsrResponse.errorsByProducerId().get(1L).get(topicPartition))
+      assertEquals(0L, partition.log.get.logEndOffset)
+
+      // Keep the same draining partition, but restore enough ISR members to commit the marker.
+      val restoredIsrRecord = partitionRecord.duplicate().setIsr(util.List.of[Integer](brokerId, brokerId + 1))
+        .setPartitionEpoch(1)
+      partition.makeLeader(new PartitionRegistration(restoredIsrRecord), isNew = false, offsetCheckpoints, Some(topicId))
+      val (_, restoredIsrRequest) = createWriteTxnMarkersRequest(util.List.of(topicPartition))
+      kafkaApis.handleWriteTxnMarkersRequest(restoredIsrRequest, RequestLocal.noCaching)
+      assertEquals(1L, partition.log.get.logEndOffset)
+
+      // acks=-1 waits for the follower, even though the coordinator origin passed the draining guard.
+      verify(requestChannel, never()).sendResponse(ArgumentMatchers.eq(restoredIsrRequest), any[AbstractResponse])
+      partition.updateFollowerFetchState(partition.getReplica(brokerId + 1).get,
+        partition.log.get.logEndOffsetMetadata, 0L, time.milliseconds(), 1L, -1L)
+      val restoredIsrResponse = verifyNoThrottling[WriteTxnMarkersResponse](restoredIsrRequest)
+      assertEquals(Errors.NONE, restoredIsrResponse.errorsByProducerId().get(1L).get(topicPartition))
+    } finally {
+      realReplicaManager.shutdown(checkpointHW = false)
+      logManager.shutdown()
+    }
+  }
+
+  @Test
   def testHandleWriteTxnMarkersRequest(): Unit = {
     val offset0 = new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, 0)
     val offset1 = new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, 1)
@@ -4387,7 +4454,8 @@ class KafkaApisTest extends Logging {
       ArgumentMatchers.eq(topicsReturnedFromMetadataCacheForAuthorization),
       any[ListenerName],
       anyBoolean,
-      anyBoolean
+      anyBoolean,
+      anyShort
     )).thenReturn(util.List.of(
       new MetadataResponseTopic()
         .setErrorCode(Errors.NONE.code)

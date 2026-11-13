@@ -19,6 +19,7 @@ package org.apache.kafka.server;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData.ListenerCollection;
@@ -135,6 +136,8 @@ public class BrokerLifecycleManager {
      * offset.  This variable can only be read or written from the event queue thread.
      */
     private Supplier<Long> highestMetadataOffsetProvider;
+
+    private Supplier<List<PartitionDrainStatus>> partitionDrainStatusProvider = List::of;
 
     /**
      * True only if we are ready to unfence the broker.  This variable can only be read or
@@ -263,9 +266,20 @@ public class BrokerLifecycleManager {
                ListenerCollection advertisedListeners,
                Map<String, VersionRange> supportedFeatures,
                OptionalLong previousBrokerEpoch) {
+        start(highestMetadataOffsetProvider, channelManager, clusterId, advertisedListeners,
+            supportedFeatures, previousBrokerEpoch, List::of);
+    }
+
+    public void start(Supplier<Long> highestMetadataOffsetProvider,
+               NodeToControllerChannelManager channelManager,
+               String clusterId,
+               ListenerCollection advertisedListeners,
+               Map<String, VersionRange> supportedFeatures,
+               OptionalLong previousBrokerEpoch,
+               Supplier<List<PartitionDrainStatus>> partitionDrainStatusProvider) {
         this.previousBrokerEpoch = previousBrokerEpoch;
         eventQueue.append(new StartupEvent(highestMetadataOffsetProvider,
-                channelManager, clusterId, advertisedListeners, supportedFeatures));
+                channelManager, clusterId, advertisedListeners, supportedFeatures, partitionDrainStatusProvider));
     }
 
     public CompletableFuture<Void> setReadyToUnfence() {
@@ -442,22 +456,26 @@ public class BrokerLifecycleManager {
         private final String clusterId;
         private final ListenerCollection advertisedListeners;
         private final Map<String, VersionRange> supportedFeatures;
+        private final Supplier<List<PartitionDrainStatus>> partitionDrainStatusProvider;
 
         StartupEvent(Supplier<Long> highestMetadataOffsetProvider,
                      NodeToControllerChannelManager channelManager,
                      String clusterId,
                      ListenerCollection advertisedListeners,
-                     Map<String, VersionRange> supportedFeatures) {
+                     Map<String, VersionRange> supportedFeatures,
+                     Supplier<List<PartitionDrainStatus>> partitionDrainStatusProvider) {
             this.highestMetadataOffsetProvider = highestMetadataOffsetProvider;
             this.channelManager = channelManager;
             this.clusterId = clusterId;
             this.advertisedListeners = advertisedListeners;
             this.supportedFeatures = supportedFeatures;
+            this.partitionDrainStatusProvider = partitionDrainStatusProvider;
         }
 
         @Override
         public void run() {
             BrokerLifecycleManager.this.highestMetadataOffsetProvider = this.highestMetadataOffsetProvider;
+            BrokerLifecycleManager.this.partitionDrainStatusProvider = this.partitionDrainStatusProvider;
             BrokerLifecycleManager.this.channelManager = channelManager;
             BrokerLifecycleManager.this.channelManager.start();
             state = BrokerState.STARTING;
@@ -569,6 +587,7 @@ public class BrokerLifecycleManager {
             .setCurrentMetadataOffset(metadataOffset)
             .setWantFence(!readyToUnfence)
             .setWantShutDown(state == BrokerState.PENDING_CONTROLLED_SHUTDOWN)
+            .setDrainingPartitions(List.copyOf(partitionDrainStatusProvider.get()))
             .setOfflineLogDirs(new ArrayList<>(offlineDirs.keySet()));
         if (initialCatchUpFuture.isDone() && !initialCatchUpFuture.isCompletedExceptionally() && cordonedLogDirsSupported.get()) {
             data.setCordonedLogDirs(List.copyOf(cordonedLogDirs));

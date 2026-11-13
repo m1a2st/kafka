@@ -26,6 +26,7 @@ import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPar
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus
 import org.apache.kafka.common.message.DescribeLogDirsResponseData.DescribeLogDirsTopic
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
@@ -212,6 +213,8 @@ class ReplicaManager(val config: KafkaConfig,
   protected val allPartitions = new ConcurrentHashMap[TopicPartition, HostedPartition[Partition]]
   private[server] val drainingPartitions: java.util.Set[TopicPartition] = ConcurrentHashMap.newKeySet[TopicPartition]()
   private val replicaStateChangeLock = new Object
+  // Accessed only under replicaStateChangeLock after the corresponding partition fences are installed.
+  private var appliedDrainImage = MetadataImage.EMPTY
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
@@ -470,6 +473,25 @@ class ReplicaManager(val config: KafkaConfig,
       case online: HostedPartition.Online[Partition] => Some(online.partition)
       case _ => None
     }
+  }
+
+  /**
+   * Report only fences and registrations already installed by applyDelta, independently of loader progress.
+   * Lock order is replicaStateChangeLock, then the partition's leader/ISR lock.
+   */
+  def partitionDrainStatuses(): util.List[PartitionDrainStatus] = replicaStateChangeLock.synchronized {
+    val statuses = new util.ArrayList[PartitionDrainStatus]()
+    drainingPartitions.asScala.foreach { topicPartition =>
+      Option(appliedDrainImage.topics().getTopic(topicPartition.topic())).foreach { topic =>
+        Option(topic.partitions().get(topicPartition.partition())).foreach { registration =>
+          if (topic.drainingPartitions().contains(topicPartition.partition()) && registration.leader == localBrokerId) {
+            onlinePartition(topicPartition).flatMap(_.partitionDrainStatus(topic.id(), registration.leaderEpoch,
+              registration.partitionEpoch, appliedDrainImage.provenance().lastContainedOffset())).foreach(statuses.add)
+          }
+        }
+      }
+    }
+    statuses
   }
 
   // An iterator over all non offline partitions. This is a weakly consistent iterator; a partition made offline after
@@ -2393,6 +2415,21 @@ class ReplicaManager(val config: KafkaConfig,
               s"we got an unexpected ${e.getClass.getName} exception: ${e.getMessage}")
           }
         }
+        drainingPartitions.removeAll(localChanges.deletes)
+      }
+
+      // Install produce fences before newly acquired leadership can accept writes.
+      if (!localChanges.resumedPartitions.isEmpty) {
+        localChanges.resumedPartitions.asScala.foreach(tp => onlinePartition(tp).foreach(_.setDraining(false)))
+        drainingPartitions.removeAll(localChanges.resumedPartitions)
+        stateChangeLogger.info(s"Resumed ${localChanges.resumedPartitions.size} partition(s): " +
+          s"${localChanges.resumedPartitions}")
+      }
+      if (!localChanges.drainingPartitions.isEmpty) {
+        drainingPartitions.addAll(localChanges.drainingPartitions)
+        localChanges.drainingPartitions.asScala.foreach(tp => onlinePartition(tp).foreach(_.setDraining(true)))
+        stateChangeLogger.info(s"Marked ${localChanges.drainingPartitions.size} partition(s) as draining: " +
+          s"${localChanges.drainingPartitions}")
       }
 
       // Handle partitions which we are now the leader or follower for.
@@ -2420,17 +2457,7 @@ class ReplicaManager(val config: KafkaConfig,
         // We only want to update the directoryIds if DirectoryAssignment is supported!
         localChanges.directoryIds.forEach(maybeUpdateTopicAssignment)
       }
-
-      if (!localChanges.drainingPartitions.isEmpty) {
-        drainingPartitions.addAll(localChanges.drainingPartitions)
-        stateChangeLogger.info(s"Marked ${localChanges.drainingPartitions.size} partition(s) as draining: " +
-          s"${localChanges.drainingPartitions}")
-      }
-
-      // Partitions that are deleted should also be removed from the draining set
-      if (!localChanges.deletes.isEmpty) {
-        drainingPartitions.removeAll(localChanges.deletes)
-      }
+      appliedDrainImage = newImage
     }
   }
 
@@ -2447,6 +2474,7 @@ class ReplicaManager(val config: KafkaConfig,
     localLeaders.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
+          partition.setDraining(drainingPartitions.contains(tp))
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
           partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
@@ -2481,6 +2509,7 @@ class ReplicaManager(val config: KafkaConfig,
     localFollowers.foreachEntry { (tp, info) =>
       getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
         try {
+          partition.setDraining(drainingPartitions.contains(tp))
           followerTopicSet.add(tp.topic)
 
           // We always update the follower state.

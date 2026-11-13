@@ -35,8 +35,9 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.errors.InvalidPidMappingException
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData, ShareFetchResponseData}
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
-import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
+import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionDrainingRecord, PartitionRecord, RemovePartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.metrics.Monitorable
 import org.apache.kafka.common.metrics.PluginMetrics
@@ -56,9 +57,10 @@ import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.common.utils.internals.LogContext
 import org.apache.kafka.coordinator.transaction.{AddPartitionsToTxnConfig, TransactionLogConfig}
 import org.apache.kafka.image._
+import org.apache.kafka.image.writer.{ImageWriterOptions, RecordListWriter}
 import org.apache.kafka.metadata.KRaftMetadataCache
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER
-import org.apache.kafka.metadata.{LeaderRecoveryState, MetadataCache, PartitionRegistration}
+import org.apache.kafka.metadata.{LeaderRecoveryState, MetadataCache, PartitionRegistration, RecordTestUtils}
 import org.apache.kafka.metadata.properties.{MetaProperties, MetaPropertiesEnsemble, MetaPropertiesVersion, PropertiesUtils}
 import org.apache.kafka.raft.KRaftConfigs
 import org.apache.kafka.server.LogAppendResult.LogAppendSummary
@@ -5542,12 +5544,12 @@ class ReplicaManagerTest {
     delta
   }
 
-  private def imageFromTopics(topicsImage: TopicsImage): MetadataImage = {
+  private def imageFromTopics(topicsImage: TopicsImage, metadataOffset: Long = 100L): MetadataImage = {
     val featuresImageLatest = new FeaturesImage(
       Collections.emptyMap(),
       MetadataVersion.latestProduction())
     new MetadataImage(
-      new MetadataProvenance(100L, 10, 1000L, true),
+      new MetadataProvenance(metadataOffset, 10, 1000L, true),
       featuresImageLatest,
       ClusterImageFixtures.IMAGE1,
       topicsImage,
@@ -6141,6 +6143,349 @@ class ReplicaManagerTest {
   }
 
   @Test
+  def testInFlightClientAppendCannotCrossInstalledDrainingFence(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+      val partition = spy(replicaManager.onlinePartition(topicPartition).get)
+      replicaManager.addOnlinePartition(topicPartition, partition)
+      var installedFence = false
+      doAnswer { invocation =>
+        // The request has passed ReplicaManager's guard, but has not entered Partition's append lock.
+        val drainDelta = new TopicsDelta(initialDelta.apply())
+        drainDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+        replicaManager.applyDelta(drainDelta, imageFromTopics(drainDelta.apply(), 200L))
+        installedFence = true
+        invocation.callRealMethod()
+      }.when(partition).appendRecordsToLeader(any(), any(), anyInt(), any(), any(), anyShort())
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("must-not-append".getBytes))
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+        appendRecords(replicaManager, topicPartition, records).assertFired.error)
+      assertTrue(installedFence)
+      assertEquals(0L, partition.log.get.logEndOffset)
+      assertTrue(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = classOf[ControlRecordType], names = Array("COMMIT", "ABORT"))
+  def testDrainingTransactionReadinessWaitsForReplicatedMarkers(markerType: ControlRecordType): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val replicas = util.List.of[Integer](0, 1)
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0, replicas = replicas, isr = replicas)
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+      val partition = replicaManager.onlinePartition(topicPartition).get
+      val producerId = 234L
+      val producerEpoch = 0.toShort
+      val records = MemoryRecords.withTransactionalRecords(Compression.NONE, producerId, producerEpoch, 0,
+        new SimpleRecord("transactional-value".getBytes))
+      val dataAppend = appendRecords(replicaManager, topicPartition, records)
+      fetchPartitionAsFollower(replicaManager, new TopicIdPartition(topicId, topicPartition),
+        new PartitionData(topicId, 1L, 0L, 4096, Optional.empty()), replicaId = 1)
+      assertEquals(Errors.NONE, dataAppend.assertFired.error)
+      assertEquals(1L, partition.log.get.highWatermark)
+      assertEquals(1L, partition.log.get.logEndOffset)
+      assertTrue(partition.log.get.firstUnstableOffset().isPresent)
+
+      val drainDelta = new TopicsDelta(initialDelta.apply())
+      drainDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      replicaManager.applyDelta(drainDelta, imageFromTopics(drainDelta.apply(), 200L))
+      val openTransactionStatus = samplePartitionDrainStatuses(replicaManager).get(0)
+      assertFalse(openTransactionStatus.ready())
+      assertFalse(openTransactionStatus.blockedReason().isEmpty)
+
+      val marker = MemoryRecords.withEndTransactionMarker(producerId, producerEpoch, new EndTransactionMarker(markerType, 0))
+      val markerAppend = appendRecords(replicaManager, topicPartition, marker, origin = AppendOrigin.COORDINATOR,
+        requiredAcks = -1, transactionVersion = TransactionVersion.TV_1.featureLevel())
+      assertFalse(markerAppend.hasFired)
+      assertEquals(2L, partition.log.get.logEndOffset)
+      assertEquals(1L, partition.log.get.highWatermark)
+      assertTrue(partition.log.get.firstUnstableOffset().isPresent)
+      assertFalse(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+
+      fetchPartitionAsFollower(replicaManager, new TopicIdPartition(topicId, topicPartition),
+        new PartitionData(topicId, 2L, 0L, 4096, Optional.empty()), replicaId = 1)
+      assertEquals(Errors.NONE, markerAppend.assertFired.error)
+      assertTrue(partition.log.get.firstUnstableOffset().isEmpty)
+      val readyStatus = samplePartitionDrainStatuses(replicaManager).get(0)
+      assertTrue(readyStatus.ready())
+      assertEquals("", readyStatus.blockedReason())
+      assertEquals(200L, readyStatus.metadataOffset())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDrainingPartitionReadinessRequiresMinIsr(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0,
+        replicas = util.List.of[Integer](0, 1), isr = util.List.of[Integer](0))
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply(), 200L))
+      val partition = replicaManager.onlinePartition(topicPartition).get
+      val logProperties = new Properties()
+      logProperties.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
+      partition.log.get.updateConfig(new LogConfig(logProperties))
+      assertTrue(partition.log.get.firstUnstableOffset().isEmpty)
+      assertEquals(partition.log.get.logEndOffset, partition.log.get.highWatermark)
+      assertFalse(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+
+      val isrDelta = new TopicsDelta(initialDelta.apply())
+      isrDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setIsr(util.List.of[Integer](0, 1)))
+      replicaManager.applyDelta(isrDelta, imageFromTopics(isrDelta.apply(), 300L))
+      assertTrue(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDrainingPartitionReadinessWaitsForNonTransactionalReplication(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val replicas = util.List.of[Integer](0, 1)
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0, replicas = replicas, isr = replicas)
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("unreplicated-value".getBytes))
+      assertEquals(Errors.NONE, appendRecords(replicaManager, topicPartition, records, requiredAcks = 1).assertFired.error)
+
+      val drainDelta = new TopicsDelta(initialDelta.apply())
+      drainDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      replicaManager.applyDelta(drainDelta, imageFromTopics(drainDelta.apply(), 200L))
+      val log = replicaManager.onlinePartition(topicPartition).get.log.get
+      assertTrue(log.firstUnstableOffset().isEmpty)
+      assertEquals(0L, log.highWatermark)
+      assertEquals(1L, log.logEndOffset)
+      assertFalse(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+
+      fetchPartitionAsFollower(replicaManager, new TopicIdPartition(topicId, topicPartition),
+        new PartitionData(topicId, 1L, 0L, 4096, Optional.empty()), replicaId = 1)
+      assertTrue(samplePartitionDrainStatuses(replicaManager).get(0).ready())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDrainingPartitionReportsAppliedEpochsAndStopsAfterResume(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply(), 200L))
+      val firstStatus = samplePartitionDrainStatuses(replicaManager).get(0)
+      assertEquals(topicId, firstStatus.topicId())
+      assertEquals(0, firstStatus.partitionId())
+      assertEquals(0, firstStatus.leaderEpoch())
+      assertEquals(0, firstStatus.partitionEpoch())
+      assertEquals(200L, firstStatus.metadataOffset())
+      assertTrue(firstStatus.ready())
+
+      val updatedDelta = new TopicsDelta(initialDelta.apply())
+      updatedDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(0))
+      val updatedImage = updatedDelta.apply()
+      replicaManager.applyDelta(updatedDelta, imageFromTopics(updatedImage, 300L))
+      val updatedStatus = samplePartitionDrainStatuses(replicaManager).get(0)
+      assertEquals(1, updatedStatus.leaderEpoch())
+      assertEquals(1, updatedStatus.partitionEpoch())
+      assertEquals(300L, updatedStatus.metadataOffset())
+
+      // Local state can advance through AlterPartition before the matching metadata image is installed.
+      val partition = replicaManager.onlinePartition(topicPartition).get
+      val unmatchedRegistration = updatedImage.getTopic(topicId).partitions().get(0)
+        .merge(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(0))
+      partition.makeLeader(unmatchedRegistration, isNew = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), Some(topicId))
+      assertTrue(samplePartitionDrainStatuses(replicaManager).asScala.forall(status => !status.ready()))
+
+      val resumeDelta = new TopicsDelta(updatedImage)
+      resumeDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(-1L))
+      replicaManager.applyDelta(resumeDelta, imageFromTopics(resumeDelta.apply(), 400L))
+      assertTrue(samplePartitionDrainStatuses(replicaManager).isEmpty)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def samplePartitionDrainStatuses(replicaManager: ReplicaManager): util.List[PartitionDrainStatus] = {
+    replicaManager.partitionDrainStatuses()
+  }
+
+  @Test
+  def testProduceResumesAfterDrainingCancellationWithoutReplacingLog(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+      val originalLog = replicaManager.onlinePartition(topicPartition).get.log.get
+      val firstRecords = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("before-drain".getBytes))
+      assertEquals(Errors.NONE, appendRecords(replicaManager, topicPartition, firstRecords).assertFired.error)
+
+      val drainDelta = new TopicsDelta(initialDelta.apply())
+      drainDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      replicaManager.applyDelta(drainDelta, imageFromTopics(drainDelta.apply()))
+      val rejectedRecords = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("rejected".getBytes))
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+        appendRecords(replicaManager, topicPartition, rejectedRecords).assertFired.error)
+      assertEquals(1L, originalLog.logEndOffset)
+
+      val resumeDelta = new TopicsDelta(drainDelta.apply())
+      resumeDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(-1L))
+      replicaManager.applyDelta(resumeDelta, imageFromTopics(resumeDelta.apply()))
+
+      val resumedRecords = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("after-resume".getBytes))
+      val response = appendRecords(replicaManager, topicPartition, resumedRecords).assertFired
+      assertEquals(Errors.NONE, response.error)
+      assertEquals(1L, response.baseOffset)
+      assertSame(originalLog, replicaManager.onlinePartition(topicPartition).get.log.get)
+      val storedValues = originalLog.read(0L, 4096, FetchIsolation.LOG_END, true).records.records().asScala
+        .map(record => Utils.utf8(record.value())).toList
+      assertEquals(List("before-drain", "after-resume"), storedValues)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDrainingPartitionRejectsProduceAfterLeadershipAcquisition(wasReplica: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val replicas = if (wasReplica) util.List.of[Integer](0, 1) else util.List.of[Integer](1)
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 1, replicas = replicas, isr = replicas)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+
+      val leaderDelta = new TopicsDelta(initialDelta.apply())
+      leaderDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0)
+        .setReplicas(util.List.of[Integer](0, 1)).setIsr(util.List.of[Integer](0)).setLeader(0)
+        .setDirectories(util.Arrays.asList(DirectoryId.migratingArray(2): _*)))
+      replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("rejected".getBytes))
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+        appendRecords(replicaManager, topicPartition, records).assertFired.error)
+      assertEquals(0L, replicaManager.onlinePartition(topicPartition).get.log.get.logEndOffset)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDrainingFenceInstalledBeforeLeadershipBecomesAvailable(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 1)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+
+      val partition = spy(replicaManager.createPartition(topicPartition))
+      replicaManager.addOnlinePartition(topicPartition, partition)
+      var checkedAppend = false
+      doAnswer { invocation =>
+        val madeLeader = invocation.callRealMethod()
+        val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("rejected".getBytes))
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+          appendRecords(replicaManager, topicPartition, records).assertFired.error)
+        checkedAppend = true
+        madeLeader
+      }.when(partition).makeLeader(any(), anyBoolean(), any(), any(), any())
+
+      val leaderDelta = new TopicsDelta(initialDelta.apply())
+      leaderDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0)
+        .setReplicas(util.List.of[Integer](0)).setIsr(util.List.of[Integer](0)).setLeader(0))
+      replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+      assertTrue(checkedAppend)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDrainingPartitionRejectsProduceAfterSnapshotReplay(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      val writer = new RecordListWriter()
+      initialDelta.apply().write(writer, new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build())
+      val snapshotDelta = new TopicsDelta(TopicsImage.EMPTY)
+      RecordTestUtils.replayAll(snapshotDelta, writer.records())
+      replicaManager.applyDelta(snapshotDelta, imageFromTopics(snapshotDelta.apply()))
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("rejected".getBytes))
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+        appendRecords(replicaManager, topicPartition, records).assertFired.error)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testProduceResumesAfterSnapshotOmitsCanceledDrain(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      val drainingImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(drainingImage))
+      val originalLog = replicaManager.onlinePartition(topicPartition).get.log.get
+      val rejectedRecords = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("rejected".getBytes))
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER,
+        appendRecords(replicaManager, topicPartition, rejectedRecords).assertFired.error)
+
+      val cancelDelta = new TopicsDelta(drainingImage)
+      cancelDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(-1L))
+      val writer = new RecordListWriter()
+      cancelDelta.apply().write(writer, new ImageWriterOptions.Builder(MetadataVersion.latestProduction()).build())
+
+      // The broker missed cancellation and catches up from a snapshot containing only active partitions.
+      val snapshotDelta = new TopicsDelta(drainingImage)
+      RecordTestUtils.replayAll(snapshotDelta, writer.records())
+      snapshotDelta.finishSnapshot()
+      replicaManager.applyDelta(snapshotDelta, imageFromTopics(snapshotDelta.apply()))
+
+      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("after-snapshot".getBytes))
+      assertEquals(Errors.NONE, appendRecords(replicaManager, topicPartition, records).assertFired.error)
+      assertSame(originalLog, replicaManager.onlinePartition(topicPartition).get.log.get)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRemovingDrainingReplicaClearsProduceFence(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0)
+        .setDeadlineMs(time.milliseconds() + 10000))
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialDelta.apply()))
+      assertTrue(replicaManager.drainingPartitions.contains(topicPartition))
+
+      val removeDelta = new TopicsDelta(initialDelta.apply())
+      removeDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(0))
+      replicaManager.applyDelta(removeDelta, imageFromTopics(removeDelta.apply()))
+      assertFalse(replicaManager.drainingPartitions.contains(topicPartition))
+      assertTrue(replicaManager.onlinePartition(topicPartition).isEmpty)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testProduceToDrainingPartitionRejected(): Unit = {
     val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
     try {
@@ -6181,12 +6526,14 @@ class ReplicaManagerTest {
       // Mark partition as draining
       replicaManager.drainingPartitions.add(topicPartition)
 
-      val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("test".getBytes()))
-      val appendResult = appendRecords(replicaManager, topicPartition, records, origin = AppendOrigin.COORDINATOR, requiredAcks = 1)
+      val records = MemoryRecords.withEndTransactionMarker(1L, 0.toShort, new EndTransactionMarker(ControlRecordType.COMMIT, 0))
+      val appendResult = appendRecords(replicaManager, topicPartition, records, origin = AppendOrigin.COORDINATOR,
+        requiredAcks = -1, transactionVersion = TransactionVersion.TV_1.featureLevel())
       appendResult.onFire { response =>
         assertEquals(Errors.NONE, response.error)
       }
       assertTrue(appendResult.hasFired)
+      assertEquals(1L, partition.log.get.logEndOffset)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

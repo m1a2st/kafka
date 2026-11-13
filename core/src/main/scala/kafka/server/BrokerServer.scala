@@ -453,7 +453,8 @@ class BrokerServer(
         clusterId,
         listenerInfo.toBrokerRegistrationRequest,
         featuresRemapped,
-        logManager.readBrokerEpochFromCleanShutdownFiles()
+        logManager.readBrokerEpochFromCleanShutdownFiles(),
+        () => replicaManager.partitionDrainStatuses()
       )
 
       // The FetchSessionCache is divided into config.numIoThreads shards, each responsible

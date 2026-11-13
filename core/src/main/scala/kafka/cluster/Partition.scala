@@ -26,6 +26,7 @@ import kafka.utils._
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus
 import org.apache.kafka.common.message.{DescribeProducersResponseData, FetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.protocol.Errors
@@ -181,6 +182,7 @@ class Partition(val topicPartition: TopicPartition,
   private val remoteReplicasMap = new ConcurrentHashMap[Int, Replica]
   // The read lock is only required when multiple reads are executed and needs to be in a consistent manner
   private val leaderIsrUpdateLock = new ReentrantReadWriteLock
+  @volatile private var draining = false
 
   // lock to prevent the follower replica log update while checking if the log dir could be replaced with future log.
   private val futureLogLock = new Object()
@@ -579,6 +581,49 @@ class Partition(val topicPartition: TopicPartition,
   def getLeaderEpoch: Int = this.leaderEpoch
 
   def getPartitionEpoch: Int = this.partitionEpoch
+
+  /**
+   * Fence client appends while preserving coordinator transaction completion.
+   * Taking the write lock waits for appends that already entered the partition.
+   */
+  def setDraining(value: Boolean): Unit = inWriteLock[Exception](leaderIsrUpdateLock, () => {
+    draining = value
+  })
+
+  /**
+   * Sample readiness exclusively with appends, using the metadata registration installed by ReplicaManager.
+   */
+  def partitionDrainStatus(expectedTopicId: Uuid,
+                           expectedLeaderEpoch: Int,
+                           expectedPartitionEpoch: Int,
+                           metadataOffset: Long): Option[PartitionDrainStatus] = inWriteLock(leaderIsrUpdateLock, () => {
+    if (!isLeader || !topicId.contains(expectedTopicId)) {
+      None
+    } else {
+      val blockedReason = if (!draining) {
+        "partition draining fence is not installed"
+      } else if (leaderEpoch != expectedLeaderEpoch || partitionEpoch != expectedPartitionEpoch) {
+        "partition epochs do not match applied metadata"
+      } else {
+        leaderLogIfLocal match {
+          case None => "leader log is unavailable"
+          case Some(_) if partitionState.isInflight => "ISR update is in progress"
+          case Some(leaderLog) if partitionState.isr.size < effectiveMinIsr(leaderLog) => "insufficient in-sync replicas"
+          case Some(leaderLog) if leaderLog.firstUnstableOffset().isPresent => "transaction is unresolved or its marker is unreplicated"
+          case Some(leaderLog) if leaderLog.highWatermark != leaderLog.logEndOffset => "log records are not fully replicated"
+          case Some(_) => ""
+        }
+      }
+      Some(new PartitionDrainStatus()
+        .setTopicId(expectedTopicId)
+        .setPartitionId(partitionId)
+        .setLeaderEpoch(expectedLeaderEpoch)
+        .setPartitionEpoch(expectedPartitionEpoch)
+        .setMetadataOffset(metadataOffset)
+        .setReady(blockedReason.isEmpty)
+        .setBlockedReason(blockedReason))
+    }
+  })
 
   /**
    * Make the local replica the leader by resetting LogEndOffset for remote replicas (there could be old LogEndOffset
@@ -1225,6 +1270,9 @@ class Partition(val topicPartition: TopicPartition,
     transactionVersion: Short = TransactionVersion.TV_UNKNOWN
   ): LogAppendInfo = {
     val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock, () => {
+      if (draining && origin != AppendOrigin.COORDINATOR) {
+        throw new NotLeaderOrFollowerException(s"Cannot produce to partition $topicPartition because it is being deleted")
+      }
       leaderLogIfLocal match {
         case Some(leaderLog) =>
           val minIsr = effectiveMinIsr(leaderLog)

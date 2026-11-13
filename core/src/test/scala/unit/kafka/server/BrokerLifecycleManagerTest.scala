@@ -23,6 +23,7 @@ import kafka.utils.TestUtils
 import org.apache.kafka.common.Node
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.common.message.{BrokerHeartbeatResponseData, BrokerRegistrationResponseData}
+import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, AbstractResponse, BrokerHeartbeatRequest, BrokerHeartbeatResponse, BrokerRegistrationRequest, BrokerRegistrationResponse}
 import org.apache.kafka.metadata.BrokerState
@@ -33,6 +34,8 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, Test, Timeout}
 
 import java.util.concurrent.{CompletableFuture, Future}
+import java.util.concurrent.atomic.AtomicReference
+import java.util.function.Supplier
 import scala.jdk.CollectionConverters._
 
 @Timeout(value = 12)
@@ -225,6 +228,35 @@ class BrokerLifecycleManagerTest {
       ctx.poll()
     }
     future.get
+  }
+
+  @Test
+  def testHeartbeatSendsCurrentAppliedPartitionDrainStatuses(): Unit = {
+    val ctx = new RegistrationTestContext(configProperties)
+    manager = new BrokerLifecycleManager(ctx.config, ctx.time, "partition-drain-status-heartbeat-", logDirs)
+    val controllerNode = new Node(3000, "localhost", 8021)
+    ctx.controllerNodeProvider.node.set(controllerNode)
+    ctx.highestMetadataOffset.set(999L)
+    val status = new PartitionDrainStatus().setTopicId(Uuid.randomUuid()).setPartitionId(2)
+      .setLeaderEpoch(3).setPartitionEpoch(4).setMetadataOffset(100L).setReady(false).setBlockedReason("open transaction")
+    val statuses = new AtomicReference[util.List[PartitionDrainStatus]](util.List.of(status))
+    val statusProvider: Supplier[util.List[PartitionDrainStatus]] = () => statuses.get()
+    val metadataProvider: Supplier[java.lang.Long] = () => java.lang.Long.valueOf(ctx.highestMetadataOffset.get())
+    val registration = prepareResponse(ctx, new BrokerRegistrationResponse(new BrokerRegistrationResponseData().setBrokerEpoch(1000)))
+    manager.start(metadataProvider, ctx.mockChannelManager, ctx.clusterId, ctx.advertisedListeners,
+      Collections.emptyMap(), OptionalLong.empty(), statusProvider)
+    poll(ctx, manager, registration)
+
+    def nextHeartbeat(): BrokerHeartbeatRequest =
+      poll(ctx, manager, prepareResponse[BrokerHeartbeatRequest](ctx, new BrokerHeartbeatResponse(new BrokerHeartbeatResponseData())))
+
+    val firstHeartbeat = nextHeartbeat()
+    assertEquals(999L, firstHeartbeat.data().currentMetadataOffset())
+    assertEquals(util.List.of(status), firstHeartbeat.data().drainingPartitions())
+    assertEquals(100L, firstHeartbeat.data().drainingPartitions().get(0).metadataOffset())
+
+    statuses.set(util.List.of())
+    assertTrue(nextHeartbeat().data().drainingPartitions().isEmpty)
   }
 
   @Test
