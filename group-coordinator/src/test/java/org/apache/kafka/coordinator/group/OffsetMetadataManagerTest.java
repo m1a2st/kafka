@@ -508,7 +508,7 @@ public class OffsetMetadataManagerTest {
             }
         }
 
-        private void replay(
+        void replay(
             CoordinatorRecord record
         ) {
             replay(
@@ -517,7 +517,7 @@ public class OffsetMetadataManagerTest {
             );
         }
 
-        private void replay(
+        void replay(
             long producerId,
             CoordinatorRecord record
         ) {
@@ -548,7 +548,7 @@ public class OffsetMetadataManagerTest {
             lastWrittenOffset++;
         }
 
-        private void replayEndTransactionMarker(
+        void replayEndTransactionMarker(
             long producerId,
             TransactionResult result
         ) {

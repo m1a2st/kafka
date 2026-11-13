@@ -54,6 +54,11 @@ public interface CoordinatorMetadataImage {
         int partitionCount();
 
         List<String> partitionRacks(int partitionId);
+
+        /** Whether this ID was allocated and has since been permanently removed. */
+        default boolean isPartitionDeleted(int partitionId) {
+            return false;
+        }
     }
 
     private static CoordinatorMetadataImage emptyImage() {

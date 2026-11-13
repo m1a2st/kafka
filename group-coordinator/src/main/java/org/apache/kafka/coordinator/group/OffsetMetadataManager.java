@@ -39,6 +39,7 @@ import org.apache.kafka.common.requests.TransactionResult;
 import org.apache.kafka.common.requests.TxnOffsetCommitRequest;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.internals.LogContext;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorMetadataImage;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorResult;
 import org.apache.kafka.coordinator.group.GroupCoordinatorShard.DeletedTopic;
@@ -56,6 +57,7 @@ import org.apache.kafka.timeline.TimelineHashSet;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -189,6 +191,11 @@ public class OffsetMetadataManager {
      * The open transactions (producer ids) by group id, topic name and partition id.
      */
     private final OpenTransactions openTransactions;
+
+    /**
+     * The current metadata image, including durable partition removal history.
+     */
+    private CoordinatorMetadataImage metadataImage = CoordinatorMetadataImage.EMPTY;
 
     /**
      * Tracks open transactions (producer ids) by group id, topic name and partition id.
@@ -1178,6 +1185,38 @@ public class OffsetMetadataManager {
         pendingTransactionalOffsets.forEach((__, offsets) -> delete.accept(offsets));
 
         return records;
+    }
+
+    /**
+     * Update metadata used to reconcile partition removals missed while this shard was unavailable.
+     *
+     * @param newImage The latest metadata image.
+     */
+    public void onMetadataUpdate(CoordinatorMetadataImage newImage) {
+        metadataImage = newImage;
+    }
+
+    /**
+     * Generate tombstones for offsets belonging to physically removed partitions. This also scans
+     * pending transactions, which may be the only offsets stored for a group. Missing topics and
+     * partition IDs that have never existed retain their established offset retention behavior.
+     *
+     * @return The offset tombstones to append and replay.
+     */
+    public List<CoordinatorRecord> cleanupDeletedPartitions() {
+        Set<CoordinatorRecord> records = new HashSet<>();
+        Consumer<Offsets> delete = offsetsToClean -> offsetsToClean.offsetsByGroup.forEach((groupId, topicOffsets) ->
+            topicOffsets.forEach((topicName, partitionOffsets) -> metadataImage.topicMetadata(topicName).ifPresent(topic ->
+                partitionOffsets.forEach((partition, offset) -> {
+                    if (topic.isPartitionDeleted(partition) && !isMismatchedTopicId(offset.topicId, topic.id())) {
+                        records.add(GroupCoordinatorRecordHelpers.newOffsetCommitTombstoneRecord(groupId, topicName, partition));
+                    }
+                })
+            ))
+        );
+        delete.accept(offsets);
+        pendingTransactionalOffsets.forEach((__, pendingOffsets) -> delete.accept(pendingOffsets));
+        return new ArrayList<>(records);
     }
 
     /**

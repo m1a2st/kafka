@@ -137,6 +137,12 @@ public class KRaftCoordinatorMetadataImage implements CoordinatorMetadataImage {
         }
 
         @Override
+        public boolean isPartitionDeleted(int partitionId) {
+            return partitionId >= 0 && partitionId < topicImage.partitionIdHighWatermark() &&
+                !topicImage.partitions().containsKey(partitionId);
+        }
+
+        @Override
         public List<String> partitionRacks(int partition) {
             List<String> racks = new ArrayList<>();
             PartitionRegistration partitionRegistration = topicImage.partitions().get(partition);

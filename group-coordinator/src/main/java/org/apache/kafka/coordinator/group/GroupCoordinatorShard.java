@@ -136,6 +136,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -378,6 +379,8 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
      * Visible for testing.
      */
     static final String GROUP_EXPIRATION_KEY = "expire-group-metadata";
+
+    static final String DELETED_PARTITIONS_CLEANUP_KEY = "cleanup-deleted-partition-offsets";
 
     /**
      * The classic, consumer and streams group size counter key to schedule a timer task.
@@ -1134,7 +1137,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
      */
     public CoordinatorResult<Void, CoordinatorRecord> cleanupGroupMetadata() {
         long startMs = time.milliseconds();
-        List<CoordinatorRecord> records = new ArrayList<>();
+        List<CoordinatorRecord> records = new ArrayList<>(offsetMetadataManager.cleanupDeletedPartitions());
         groupMetadataManager.groupIds().forEach(groupId -> {
             Group group = groupMetadataManager.group(groupId);
             // Offset cleanup runs for every group regardless of whether shouldExpire(config)
@@ -1155,7 +1158,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
 
         // Reschedule the next cycle.
         scheduleGroupMetadataExpiration();
-        return new CoordinatorResult<>(records, false);
+        return new CoordinatorResult<>(new ArrayList<>(new LinkedHashSet<>(records)), false);
     }
 
     /**
@@ -1256,16 +1259,27 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     public void onLoaded(CoordinatorMetadataImage newImage) {
         CoordinatorMetadataDelta emptyDelta = newImage.emptyDelta();
         groupMetadataManager.onMetadataUpdate(emptyDelta, newImage);
+        offsetMetadataManager.onMetadataUpdate(newImage);
         coordinatorMetrics.activateMetricsShard(metricsShard);
 
         groupMetadataManager.onLoaded();
         scheduleGroupMetadataExpiration();
         scheduleGroupSizeCounter();
+        if (!newImage.isEmpty()) {
+            timer.schedule(
+                DELETED_PARTITIONS_CLEANUP_KEY,
+                0,
+                TimeUnit.MILLISECONDS,
+                true,
+                () -> new CoordinatorResult<>(offsetMetadataManager.cleanupDeletedPartitions(), false)
+            );
+        }
     }
 
     @Override
     public void onUnloaded() {
         timer.cancel(GROUP_EXPIRATION_KEY);
+        timer.cancel(DELETED_PARTITIONS_CLEANUP_KEY);
         coordinatorMetrics.deactivateMetricsShard(metricsShard);
         groupMetadataManager.onUnloaded();
         cancelGroupSizeCounter();
@@ -1280,6 +1294,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     @Override
     public void onMetadataUpdate(CoordinatorMetadataDelta delta, CoordinatorMetadataImage newImage) {
         groupMetadataManager.onMetadataUpdate(delta, newImage);
+        offsetMetadataManager.onMetadataUpdate(newImage);
     }
 
     private static OffsetCommitKey convertLegacyOffsetCommitKey(

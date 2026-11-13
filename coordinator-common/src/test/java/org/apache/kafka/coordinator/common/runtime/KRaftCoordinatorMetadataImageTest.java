@@ -17,7 +17,10 @@
 package org.apache.kafka.coordinator.common.runtime;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.metadata.RemovePartitionRecord;
+import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
+import org.apache.kafka.image.MetadataProvenance;
 
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class KRaftCoordinatorMetadataImageTest {
@@ -140,4 +144,18 @@ class KRaftCoordinatorMetadataImageTest {
         assertEquals(coordinatorMetadataImage.hashCode(), coordinatorMetadataImageCopy.hashCode());
         assertNotEquals(coordinatorMetadataImage.hashCode(), coordinatorMetadataImage2.hashCode());
     }
+    @Test
+    public void testDeletedPartitionDiffersFromNeverAllocatedPartition() {
+        Uuid topicId = Uuid.randomUuid();
+        MetadataImage image = new MetadataImageBuilder().addTopic(topicId, "foo", 3).build();
+        MetadataDelta delta = new MetadataDelta.Builder().setImage(image).build();
+        delta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(2));
+        CoordinatorMetadataImage metadata = new KRaftCoordinatorMetadataImage(delta.apply(MetadataProvenance.EMPTY));
+        CoordinatorMetadataImage.TopicMetadata topic = metadata.topicMetadata(topicId).orElseThrow();
+        assertTrue(topic.isPartitionDeleted(2));
+        assertFalse(topic.isPartitionDeleted(0));
+        assertFalse(topic.isPartitionDeleted(3));
+        assertFalse(topic.isPartitionDeleted(-1));
+    }
+
 }
