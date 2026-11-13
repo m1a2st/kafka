@@ -22,9 +22,9 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreatePartitionsOptions;
-import org.apache.kafka.clients.admin.DeletePartitionsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.DeletePartitionsOptions;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
@@ -504,7 +504,7 @@ public abstract class TopicCommand {
                         }
                         decreases.put(topicName, targetCount);
                     }
-                    adminClient.deletePartitions(decreases, new DeletePartitionsOptions()).all().get();
+                    adminClient.deletePartitions(decreases, new DeletePartitionsOptions().force(opts.force())).all().get();
                 } else {
                     Map<String, NewPartitions> increases = new HashMap<>();
                     Map<String, Integer> decreases = new HashMap<>();
@@ -517,6 +517,9 @@ public abstract class TopicCommand {
                             throw new RuntimeException(e);
                         }
                         int targetCount = topic.partitions.get();
+                        if (opts.force() && targetCount >= currentCount) {
+                            throw new IllegalArgumentException("--force requires decreasing the partition count for every matched topic");
+                        }
                         if (targetCount > currentCount) {
                             increases.put(topicName, topicNewPartitions(topic, topicsInfo, topicName).getValue());
                         } else if (targetCount < currentCount) {
@@ -528,7 +531,7 @@ public abstract class TopicCommand {
                         adminClient.createPartitions(increases, new CreatePartitionsOptions().retryOnQuotaViolation(false)).all().get();
                     }
                     if (!decreases.isEmpty()) {
-                        adminClient.deletePartitions(decreases, new DeletePartitionsOptions()).all().get();
+                        adminClient.deletePartitions(decreases, new DeletePartitionsOptions().force(opts.force())).all().get();
                     }
                 }
             }
@@ -738,6 +741,8 @@ public abstract class TopicCommand {
 
         private final ArgumentAcceptingOptionSpec<Integer> deletePartitionsOpt;
 
+        private final OptionSpecBuilder forceOpt;
+
         private final ArgumentAcceptingOptionSpec<String> replicaAssignmentOpt;
 
         private final OptionSpecBuilder reportUnderReplicatedPartitionsOpt;
@@ -818,6 +823,8 @@ public abstract class TopicCommand {
                 .withRequiredArg()
                 .describedAs("# of partitions to delete")
                 .ofType(java.lang.Integer.class);
+            forceOpt = parser.accepts("force", "Allow partition deletion after the draining deadline even when transactions " +
+                "are pending. May cause transaction data loss. Only valid with --alter when decreasing partitions.");
             replicaAssignmentOpt = parser.accepts("replica-assignment", "A list of manual partition-to-broker assignments for the topic being created or altered.")
                     .withRequiredArg()
                     .describedAs("broker_id_for_part1_replica1 : broker_id_for_part1_replica2 , " +
@@ -906,6 +913,10 @@ public abstract class TopicCommand {
 
         Optional<Integer> deletePartitions() {
             return valueAsOption(deletePartitionsOpt);
+        }
+
+        boolean force() {
+            return has(forceOpt);
         }
 
         Optional<Map<Integer, List<Integer>>> replicaAssignment() {
@@ -999,6 +1010,8 @@ public abstract class TopicCommand {
             CommandLineUtils.checkInvalidArgs(parser, options, configOpt, invalidOptions(List.of(alterOpt, createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, partitionsOpt, invalidOptions(List.of(alterOpt, createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, deletePartitionsOpt, invalidOptions(List.of(alterOpt)));
+            CommandLineUtils.checkInvalidArgs(parser, options, forceOpt, invalidOptions(List.of(alterOpt)));
+            CommandLineUtils.checkInvalidArgs(parser, options, forceOpt, replicaAssignmentOpt);
             CommandLineUtils.checkInvalidArgs(parser, options, replicationFactorOpt, invalidOptions(List.of(createOpt)));
             CommandLineUtils.checkInvalidArgs(parser, options, replicaAssignmentOpt, invalidOptions(List.of(alterOpt, createOpt)));
             if (options.has(createOpt)) {

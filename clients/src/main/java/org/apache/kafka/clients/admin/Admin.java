@@ -695,7 +695,12 @@ public interface Admin extends AutoCloseable {
      * to the corresponding values. Partitions are removed from the tail (highest partition IDs first).
      * <p>
      * Deleted partitions go through a DRAINING phase where produces are rejected but consumers
-     * can still read existing data. After the drain timeout expires, the partitions are fully removed.
+     * can still read existing data. The drain timeout is the earliest removal time. Removal waits
+     * for pending transactions and their completion markers unless {@link DeletePartitionsOptions#force(boolean) force}
+     * is explicitly enabled. Transaction markers retain their normal acknowledgement and minimum ISR requirements.
+     * <p>
+     * The returned futures confirm that the deletion request was accepted or validated, rather than
+     * that the partitions have been physically removed.
      * <p>
      * This operation is not transactional so it may succeed for some topics while fail for others.
      * <p>
@@ -709,7 +714,7 @@ public interface Admin extends AutoCloseable {
      * <li>{@link org.apache.kafka.common.errors.InvalidDeletePartitionCountException}
      * if the requested partition count is greater than or equal to the current partition count.</li>
      * <li>{@link org.apache.kafka.common.errors.PartitionOperationInProgressException}
-     * if a partition deletion is already in progress for the topic.</li>
+     * if a partition deletion is already in progress for the topic and force is not enabled.</li>
      * </ul>
      *
      * @param partitionCounts A map from topic names to the new (reduced) partition count.

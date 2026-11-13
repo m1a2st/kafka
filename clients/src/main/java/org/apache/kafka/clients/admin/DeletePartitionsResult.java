@@ -36,14 +36,14 @@ public class DeletePartitionsResult {
 
     /**
      * Return a map from topic names to futures, which can be used to check the status of individual
-     * partition deletions.
+     * partition deletion requests. Success confirms acceptance or validation, not physical partition removal.
      */
     public Map<String, KafkaFuture<Void>> values() {
         return values;
     }
 
     /**
-     * Return a future which succeeds if all the partition deletions succeed.
+     * Return a future which succeeds if all partition deletion requests are accepted or validated.
      */
     public KafkaFuture<Void> all() {
         return KafkaFuture.allOf(values.values().toArray(new KafkaFuture<?>[0]));

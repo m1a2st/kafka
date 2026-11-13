@@ -28,6 +28,7 @@ import java.util.Map;
 public class DeletePartitionsOptions extends AbstractOptions<DeletePartitionsOptions> {
 
     private boolean validateOnly = false;
+    private boolean force = false;
 
     public DeletePartitionsOptions() {
     }
@@ -44,6 +45,22 @@ public class DeletePartitionsOptions extends AbstractOptions<DeletePartitionsOpt
      */
     public DeletePartitionsOptions validateOnly(boolean validateOnly) {
         this.validateOnly = validateOnly;
+        return this;
+    }
+
+    /**
+     * Return whether removal may proceed after the draining deadline despite pending transactions.
+     */
+    public boolean force() {
+        return force;
+    }
+
+    /**
+     * Set whether removal may proceed after the draining deadline despite pending transactions.
+     * This defaults to false. Enabling force may cause transaction data loss.
+     */
+    public DeletePartitionsOptions force(boolean force) {
+        this.force = force;
         return this;
     }
 }

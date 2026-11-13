@@ -276,8 +276,10 @@ public class TopicConfig {
 
     public static final String PARTITION_DRAIN_TIMEOUT_MS_CONFIG = "partition.drain.timeout.ms";
     public static final String PARTITION_DRAIN_TIMEOUT_MS_DOC = "The time in milliseconds to wait " +
-        "after marking tail partitions as draining before forcibly removing them. During this window, " +
-        "consumers can continue to read from draining partitions but producers cannot write to them. " +
-        "A value of 0 means partitions are removed immediately (no drain period).";
+        "after marking tail partitions as draining before they become eligible for removal. " +
+        "Consumers can continue to read while new application writes are rejected. " +
+        "Removal waits for pending transactions and their completion markers unless force is explicitly enabled. " +
+        "Transaction markers retain their normal acknowledgement and min.insync.replicas requirements. " +
+        "A value of 0 skips the consumer grace period but does not bypass transaction safety.";
     public static final long PARTITION_DRAIN_TIMEOUT_MS_DEFAULT = 3600000L;
 }

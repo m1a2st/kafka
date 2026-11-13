@@ -62,10 +62,10 @@ import org.apache.kafka.common.errors.InvalidDeletePartitionCountException;
 import org.apache.kafka.common.errors.InvalidReplicaAssignmentException;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.InvalidTopicException;
-import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.LogDirNotFoundException;
 import org.apache.kafka.common.errors.MismatchedEndpointTypeException;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
+import org.apache.kafka.common.errors.PartitionOperationInProgressException;
 import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SecurityDisabledException;
 import org.apache.kafka.common.errors.ThrottlingQuotaExceededException;
@@ -99,8 +99,6 @@ import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData;
 import org.apache.kafka.common.message.CreateAclsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
-import org.apache.kafka.common.message.DeletePartitionsResponseData;
-import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResult;
 import org.apache.kafka.common.message.CreateTopicsResponseData.CreatableTopicResultCollection;
@@ -108,6 +106,9 @@ import org.apache.kafka.common.message.DeleteAclsResponseData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResult;
 import org.apache.kafka.common.message.DeleteGroupsResponseData.DeletableGroupResultCollection;
+import org.apache.kafka.common.message.DeletePartitionsRequestData;
+import org.apache.kafka.common.message.DeletePartitionsResponseData;
+import org.apache.kafka.common.message.DeletePartitionsResponseData.DeletePartitionsTopicResult;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestData;
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsResponseData;
@@ -194,11 +195,12 @@ import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.CreateAclsResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
 import org.apache.kafka.common.requests.CreatePartitionsResponse;
-import org.apache.kafka.common.requests.DeletePartitionsResponse;
 import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
 import org.apache.kafka.common.requests.DeleteGroupsResponse;
+import org.apache.kafka.common.requests.DeletePartitionsRequest;
+import org.apache.kafka.common.requests.DeletePartitionsResponse;
 import org.apache.kafka.common.requests.DeleteRecordsResponse;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsRequest;
 import org.apache.kafka.common.requests.DeleteShareGroupOffsetsResponse;
@@ -11912,6 +11914,34 @@ public class KafkaAdminClientTest {
             assertEquals("count must be less than current",
                 assertInstanceOf(InvalidDeletePartitionCountException.class,
                     assertThrows(ExecutionException.class, otherTopicResult::get).getCause()).getMessage());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    public void testDeletePartitionsForwardsForceAndValidateOnly(final boolean force, final boolean validateOnly) throws Exception {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            AtomicReference<DeletePartitionsRequestData> requestData = new AtomicReference<>();
+            env.kafkaClient().prepareResponse(request -> {
+                requestData.set(((DeletePartitionsRequest) request).data());
+                return true;
+            }, prepareDeletePartitionsResponse(0,
+                deletePartitionsTopicResult("my_topic", Errors.NONE),
+                deletePartitionsTopicResult("other_topic", Errors.NONE)));
+            DeletePartitionsOptions options = new DeletePartitionsOptions().validateOnly(validateOnly);
+            if (force) {
+                options.force(true);
+            }
+            assertEquals(force, options.force());
+
+            env.adminClient().deletePartitions(Map.of("my_topic", 2, "other_topic", 3), options).all().get();
+
+            assertEquals(validateOnly, requestData.get().validateOnly());
+            assertEquals(2, requestData.get().topics().size());
+            assertEquals(2, requestData.get().topics().find("my_topic").count());
+            assertEquals(3, requestData.get().topics().find("other_topic").count());
+            requestData.get().topics().forEach(topic -> assertEquals(force, topic.force()));
         }
     }
 
