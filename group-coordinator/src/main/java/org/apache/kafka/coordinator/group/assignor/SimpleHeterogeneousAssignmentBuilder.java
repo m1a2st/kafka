@@ -54,6 +54,12 @@ import java.util.Set;
  */
 public class SimpleHeterogeneousAssignmentBuilder {
 
+    /** The subscriptions and initialization state used to determine assignable partitions. */
+    private final GroupSpec groupSpec;
+
+    /** The current topic partition metadata. */
+    private final SubscribedTopicDescriber subscribedTopicDescriber;
+
     /**
      * The list of all the topic Ids that the share group is subscribed to.
      */
@@ -100,6 +106,8 @@ public class SimpleHeterogeneousAssignmentBuilder {
     private final Map<Integer, Map<Uuid, Set<Integer>>> newGroupAssignment;
 
     public SimpleHeterogeneousAssignmentBuilder(GroupSpec groupSpec, SubscribedTopicDescriber subscribedTopicDescriber) {
+        this.groupSpec = groupSpec;
+        this.subscribedTopicDescriber = subscribedTopicDescriber;
         this.subscribedTopicIds = new HashSet<>();
         groupSpec.memberIds().forEach(memberId -> subscribedTopicIds.addAll(groupSpec.memberSubscription(memberId).subscribedTopicIds()));
 
@@ -310,10 +318,11 @@ public class SimpleHeterogeneousAssignmentBuilder {
          * also being subscribed in the new assignment.
          */
         private void revokeUnassignablePartitions() {
+            int partitionCount = subscribedTopicDescriber.numPartitions(topicId);
             for (Map.Entry<Integer, Map<Uuid, Set<Integer>>> entry : oldGroupAssignment.entrySet()) {
                 Integer memberIndex = entry.getKey();
                 Map<Uuid, Set<Integer>> oldMemberAssignment = entry.getValue();
-                Map<Uuid, Set<Integer>> newMemberAssignment = null;
+                Map<Uuid, Set<Integer>> newMemberAssignment = newGroupAssignment.get(memberIndex);
 
                 if (oldMemberAssignment.isEmpty()) {
                     continue;
@@ -323,12 +332,25 @@ public class SimpleHeterogeneousAssignmentBuilder {
                 if (assignedPartitions != null) {
                     if (subscribedTopicIds.contains(topicId)) {
                         for (int partition : assignedPartitions) {
+                            if (partition < 0 || partition >= partitionCount || !groupSpec.isPartitionAssignable(topicId, partition)) {
+                                if (newMemberAssignment == null) {
+                                    newMemberAssignment = AssignorHelpers.deepCopyAssignment(oldMemberAssignment);
+                                }
+                                Set<Integer> partitions = newMemberAssignment.get(topicId);
+                                partitions.remove(partition);
+                                if (partitions.isEmpty()) {
+                                    newMemberAssignment.remove(topicId);
+                                }
+                                continue;
+                            }
                             finalAssignmentByPartition.computeIfAbsent(partition, k -> new HashSet<>()).add(memberIndex);
                             finalAssignmentByMember.computeIfAbsent(memberIndex, k -> new HashSet<>()).add(partition);
                         }
                     } else {
                         // We create a deep copy of the original assignment so we can alter it.
-                        newMemberAssignment = AssignorHelpers.deepCopyAssignment(oldMemberAssignment);
+                        if (newMemberAssignment == null) {
+                            newMemberAssignment = AssignorHelpers.deepCopyAssignment(oldMemberAssignment);
+                        }
 
                         // Remove the entire topic.
                         newMemberAssignment.remove(topicId);

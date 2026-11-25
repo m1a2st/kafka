@@ -293,10 +293,21 @@ public class UniformHeterogeneousAssignmentBuilder {
                 Set<Integer> partitions = topicPartitions.getValue();
 
                 if (groupSpec.memberSubscription(memberId).subscribedTopicIds().contains(topicId)) {
-                    memberTargetAssignmentSizes[memberIndex] += partitions.size();
-
+                    int[] partitionOwners = targetAssignmentPartitionOwners.get(topicId);
                     for (int partition : partitions) {
-                        targetAssignmentPartitionOwners.get(topicId)[partition] = memberIndex;
+                        if (partition >= 0 && partition < partitionOwners.length) {
+                            memberTargetAssignmentSizes[memberIndex]++;
+                            partitionOwners[partition] = memberIndex;
+                        } else {
+                            if (newAssignment == null) {
+                                newAssignment = AssignorHelpers.deepCopyAssignment(oldAssignment);
+                            }
+                            Set<Integer> parts = newAssignment.get(topicId);
+                            parts.remove(partition);
+                            if (parts.isEmpty()) {
+                                newAssignment.remove(topicId);
+                            }
+                        }
                     }
                 } else {
                     if (newAssignment == null) {

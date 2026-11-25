@@ -49,6 +49,12 @@ import java.util.Set;
  */
 public class SimpleHomogeneousAssignmentBuilder {
 
+    /** The subscriptions and initialization state used to determine assignable partitions. */
+    private final GroupSpec groupSpec;
+
+    /** The current topic partition metadata. */
+    private final SubscribedTopicDescriber subscribedTopicDescriber;
+
     /**
      * The list of all the topic Ids that the share group is subscribed to.
      */
@@ -132,6 +138,8 @@ public class SimpleHomogeneousAssignmentBuilder {
     private final Set<Integer> overfilledMembers;
 
     public SimpleHomogeneousAssignmentBuilder(GroupSpec groupSpec, SubscribedTopicDescriber subscribedTopicDescriber) {
+        this.groupSpec = groupSpec;
+        this.subscribedTopicDescriber = subscribedTopicDescriber;
         this.subscribedTopicIds = groupSpec.memberSubscription(groupSpec.memberIds().iterator().next()).subscribedTopicIds();
 
         // Number the members 0 to M - 1.
@@ -234,7 +242,19 @@ public class SimpleHomogeneousAssignmentBuilder {
                 Set<Integer> assignedPartitions = oldMemberPartitions.getValue();
 
                 if (subscribedTopicIds.contains(topicId)) {
+                    int partitionCount = subscribedTopicDescriber.numPartitions(topicId);
                     for (int partition : assignedPartitions) {
+                        if (partition < 0 || partition >= partitionCount || !groupSpec.isPartitionAssignable(topicId, partition)) {
+                            if (newMemberAssignment == null) {
+                                newMemberAssignment = AssignorHelpers.deepCopyAssignment(oldMemberAssignment);
+                            }
+                            Set<Integer> partitions = newMemberAssignment.get(topicId);
+                            partitions.remove(partition);
+                            if (partitions.isEmpty()) {
+                                newMemberAssignment.remove(topicId);
+                            }
+                            continue;
+                        }
                         TopicIdPartition topicPartition = new TopicIdPartition(topicId, partition);
                         memberAssignedPartitions++;
                         finalAssignmentByPartition.computeIfAbsent(topicPartition, k -> new HashSet<>()).add(memberIndex);

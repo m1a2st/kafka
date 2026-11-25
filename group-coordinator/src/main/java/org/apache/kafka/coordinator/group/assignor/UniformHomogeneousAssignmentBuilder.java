@@ -180,25 +180,24 @@ public class UniformHomogeneousAssignmentBuilder {
                 Set<Integer> partitions = topicPartitions.getValue();
 
                 if (subscribedTopicIds.contains(topicId)) {
-                    if (partitions.size() <= quota) {
-                        quota -= partitions.size();
-                    } else {
-                        for (Integer partition : partitions) {
-                            if (quota > 0) {
-                                quota--;
-                            } else {
-                                if (newAssignment == null) {
-                                    // If the new assignment is null, we create a deep copy of the
-                                    // original assignment so that we can alter it.
-                                    newAssignment = AssignorHelpers.deepCopyAssignment(oldAssignment);
-                                }
-                                // Remove the partition from the new assignment.
-                                Set<Integer> parts = newAssignment.get(topicId);
-                                parts.remove(partition);
-                                if (parts.isEmpty()) {
-                                    newAssignment.remove(topicId);
-                                }
-                                // Add the partition to the unassigned set to be re-assigned later on.
+                    int partitionCount = subscribedTopicDescriber.numPartitions(topicId);
+                    for (Integer partition : partitions) {
+                        boolean partitionExists = partition >= 0 && partition < partitionCount;
+                        if (partitionExists && quota > 0) {
+                            quota--;
+                        } else {
+                            if (newAssignment == null) {
+                                // If the new assignment is null, we create a deep copy of the
+                                // original assignment so that we can alter it.
+                                newAssignment = AssignorHelpers.deepCopyAssignment(oldAssignment);
+                            }
+                            // Removed partitions must not consume quota or be assigned to another member.
+                            Set<Integer> parts = newAssignment.get(topicId);
+                            parts.remove(partition);
+                            if (parts.isEmpty()) {
+                                newAssignment.remove(topicId);
+                            }
+                            if (partitionExists) {
                                 unassignedPartitions.add(new TopicIdPartition(topicId, partition));
                             }
                         }

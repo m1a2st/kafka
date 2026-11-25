@@ -3055,8 +3055,9 @@ public class GroupMetadataManager {
         for (Map.Entry<Uuid, InitMapValue> entry : shareGroupStatePartitionMetadata.get(groupId).initializedTopics().entrySet()) {
             if (subscribedTopicNames.contains(entry.getValue().name())) {
                 // This topic is currently subscribed, so investigate further.
-                Set<Integer> currentAssignedPartitions = currentAssigned.get(entry.getKey());
-                if (currentAssignedPartitions != null && currentAssignedPartitions.equals(entry.getValue().partitions())) {
+                // A cleanup write may still be pending when the member next heartbeats.
+                Set<Integer> initializedPartitions = withoutDeletedSharePartitions(entry.getKey(), entry.getValue().partitions());
+                if (currentAssigned.getOrDefault(entry.getKey(), Set.of()).equals(initializedPartitions)) {
                     // The assigned and initialized partitions match, so assignment does not need to be recomputed.
                     continue;
                 }
@@ -5589,10 +5590,27 @@ public class GroupMetadataManager {
         if (topicPartitionMap == null || topicPartitionMap.isEmpty()) {
             return new CoordinatorResult<>(List.of(), null);
         }
-        ShareGroup group = (ShareGroup) groups.get(groupId);
+        if (!(groups.get(groupId) instanceof ShareGroup group)) {
+            return new CoordinatorResult<>(List.of(), null);
+        }
+
+        // The persister completes asynchronously. Metadata may have removed a partition or
+        // replaced its topic while the initialization request was in flight.
+        Map<Uuid, Set<Integer>> validTopicPartitions = new HashMap<>();
+        topicPartitionMap.forEach((topicId, partitions) -> metadataImage.topicMetadata(topicId).ifPresent(topic -> {
+            Set<Integer> validPartitions = partitions.stream()
+                .filter(partition -> partition >= 0 && partition < topic.partitionCount())
+                .collect(Collectors.toSet());
+            if (!validPartitions.isEmpty()) {
+                validTopicPartitions.put(topicId, validPartitions);
+            }
+        }));
+        if (validTopicPartitions.isEmpty()) {
+            return new CoordinatorResult<>(List.of(), null);
+        }
 
         ShareGroupStatePartitionMetadataInfo currentMap = shareGroupStatePartitionMetadata.get(groupId);
-        Map<Uuid, InitMapValue> enrichedTopicPartitionMap = attachInitValue(topicPartitionMap);
+        Map<Uuid, InitMapValue> enrichedTopicPartitionMap = attachInitValue(validTopicPartitions);
         if (currentMap == null) {
             return new CoordinatorResult<>(
                 List.of(newShareGroupStatePartitionMetadataRecord(group.groupId(), Map.of(), enrichedTopicPartitionMap, Map.of())),
@@ -5602,14 +5620,16 @@ public class GroupMetadataManager {
 
         // We must combine the existing information in the record with the topicPartitionMap argument so that the final
         // record has up-to-date information.
-        Map<Uuid, InitMapValue> finalInitializedMap = combineInitMaps(currentMap.initializedTopics(), enrichedTopicPartitionMap);
+        Map<Uuid, InitMapValue> finalInitializedMap = combineInitMaps(
+            withoutDeletedSharePartitions(currentMap.initializedTopics()), enrichedTopicPartitionMap);
 
         // Fetch initializing info from state metadata.
         Map<Uuid, InitMapValue> finalInitializingMap = new HashMap<>();
-        currentMap.initializingTopics().forEach((k, v) -> finalInitializingMap.put(k, new InitMapValue(v.name(), new HashSet<>(v.partitions()), v.timestamp())));
+        withoutDeletedSharePartitions(currentMap.initializingTopics()).forEach((k, v) ->
+            finalInitializingMap.put(k, new InitMapValue(v.name(), new HashSet<>(v.partitions()), v.timestamp())));
 
         // Remove any entries which are already initialized.
-        for (Map.Entry<Uuid, Set<Integer>> entry : topicPartitionMap.entrySet()) {
+        for (Map.Entry<Uuid, Set<Integer>> entry : validTopicPartitions.entrySet()) {
             Uuid topicId = entry.getKey();
             if (finalInitializingMap.containsKey(topicId)) {
                 Set<Integer> partitions = finalInitializingMap.get(topicId).partitions();
@@ -9401,6 +9421,55 @@ public class GroupMetadataManager {
         });
 
         return new CoordinatorResult<>(records);
+    }
+
+    /**
+     * Reconciles share initialization state with positively identified permanent partition removals.
+     * Unknown topics retain the existing whole-topic deletion behavior.
+     *
+     * @return Records to persist and replay before changing the initialization state.
+     */
+    public List<CoordinatorRecord> cleanupDeletedShareGroupPartitions() {
+        List<CoordinatorRecord> records = new ArrayList<>();
+        shareGroupStatePartitionMetadata.forEach((groupId, metadata) -> {
+            Map<Uuid, InitMapValue> initializing = withoutDeletedSharePartitions(metadata.initializingTopics());
+            Map<Uuid, InitMapValue> initialized = withoutDeletedSharePartitions(metadata.initializedTopics());
+            if (!initializing.equals(metadata.initializingTopics()) || !initialized.equals(metadata.initializedTopics())) {
+                records.add(newShareGroupStatePartitionMetadataRecord(groupId, initializing, initialized,
+                    attachTopicName(metadata.deletingTopics())));
+            }
+        });
+        return records;
+    }
+
+    private Map<Uuid, InitMapValue> withoutDeletedSharePartitions(Map<Uuid, InitMapValue> topics) {
+        Map<Uuid, InitMapValue> retained = new HashMap<>();
+        topics.forEach((topicId, value) -> {
+            Set<Integer> partitions = withoutDeletedSharePartitions(topicId, value.partitions());
+            if (partitions.size() == value.partitions().size()) {
+                retained.put(topicId, value);
+            } else if (!partitions.isEmpty()) {
+                retained.put(topicId, new InitMapValue(value.name(), partitions, value.timestamp()));
+            }
+        });
+        return retained;
+    }
+
+    private Set<Integer> withoutDeletedSharePartitions(Uuid topicId, Set<Integer> partitions) {
+        Optional<CoordinatorMetadataImage.TopicMetadata> topic = metadataImage.topicMetadata(topicId);
+        if (topic.isEmpty()) {
+            return partitions;
+        }
+        Set<Integer> retained = null;
+        for (int partition : partitions) {
+            if (topic.get().isPartitionDeleted(partition)) {
+                if (retained == null) {
+                    retained = new HashSet<>(partitions);
+                }
+                retained.remove(partition);
+            }
+        }
+        return retained == null ? partitions : retained;
     }
 
     /**

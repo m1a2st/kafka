@@ -382,6 +382,8 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
 
     static final String DELETED_PARTITIONS_CLEANUP_KEY = "cleanup-deleted-partition-offsets";
 
+    private boolean awaitingMetadataForDeletedPartitionsCleanup;
+
     /**
      * The classic, consumer and streams group size counter key to schedule a timer task.
      *
@@ -1137,7 +1139,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
      */
     public CoordinatorResult<Void, CoordinatorRecord> cleanupGroupMetadata() {
         long startMs = time.milliseconds();
-        List<CoordinatorRecord> records = new ArrayList<>(offsetMetadataManager.cleanupDeletedPartitions());
+        List<CoordinatorRecord> records = cleanupDeletedPartitionRecords();
         groupMetadataManager.groupIds().forEach(groupId -> {
             Group group = groupMetadataManager.group(groupId);
             // Offset cleanup runs for every group regardless of whether shouldExpire(config)
@@ -1205,7 +1207,8 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         Set<Integer> removedPartitionIds
     ) {
         final long startTimeMs = time.milliseconds();
-        final List<CoordinatorRecord> records = offsetMetadataManager.onPartitionsDeleted(topicName, removedPartitionIds);
+        final List<CoordinatorRecord> records = new ArrayList<>(offsetMetadataManager.onPartitionsDeleted(topicName, removedPartitionIds));
+        records.addAll(groupMetadataManager.cleanupDeletedShareGroupPartitions());
 
         log.info("Generated {} tombstone records in {} milliseconds while deleting offsets for removed partitions of topic {}.",
             records.size(), time.milliseconds() - startTimeMs, topicName);
@@ -1265,14 +1268,9 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         groupMetadataManager.onLoaded();
         scheduleGroupMetadataExpiration();
         scheduleGroupSizeCounter();
+        awaitingMetadataForDeletedPartitionsCleanup = newImage.isEmpty();
         if (!newImage.isEmpty()) {
-            timer.schedule(
-                DELETED_PARTITIONS_CLEANUP_KEY,
-                0,
-                TimeUnit.MILLISECONDS,
-                true,
-                () -> new CoordinatorResult<>(offsetMetadataManager.cleanupDeletedPartitions(), false)
-            );
+            scheduleDeletedPartitionsCleanup();
         }
     }
 
@@ -1280,6 +1278,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     public void onUnloaded() {
         timer.cancel(GROUP_EXPIRATION_KEY);
         timer.cancel(DELETED_PARTITIONS_CLEANUP_KEY);
+        awaitingMetadataForDeletedPartitionsCleanup = false;
         coordinatorMetrics.deactivateMetricsShard(metricsShard);
         groupMetadataManager.onUnloaded();
         cancelGroupSizeCounter();
@@ -1295,6 +1294,21 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     public void onMetadataUpdate(CoordinatorMetadataDelta delta, CoordinatorMetadataImage newImage) {
         groupMetadataManager.onMetadataUpdate(delta, newImage);
         offsetMetadataManager.onMetadataUpdate(newImage);
+        if (awaitingMetadataForDeletedPartitionsCleanup && !newImage.isEmpty()) {
+            awaitingMetadataForDeletedPartitionsCleanup = false;
+            scheduleDeletedPartitionsCleanup();
+        }
+    }
+
+    private List<CoordinatorRecord> cleanupDeletedPartitionRecords() {
+        List<CoordinatorRecord> records = new ArrayList<>(offsetMetadataManager.cleanupDeletedPartitions());
+        records.addAll(groupMetadataManager.cleanupDeletedShareGroupPartitions());
+        return records;
+    }
+
+    private void scheduleDeletedPartitionsCleanup() {
+        timer.schedule(DELETED_PARTITIONS_CLEANUP_KEY, 0, TimeUnit.MILLISECONDS, true,
+            () -> new CoordinatorResult<>(cleanupDeletedPartitionRecords(), false));
     }
 
     private static OffsetCommitKey convertLegacyOffsetCommitKey(
