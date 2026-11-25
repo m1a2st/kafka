@@ -659,25 +659,30 @@ public class RecordAccumulator {
         int[] queueSizes = null;
         int[] partitionIds = null;
         String[] partitionLeaderRacks = null;
-        if (enableAdaptivePartitioning && batches.size() >= metadataSnapshot.cluster().partitionsForTopic(topic).size()) {
+        int partitionCount = enableAdaptivePartitioning ? metadataSnapshot.cluster().partitionsForTopic(topic).size() : 0;
+        if (enableAdaptivePartitioning && batches.size() >= partitionCount) {
             // We don't do adaptive partitioning until we scheduled at least a batch for all
             // partitions (i.e. we have the corresponding entries in the batches map), we just
             // do uniform.  The reason is that we build queue sizes from the batches map,
             // and if an entry is missing in the batches map, then adaptive partitioning logic
             // won't know about it and won't switch to it.
-            queueSizes = new int[batches.size()];
+            queueSizes = new int[partitionCount];
             partitionIds = new int[queueSizes.length];
             partitionLeaderRacks = new String[queueSizes.length];
         }
 
         int queueSizesIndex = -1;
+        int queuedPartitionCount = 0;
         boolean exhausted = this.free.queued() > 0;
         for (Map.Entry<Integer, Deque<ProducerBatch>> entry : batches.entrySet()) {
             TopicPartition part = new TopicPartition(topic, entry.getKey());
             // Advance queueSizesIndex so that we properly index available
             // partitions.  Do it here so that it's done for all code paths.
 
-            Node leader = metadataSnapshot.cluster().leaderFor(part);
+            PartitionInfo partitionInfo = metadataSnapshot.cluster().partition(part);
+            Node leader = partitionInfo == null ? null : partitionInfo.leader();
+            if (partitionInfo != null && queueSizes != null)
+                ++queuedPartitionCount;
             if (leader != null && queueSizes != null) {
                 ++queueSizesIndex;
                 assert queueSizesIndex < queueSizes.length;
@@ -749,6 +754,11 @@ public class RecordAccumulator {
         // We've collected the queue sizes for partitions of this topic, now we can calculate
         // load stats.  NOTE: the stats are calculated in place, modifying the
         // queueSizes array.
+        if (queueSizes != null && queuedPartitionCount < partitionCount) {
+            // Empty queues for removed partitions remain in batches. They must not complete
+            // warmup before every currently active partition has its own queue.
+            queueSizes = null;
+        }
         topicInfo.builtInPartitioner.updatePartitionLoadStats(queueSizes, partitionIds, partitionLeaderRacks, queueSizesIndex + 1);
         return nextReadyCheckDelayMs;
     }

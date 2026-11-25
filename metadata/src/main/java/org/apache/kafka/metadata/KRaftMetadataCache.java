@@ -281,17 +281,12 @@ public class KRaftMetadataCache implements MetadataCache {
             List<MetadataResponsePartition> partitions = partitionMetadata(image, topic, listenerName, errorUnavailableEndpoints, errorUnavailableListeners);
             if (partitions.isEmpty()) return Stream.empty();
             Set<Integer> draining = topicImage != null ? topicImage.drainingPartitions() : Set.of();
-            if (!draining.isEmpty()) {
-                if (requestVersion >= 0 && requestVersion < 14) {
-                    partitions = partitions.stream()
-                        .filter(p -> !draining.contains(p.partitionIndex()))
-                        .toList();
-                    if (partitions.isEmpty()) return Stream.empty();
-                } else if (requestVersion >= 14) {
-                    partitions = partitions.stream()
-                        .map(p -> draining.contains(p.partitionIndex()) ? p.setIsDraining(true) : p)
-                        .toList();
-                }
+            // Metadata requests do not distinguish producers from consumers. Legacy consumers
+            // still need every retained partition to read its data until physical removal.
+            if (!draining.isEmpty() && requestVersion >= 14) {
+                partitions = partitions.stream()
+                    .map(p -> draining.contains(p.partitionIndex()) ? p.setIsDraining(true) : p)
+                    .toList();
             }
             return Stream.of(new MetadataResponseTopic()
                 .setErrorCode(Errors.NONE.code())

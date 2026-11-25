@@ -1136,7 +1136,7 @@ public class MetadataCacheTest {
     }
 
     @Test
-    public void testGetTopicMetadataDrainingPartitionsFilteredForOldVersions() {
+    public void testGetTopicMetadataRetainsDrainingPartitionsForOldVersions() {
         MetadataCache cache = createCache();
         Uuid topicId = Uuid.randomUuid();
 
@@ -1169,15 +1169,16 @@ public class MetadataCacheTest {
 
         ListenerName listenerName = ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT);
 
-        // Version < 14: draining partitions should be excluded
+        // Version < 14: retain readable draining partitions for legacy consumers.
         List<MetadataResponseData.MetadataResponseTopic> result =
             cache.getTopicMetadata(Set.of("test-topic"), listenerName, false, false, (short) 12);
         assertEquals(1, result.size());
-        assertEquals(2, result.get(0).partitions().size());
+        assertEquals(4, result.get(0).partitions().size());
         Set<Integer> partitionIndices = result.get(0).partitions().stream()
             .map(MetadataResponseData.MetadataResponsePartition::partitionIndex)
             .collect(Collectors.toSet());
-        assertEquals(Set.of(0, 1), partitionIndices);
+        assertEquals(Set.of(0, 1, 2, 3), partitionIndices);
+        assertTrue(result.get(0).partitions().stream().noneMatch(MetadataResponseData.MetadataResponsePartition::isDraining));
 
         // Version >= 14: draining partitions included with IsDraining=true
         result = cache.getTopicMetadata(Set.of("test-topic"), listenerName, false, false, (short) 14);

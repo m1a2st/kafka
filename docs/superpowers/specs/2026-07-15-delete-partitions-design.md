@@ -241,8 +241,8 @@ New field under `MetadataResponsePartition`:
 
 | MetadataResponse version | Draining partition handling                                                                                                                             |
 |:------------------------:|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-|          v0–v13          | Draining partitions **excluded** from partition list entirely. Old producers see reduced partition count and rehash keys immediately.                   |
-|           v14            | Draining partitions **included** with `IsDraining=true`. New producers explicitly skip them. This allows clients to observe and log the draining state. |
+|          v0–v13          | All retained partitions are included without drain flags so legacy consumers can discover and read them. Producers require an updated client for automatic rerouting during draining. |
+|           v14            | All retained partitions are included with `IsDraining=true` on draining IDs. Drain-aware producers exclude these IDs from routing; consumers retain them for reads. |
 
 File: `clients/src/main/resources/common/message/MetadataRequest.json`
 
@@ -925,7 +925,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Producer as Producer
+    participant Producer as Drain-aware producer
     participant Broker as Broker (leader)
     participant Meta as Metadata Service
 
@@ -933,8 +933,8 @@ sequenceDiagram
     Producer->>Broker: Produce(partition=8, data)
     Broker-->>Producer: NOT_LEADER_OR_FOLLOWER
     Producer->>Meta: MetadataRequest (forced refresh)
-    Meta-->>Producer: MetadataResponse (partition 8 excluded or IsDraining=true)
-    Producer->>Producer: Repartition batch via hash(key) % activeCount
+    Meta-->>Producer: MetadataResponse v14 (partition 8 has IsDraining=true)
+    Producer->>Producer: Route newly partitioned records via hash(key) % activeCount
     Producer->>Broker: Produce(partition=2, data)
     Broker-->>Producer: Success
 ```
@@ -1073,9 +1073,12 @@ When a produce request targets a draining partition:
 - Return `NOT_LEADER_OR_FOLLOWER` (6) as the partition-level error
 - This is intentionally reusing an existing error code because:
     1. Producers already handle this error by refreshing metadata
-    2. After metadata refresh, the producer's partition list won't include the draining partition (v0-v13) or will skip
-       it (v14)
-    3. No client-side code changes required for existing producers
+    2. After a v14 metadata refresh, a drain-aware producer excludes the draining partition from new routing
+    3. Applications using an updated, drain-aware producer client do not need to change their send calls
+
+Metadata v0–v13 retains every physical partition for legacy consumers and has no drain flag. Legacy producers
+therefore need an updated client for automatic rerouting during draining; the error and metadata refresh alone
+do not redirect their records.
 
 #### Fetch Requests to Draining Partitions
 
@@ -1123,31 +1126,32 @@ When broker receives `RemovePartitionRecord` via metadata update, the detailed c
 
 #### Metadata Update and Key Routing
 
-**For producers using MetadataResponse v0–v13 (majority of existing deployments):**
+**For producers using MetadataResponse v0–v13:**
 
-The broker constructs the MetadataResponse by **excluding** draining partitions from the partition list. The producer
-sees a reduced partition count and immediately rehashes: `hash(key) % newActiveCount`.
-
-This means:
-
-- Keys that previously mapped to partitions 0 through (newCount-1) MAY remap (since `% newCount` differs from
-  `% oldCount`)
-- Keys that previously mapped to the removed tail partitions WILL remap
-- **This is a one-time disruption.** After the metadata refresh settles, routing is stable.
+The broker retains every physical partition in Metadata responses so legacy consumers can continue reading
+draining data. These versions do not expose drain flags and cannot reliably distinguish producer requests from
+consumer requests. A legacy producer can therefore continue choosing a draining ID after refreshing metadata;
+the broker rejects its writes with `NOT_LEADER_OR_FOLLOWER`. Routing reflects the smaller physical count only
+after removal reaches metadata. Upgrade to a drain-aware producer client before relying on automatic routing
+during draining, or explicitly stop targeting the draining tail and handle delivery failures.
 
 **For producers using MetadataResponse v14:**
 
 Draining partitions appear with `IsDraining=true`. `ProducerMetadata` excludes them from its cached partition
 metadata, so both keyed and sticky partitioning use only active partitions. Consumer metadata retains them for reads.
 
+Newly partitioned records use `hash(key) % newActiveCount`. Keys previously assigned to the draining tail move
+to active IDs; keys already on the active prefix may also move because the divisor changed. Existing batches
+keep their selected partition during retries and may fail delivery.
+
 **Sticky partitioner impact:**
 
-The `StickyPartitionCache` (for null-key messages) naturally adapts: when the current sticky partition becomes
-unavailable (draining), the next `nextPartition()` call picks from the remaining active partitions.
+The built-in sticky partitioner checks its current ID against the drain-aware producer's active metadata and
+selects a replacement from the remaining active partitions when needed.
 
 #### Producer Convergence Timeline (Detailed)
 
-When a partition enters DRAINING, the producer must discover this change. There are two discovery paths:
+For a drain-aware producer using Metadata v14, there are two discovery paths when a partition enters DRAINING:
 
 **Path 1: Error-driven discovery (fast, ~1 RTT)**
 
@@ -1158,7 +1162,7 @@ Timeline:
   T2: Producer sends Produce to draining partition
   T3: Broker returns NOT_LEADER_OR_FOLLOWER (partition-level error)
   T4: Producer calls metadata.requestUpdate(false) — forces immediate metadata refresh
-  T5: Producer receives new metadata (draining partition excluded or IsDraining=true)
+  T5: Producer receives v14 metadata (IsDraining=true) and excludes the partition from routing
   T6: Newly partitioned records are routed to active partitions
 
   Convergence time: T6 - T2 ≈ 1-2 network RTTs (typically 2-10ms in same DC)
@@ -1175,7 +1179,7 @@ Timeline:
   ...
   T(idle): Producer has no pending batches for draining partition
   T(refresh): metadata.max.age.ms expires (default 5 minutes = 300000ms)
-  T(refresh): Producer fetches new metadata → discovers draining partition excluded
+  T(refresh): Producer fetches v14 metadata → excludes IsDraining=true partitions from routing
 
   Convergence time: up to metadata.max.age.ms (worst case 5 minutes)
 ```
@@ -1206,7 +1210,7 @@ boolean canRetry =
 // If canRetry == true:
 //   1. metadata.requestUpdate(false) — schedule metadata refresh
 //   2. reenqueueBatch(batch, now) — re-queue batch for retry after backoff
-//   3. Next attempt keeps the original partition; newly partitioned sends use active partitions
+//   3. Next attempt keeps the original partition; drain-aware clients route new sends to active partitions
 
 // If canRetry == false (delivery.timeout.ms exceeded):
 //   1. batch.done() with TimeoutException
@@ -1214,9 +1218,10 @@ boolean canRetry =
 //   3. Message is LOST (from producer's perspective)
 ```
 
-**Key insight:** `NOT_LEADER_OR_FOLLOWER` is classified as `InvalidMetadataException` (which extends
-`RetriableException`). This means the producer's existing retry logic handles draining partitions
-correctly with **zero code changes** to the producer.
+`NOT_LEADER_OR_FOLLOWER` is classified as `InvalidMetadataException` (which extends `RetriableException`),
+so existing retry and metadata-error handling applies without a new error code. Automatic routing away from
+draining partitions requires an updated, drain-aware producer client using Metadata v14. Existing batches keep
+their original partition during retries and may exhaust their delivery deadline.
 
 **Scenario: delivery.timeout.ms too short**
 
@@ -1826,14 +1831,14 @@ changelog and repartition topics from direct partition removal.
 #### Sink Connectors
 
 - Sink connectors assigned to draining partitions continue consuming until removal
-- On removal: connector rebalance triggered, tasks reassigned to remaining partitions
-- No special handling needed
+- On removal: connector rebalance requires a shrink-aware consumer assignor to assign only retained partitions
+- Older classic Sticky/CooperativeSticky clients must be upgraded before relying on physical-removal rebalances
 
 #### Source Connectors
 
-- Source connectors write to topics. If the target topic has draining partitions, the connector's produce calls
-  will be routed away from draining partitions (normal producer behavior)
-- No special handling needed
+- Source connectors writing to a shrinking topic require an updated, drain-aware producer client using
+  Metadata v14 for automatic routing away from draining partitions.
+- Legacy producer clients can continue choosing draining IDs and fail delivery; upgrade before shrinking targets.
 
 #### MirrorMaker 2
 
@@ -2417,21 +2422,21 @@ Cannot delete all partitions; at least one partition must remain.
 | Controller | IBP_4_4_IV2+ | Must support PartitionDrainingRecord, RemovePartitionRecord |
 | Brokers | IBP_4_4_IV2+ | Must support draining state in metadata image |
 | Admin Client (caller) | 4.4+ | Must support DeletePartitions API key 94 |
-| Producers | Any version | No code changes. v0-v13 metadata: draining partitions excluded. v14: IsDraining field. |
-| Consumers (group) | Any version | No code changes. Standard rebalance handles removal. |
+| Producers | Drain-aware client using Metadata v14 for automatic rerouting | Legacy clients may select draining IDs and fail delivery; upgrade before relying on transparent rerouting. |
+| Consumers (group) | Any version for draining reads; shrink-aware assignor for removal | Older classic Sticky/CooperativeSticky clients require an upgrade to revoke removed ownership correctly. |
 | Consumers (manual assign) | Any version | Application must detect UNKNOWN_TOPIC_OR_PARTITION and update assignment. |
 | Kafka Streams | Updated client/coordinator | Surplus changelog accepted; repartition and join constraints remain. |
-| Kafka Connect | Any version | Connector rebalance handles removal automatically. |
-| MirrorMaker 2 | Any version | Detects partition deletion on source. Does NOT propagate to target. |
+| Kafka Connect | Drain-aware producer for source connectors | Sink consumers retain draining partitions; source routing follows the producer requirement. |
+| MirrorMaker 2 | Drain-aware producer when its target shrinks | Detects partition deletion on source. Does NOT propagate to target. |
 
 ### Wire Protocol Compatibility
 
 | Client version                         | Behavior                                                                                                               |
 |----------------------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Old client, old API version            | Cannot call DeletePartitions (unknown API key → `UnsupportedVersionException`)                                         |
-| Old producer (MetadataResponse v0-v13) | Draining partitions excluded from metadata. Producer sees reduced count. No code changes needed.                       |
-| Old consumer                           | Continues consuming from draining partitions. On removal, metadata refresh triggers rebalance. No code changes needed. |
-| New client (v14 metadata)              | Sees `IsDraining=true` field. Can provide observability.                                                               |
+| Old producer (MetadataResponse v0-v13) | Retains the full physical count during draining and may choose rejected IDs. Upgrade for automatic rerouting during draining. |
+| Old consumer                           | Retains discovery and reads during draining. Physical-removal rebalance requires a shrink-aware assignor; older classic Sticky/CooperativeSticky clients need an upgrade. |
+| New client (v14 metadata)              | Sees `IsDraining=true`; producer routing excludes draining IDs while consumer metadata retains them. |
 
 ### Cluster Upgrade Path
 
@@ -2445,6 +2450,10 @@ flowchart LR
 1. Rolling upgrade all brokers/controllers to version supporting IBP_4_4_IV2
 2. Set `MetadataVersion` to IBP_4_4_IV2 via `kafka-features.sh`
 3. DeletePartitions API becomes available
+4. Upgrade producers writing to shrinking topics to drain-aware clients using Metadata v14 before relying on
+   automatic routing during draining. Legacy consumers retain discovery and reads throughout the drain.
+5. Ensure group assignors support physical partition removal. Upgrade classic Sticky/CooperativeSticky client
+   binaries before shrinking subscribed topics; complete legacy Metadata responses cannot repair their algorithms.
 
 ### Rollback
 
@@ -2523,7 +2532,7 @@ If issues are found after enabling:
 | `PartitionRegistration`                         | Builder sets draining=true; equals/hashCode includes draining                                              |
 | `TopicImage`                                    | `hasDrainingPartitions()` returns true/false correctly                                                     |
 | `TopicImage`                                    | `activePartitionCount()` excludes draining partitions                                                      |
-| `MetadataResponse` serialization                | v14 includes IsDraining field; v0-v13 excludes draining partitions                                         |
+| `MetadataResponse` serialization                | All versions retain readable draining partitions; v14 also includes IsDraining |
 | `DescribeTopicPartitionsResponse` serialization | v1 includes IsDraining and DrainDeadlineMs                                                                 |
 | `Errors`                                        | New error codes serialize/deserialize correctly                                                            |
 | `TopicConfig`                                   | New config validates (type=long, atLeast(0))                                                               |

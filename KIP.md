@@ -286,15 +286,22 @@ When a broker receives `RemovePartitionRecord` via metadata update:
 
 ### Producer Behavior
 
-Applications do not need to change their producer calls. After a metadata refresh, newly partitioned records use
-only active partitions:
+Automatic routing away from draining partitions requires an updated producer client that understands
+`MetadataResponse` v14 and excludes `IsDraining=true` partitions. Applications using such a client do not need
+to change their producer calls. After a metadata refresh, newly partitioned records use only active partitions:
 
 1. Producer sends to draining partition → `NOT_LEADER_OR_FOLLOWER`
 2. `NOT_LEADER_OR_FOLLOWER` extends `RetriableException` → producer calls `metadata.requestUpdate()`
 3. Metadata refresh returns:
-   - **v0–v13**: Draining partitions excluded from partition list; producer sees reduced count
+   - **v0–v13**: All retained partitions remain in the list so legacy consumers can read them. These versions
+     cannot identify draining partitions, so producers may continue selecting them and receive write errors.
    - **v14**: Draining partitions included with `IsDraining=true`; `ProducerMetadata` excludes them from the producer's cached partition metadata
 4. Subsequent sends without an explicit partition use `hash(key) % newActiveCount` or the sticky partitioner.
+
+Step 4 applies to drain-aware producers using v14. Legacy producers must be upgraded for automatic rerouting
+during draining; otherwise applications must stop targeting the draining tail or accept retries and delivery
+failures until physical removal is reflected in metadata. The same legacy Metadata request serves both
+producers and consumers, so the broker cannot safely omit draining partitions only for legacy producers.
 
 Batches already assigned to a draining partition keep their original partition during retries. They are not
 repartitioned and may fail after retries or `delivery.timeout.ms` are exhausted. Explicitly targeting a draining
@@ -313,6 +320,11 @@ partition also fails. A metadata refresh only changes routing for records whose 
 - Fetch returns `UNKNOWN_TOPIC_OR_PARTITION` → metadata refresh → consumer group rebalance
 - Assignment updated to exclude removed partitions
 - **Manual-assign consumers** must detect the error and update their assignment at the application level
+
+Legacy consumers keep discovery and reads throughout draining. Physical removal additionally requires an
+assignor that handles a reduced partition set. Older classic Sticky and CooperativeSticky client binaries
+retain removed ownership and must be upgraded before relying on their post-removal rebalances; keeping
+legacy Metadata responses complete cannot repair those client-side assignment algorithms.
 
 ### Consumer Offset Cleanup
 
@@ -341,8 +353,8 @@ Both Streams protocols derive tasks from the remaining source partitions and rev
 
 #### Kafka Connect / MirrorMaker 2
 
-- **Sink connectors**: connector rebalance handles removal automatically
-- **Source connectors**: producer routing handles draining automatically
+- **Sink connectors**: retain draining reads; post-removal rebalance requires a shrink-aware consumer assignor
+- **Source connectors**: automatic routing during draining requires an updated, drain-aware producer client
 - **MirrorMaker 2**: detects partition deletion on source; does NOT propagate to target. Operators must separately delete partitions on target.
 
 #### Remote/Tiered Storage
@@ -523,8 +535,8 @@ Backward compatibility:
 
 | MetadataResponse version | Draining partition handling |
 |:---:|---|
-| v0–v13 | Draining partitions **excluded** from partition list. Old producers see reduced partition count and rehash immediately. |
-| v14 | Draining partitions **included** with `IsDraining=true`. New producers explicitly skip them for observability. |
+| v0–v13 | All retained partitions are included without drain flags, preserving legacy consumer discovery and reads. Producers need an updated client for automatic rerouting during draining. |
+| v14 | All retained partitions are included with `IsDraining=true` on draining IDs. Drain-aware producers exclude them from routing; consumers retain them for reads. |
 
 `MetadataRequest` validVersions bumped from `"0-13"` to `"0-14"`. No new request fields.
 
@@ -826,21 +838,21 @@ public class InvalidDeletePartitionCountException extends ApiException {
 | Controller | IBP_4_4_IV2+ | Must support PartitionDrainingRecord, RemovePartitionRecord |
 | Brokers | IBP_4_4_IV2+ | Must support draining state in metadata image |
 | Admin Client (caller) | 4.4+ | Must support DeletePartitions API key 94 |
-| Producers | Any version | No code changes. v0-v13: draining partitions excluded. v14: IsDraining field. |
-| Consumers (group) | Any version | No code changes. Standard rebalance handles removal. |
+| Producers | Drain-aware client using Metadata v14 for automatic rerouting | Legacy clients can still select draining IDs and fail delivery; upgrade before relying on transparent rerouting. |
+| Consumers (group) | Any version for draining reads; shrink-aware assignor for removal | Older classic Sticky/CooperativeSticky clients require an upgrade to revoke removed ownership correctly. |
 | Consumers (manual assign) | Any version | Application must handle `UNKNOWN_TOPIC_OR_PARTITION` and update assignment. |
 | Kafka Streams | Updated clients/coordinator | Surplus changelog partitions accepted; repartition and join input counts remain constrained. |
-| Kafka Connect | Any version | Connector rebalance handles removal automatically. |
-| MirrorMaker 2 | Any version | Detects deletion on source; does NOT propagate to target. |
+| Kafka Connect | Drain-aware producer for source connectors | Sink consumers retain draining partitions; source routing follows the producer requirement. |
+| MirrorMaker 2 | Drain-aware producer when its target shrinks | Detects deletion on source; does NOT propagate to target. |
 
 ### Wire Protocol Compatibility
 
 | Client version | Behavior |
 |---|---|
 | Old client, old API version | Cannot call DeletePartitions (unknown API key → `UnsupportedVersionException`) |
-| Old producer (MetadataResponse v0-v13) | Draining partitions excluded from metadata. Producer sees reduced count. |
-| Old consumer | Continues consuming from draining partitions. On removal, rebalance triggered. |
-| New client (v14 metadata) | Sees `IsDraining=true`. Can log warning for observability. |
+| Old producer (MetadataResponse v0-v13) | Retains the full physical count during draining and may keep selecting rejected IDs. Upgrade to a drain-aware client for automatic rerouting. |
+| Old consumer | Retains discovery and reads during draining. Physical-removal rebalance needs a shrink-aware assignor; older classic Sticky/CooperativeSticky clients require an upgrade. |
+| New client (v14 metadata) | Sees `IsDraining=true`; producer routing excludes draining IDs while consumer metadata retains them. |
 | Admin describe with DescribeTopicPartitions v1 | Exposes draining state and earliest removal deadline, including across pages |
 | Admin describe by ID or Metadata fallback | Exposes available draining state; deadline is unknown |
 | DescribeTopicPartitions v0 | No draining fields; TopicPartitionInfo uses active/unknown defaults |
@@ -859,6 +871,10 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 1. Rolling upgrade all brokers/controllers to version supporting IBP_4_4_IV2
 2. Set MetadataVersion to IBP_4_4_IV2 via `kafka-features.sh --bootstrap-server :9092 upgrade --feature metadata.version=33`
 3. DeletePartitions API becomes available
+4. Upgrade producers that will write to shrinking topics to a drain-aware client using Metadata v14 before
+   relying on automatic routing during draining. Legacy consumer discovery remains supported throughout draining.
+5. Ensure group assignors handle physical partition removal. Upgrade classic Sticky/CooperativeSticky clients
+   before shrinking their subscribed topics; legacy Metadata readability alone does not update their algorithms.
 
 ### Rollback
 

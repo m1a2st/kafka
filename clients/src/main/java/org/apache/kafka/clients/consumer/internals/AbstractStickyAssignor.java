@@ -97,10 +97,13 @@ public abstract class AbstractStickyAssignor extends AbstractPartitionAssignor {
 
         List<PartitionInfo> allPartitions = new ArrayList<>();
         partitionsPerTopic.values().forEach(allPartitions::addAll);
+        Set<TopicPartition> currentPartitions = allPartitions.stream()
+            .map(partition -> new TopicPartition(partition.topic(), partition.partition()))
+            .collect(Collectors.toSet());
         RackInfo rackInfo = new RackInfo(allPartitions, subscriptions);
 
         AbstractAssignmentBuilder assignmentBuilder;
-        if (allSubscriptionsEqual(partitionsPerTopic.keySet(), subscriptions, consumerToOwnedPartitions, partitionsWithMultiplePreviousOwners)) {
+        if (allSubscriptionsEqual(currentPartitions, subscriptions, consumerToOwnedPartitions, partitionsWithMultiplePreviousOwners)) {
             log.debug("Detected that all consumers were subscribed to same set of topics, invoking the "
                           + "optimized assignment algorithm");
             partitionsTransferringOwnership = new HashMap<>();
@@ -126,10 +129,10 @@ public abstract class AbstractStickyAssignor extends AbstractPartitionAssignor {
 
     /**
      * Returns true iff all consumers have an identical subscription. Also fills out the passed in
-     * {@code consumerToOwnedPartitions} with each consumer's previously owned and still-subscribed partitions,
+     * {@code consumerToOwnedPartitions} with each consumer's previously owned partitions that still exist,
      * and the {@code partitionsWithMultiplePreviousOwners} with any partitions claimed by multiple previous owners
      */
-    private boolean allSubscriptionsEqual(Set<String> allTopics,
+    private boolean allSubscriptionsEqual(Set<TopicPartition> currentPartitions,
                                           Map<String, Subscription> subscriptions,
                                           Map<String, List<TopicPartition>> consumerToOwnedPartitions,
                                           Set<TopicPartition> partitionsWithMultiplePreviousOwners) {
@@ -163,7 +166,7 @@ public abstract class AbstractStickyAssignor extends AbstractPartitionAssignor {
             // the member has a valid generation, so we can consider its owned partitions if it has the highest
             // generation amongst
             for (final TopicPartition tp : memberData.partitions) {
-                if (allTopics.contains(tp.topic())) {
+                if (currentPartitions.contains(tp)) {
                     String otherConsumer = allPreviousPartitionsToOwner.get(tp);
                     if (otherConsumer == null) {
                         // this partition is not owned by other consumer in the same generation

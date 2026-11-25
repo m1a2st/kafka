@@ -517,12 +517,11 @@ public class Metadata implements Closeable {
 
             if (metadata.error() == Errors.NONE) {
                 for (MetadataResponse.PartitionMetadata partitionMetadata : metadata.partitionMetadata()) {
-                    if (!retainPartition(partitionMetadata))
-                        continue;
-
                     // Even if the partition's metadata includes an error, we need to handle
-                    // the update to catch new epochs
+                    // the update to catch new epochs. Routing exclusions must also preserve
+                    // the latest epoch and must not discard newer cached active metadata.
                     updateLatestMetadata(partitionMetadata, metadataResponse.hasReliableLeaderEpochs(), topicId, oldTopicId)
+                        .filter(this::retainPartition)
                         .ifPresent(partitions::add);
 
                     if (partitionMetadata.error.exception() instanceof InvalidMetadataException) {
@@ -777,8 +776,8 @@ public class Metadata implements Closeable {
     }
 
     /**
-     * Whether to retain a partition from a metadata response. Consumers retain draining partitions
-     * for reads, while producers exclude them from partition selection.
+     * Whether to retain reconciled partition metadata. Consumers retain draining partitions
+     * for reads, while producers exclude them from partition selection after updating epochs.
      */
     protected boolean retainPartition(MetadataResponse.PartitionMetadata partitionMetadata) {
         return true;
