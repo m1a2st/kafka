@@ -384,6 +384,15 @@ public class StreamsResetter {
     public void resetOffsetsFromResetPlan(final Consumer<byte[], byte[]> client,
                                           final Set<TopicPartition> inputTopicPartitions,
                                           final Map<TopicPartition, Long> topicPartitionsAndOffset) {
+        if (!topicPartitionsAndOffset.keySet().equals(inputTopicPartitions)) {
+            final Set<TopicPartition> missingPartitions = new HashSet<>(inputTopicPartitions);
+            missingPartitions.removeAll(topicPartitionsAndOffset.keySet());
+            final Set<TopicPartition> unexpectedPartitions = new HashSet<>(topicPartitionsAndOffset.keySet());
+            unexpectedPartitions.removeAll(inputTopicPartitions);
+            throw new IllegalArgumentException("Reset plan must contain offsets for exactly the current input partitions. "
+                + "Missing partitions: " + missingPartitions + "; unexpected partitions: " + unexpectedPartitions);
+        }
+
         final Map<TopicPartition, Long> endOffsets = client.endOffsets(inputTopicPartitions);
         final Map<TopicPartition, Long> beginningOffsets = client.beginningOffsets(inputTopicPartitions);
 
@@ -640,7 +649,8 @@ public class StreamsResetter {
                 .ofType(String.class);
             toEarliestOption = parser.accepts("to-earliest", "Reset offsets to earliest offset.");
             toLatestOption = parser.accepts("to-latest", "Reset offsets to latest offset.");
-            fromFileOption = parser.accepts("from-file", "Reset offsets to values defined in CSV file.")
+            fromFileOption = parser.accepts("from-file", "Reset offsets to values defined in CSV file. "
+                    + "The plan must contain offsets for exactly the current partitions of the input topics.")
                 .withRequiredArg()
                 .ofType(String.class);
             shiftByOption = parser.accepts("shift-by", "Reset offsets shifting current offset by 'n', where 'n' can be positive or negative")

@@ -47,6 +47,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -251,6 +252,67 @@ public class StreamsResetterTest {
 
         final ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofMillis(500));
         assertEquals(2, records.count());
+    }
+
+    @Test
+    public void testResetUsingPlanRejectsRemovedPartitionsBeforeSeeking() {
+        final TopicPartition retainedPartition = new TopicPartition(TOPIC, 1);
+        final TopicPartition removedPartition = new TopicPartition(TOPIC, 2);
+        final TopicPartition higherRemovedPartition = new TopicPartition(TOPIC, 3);
+        consumer.assign(List.of(topicPartition, retainedPartition));
+        consumer.updateBeginningOffsets(Map.of(topicPartition, 0L, retainedPartition, 0L));
+        consumer.updateEndOffsets(Map.of(topicPartition, 100L, retainedPartition, 100L));
+        consumer.seek(topicPartition, 40L);
+        consumer.seek(retainedPartition, 50L);
+
+        final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
+            streamsResetter.resetOffsetsFromResetPlan(consumer, Set.of(topicPartition, retainedPartition), Map.of(
+                topicPartition, 10L, retainedPartition, 20L, removedPartition, 30L, higherRemovedPartition, 40L)));
+
+        assertTrue(exception.getMessage().contains(removedPartition.toString()));
+        assertTrue(exception.getMessage().contains(higherRemovedPartition.toString()));
+        assertEquals(40L, consumer.position(topicPartition));
+        assertEquals(50L, consumer.position(retainedPartition));
+    }
+
+    @Test
+    public void testResetUsingPlanRejectsMissingPartitionsBeforeSeeking() {
+        final TopicPartition missingPartition = new TopicPartition(TOPIC, 1);
+        consumer.assign(List.of(topicPartition, missingPartition));
+        consumer.updateBeginningOffsets(Map.of(topicPartition, 0L, missingPartition, 0L));
+        consumer.updateEndOffsets(Map.of(topicPartition, 100L, missingPartition, 100L));
+        consumer.seek(topicPartition, 40L);
+        consumer.seek(missingPartition, 50L);
+
+        final Set<TopicPartition> orderedInputPartitions = new LinkedHashSet<>(List.of(topicPartition, missingPartition));
+        final IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
+            streamsResetter.resetOffsetsFromResetPlan(consumer, orderedInputPartitions, Map.of(topicPartition, 10L)));
+
+        assertTrue(exception.getMessage().contains(missingPartition.toString()));
+        assertEquals(40L, consumer.position(topicPartition));
+        assertEquals(50L, consumer.position(missingPartition));
+    }
+
+    @Test
+    public void testResetUsingPlanIncludesEveryRetainedInputPartition() {
+        final TopicPartition activePartition = new TopicPartition(TOPIC, 1);
+        final TopicPartition drainingPartition = new TopicPartition(TOPIC, 2);
+        final TopicPartition higherDrainingPartition = new TopicPartition(TOPIC, 3);
+        final Set<TopicPartition> retainedPartitions = Set.of(
+            topicPartition, activePartition, drainingPartition, higherDrainingPartition);
+        consumer.assign(retainedPartitions);
+        consumer.updateBeginningOffsets(Map.of(
+            topicPartition, 0L, activePartition, 0L, drainingPartition, 0L, higherDrainingPartition, 0L));
+        consumer.updateEndOffsets(Map.of(
+            topicPartition, 100L, activePartition, 100L, drainingPartition, 100L, higherDrainingPartition, 100L));
+
+        streamsResetter.resetOffsetsFromResetPlan(consumer, retainedPartitions, Map.of(
+            topicPartition, 10L, activePartition, 20L, drainingPartition, 30L, higherDrainingPartition, 40L));
+
+        assertEquals(10L, consumer.position(topicPartition));
+        assertEquals(20L, consumer.position(activePartition));
+        assertEquals(30L, consumer.position(drainingPartition));
+        assertEquals(40L, consumer.position(higherDrainingPartition));
     }
 
     @Test
