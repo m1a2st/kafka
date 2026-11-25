@@ -902,12 +902,26 @@ public class InvalidDeletePartitionCountException extends ApiException {
 
 | Name | Type | MBean | Description |
 |------|------|-------|-------------|
-| `DrainingPartitionCount` | Gauge | `kafka.controller:type=KafkaController,name=DrainingPartitionCount` | Number of partitions currently in DRAINING state across all topics. Only reported by the active controller. |
-| `PendingDrainRemovals` | Gauge | `kafka.controller:type=KafkaController,name=PendingDrainRemovals` | Number of draining removals still pending deadline or transaction safety. |
-| `DrainCompletedTotal` | Meter | `kafka.controller:type=KafkaController,name=DrainCompletedTotal` | Cumulative count of partitions that transitioned from DRAINING to REMOVED. |
+| `DrainingPartitionCount` | Gauge | `kafka.controller:type=KafkaController,name=DrainingPartitionCount` | Number of partitions currently in DRAINING state across all topics on the active controller; zero on standby controllers or while leadership is unknown. |
+| `PendingDrainRemovals` | Gauge | `kafka.controller:type=KafkaController,name=PendingDrainRemovals` | Number of DRAINING partitions awaiting committed removal, including those waiting for their deadline, transaction safety, or metadata commit. Has the same current cardinality and controller scope as DrainingPartitionCount. |
+| `DrainCompletedTotal` | Meter | `kafka.controller:type=KafkaController,name=DrainCompletedTotal` | Process-local cumulative count of committed individual partition removals observed while this controller is active, including forced removals. |
 | `DeletePartitionsRequestsPerSec` | Meter | `kafka.network:type=RequestMetrics,name=RequestsPerSec,request=DeletePartitions` | Rate of DeletePartitions requests received. |
 | `DeletePartitionsTotalTimeMs` | Histogram | `kafka.network:type=RequestMetrics,name=TotalTimeMs,request=DeletePartitions` | Total time to process DeletePartitions requests. |
 | `DeletePartitionsErrorsPerSec` | Meter | `kafka.network:type=RequestMetrics,name=ErrorsPerSec,request=DeletePartitions,error={errorName}` | Rate of errors returned by DeletePartitions, broken down by error code. |
+
+Controller scope follows the metadata loader's leadership notifications at publication time. Standby
+controllers keep the committed drain state current, so both gauges restore that state on activation
+without waiting for another metadata update. Drain cancellation and whole-topic deletion clear the
+corresponding pending state without incrementing `DrainCompletedTotal`. Each explicit
+`RemovePartitionRecord` that removes a present partition increments the meter when published while
+active, even when its drain record or a subsequent whole-topic deletion is coalesced into the same
+publication. Repeated removal of an already absent partition does not increment it.
+
+Snapshots and publisher initialization set the gauges without reconstructing historical completions.
+The meter retains its count across leadership changes in the same process, but does not count removals
+observed while standby or backfill them on activation. Restarting the process resets the meter; after
+failover, the new active controller continues its own process-local count. It is not a durable
+cluster-wide completion total.
 
 #### Existing Metrics Behavior
 
@@ -984,6 +998,13 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 ### Unit Tests
 
 - All controller validation paths (invalid count, internal topic, unauthorized, reassignment conflict, duplicate drain)
+- DeletePartitions v0 enforces strict mutation quota through the actual request handler and exhausted sensor
+- Heartbeat readiness sampling does not wait on global replica cleanup I/O, retains the completed applied
+  metadata offset during partial application, and still checks current fence, epoch and transaction safety
+- Drain metrics follow configured controller identity and leadership, initialize from snapshots without
+  completion backfill, handle cancellation/coalesced removal, and unregister all owned metrics on close
+- Streams application reset rejects stale or incomplete CSV partition sets before offset queries or seeks,
+  preserving valid retained-partition plans and all existing positions on rejection
 - Per-topic drain record atomicity when a topic alone exceeds the record limit, or fits alone but exceeds the
   remaining capacity after another accepted topic
 - Normal and forced drain deadlines saturate at `Long.MAX_VALUE` without becoming cancellation records
@@ -1072,18 +1093,24 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 
 ### Local Verification Record (2026-11-25)
 
-The local implementation was verified with **2,812 unique passing cases**, with no failures, errors, or skips,
+The latest local verification completed **3,223 unique passing cases**, with no failures, errors, or skips,
 across the related client, controller/metadata, broker, group/share coordinator, storage, Streams, tools, and
-shared-runtime suites. This includes all 14 selected KRaft cluster cases: nine deletion-review cases and five
-existing lifecycle cases. The original 79 review cases remain covered; the maximum-timeout case was expanded
-to normal and forced parameterizations. Scoped Spotless, affected Checkstyle, and whitespace checks passed.
+shared-runtime suites. This includes 17 selected KRaft cluster cases: eleven deletion-review cases, five existing
+lifecycle cases, and one share-consumer physical-removal case. All original 79 review cases remain covered;
+the maximum-timeout case uses normal and forced parameterizations. The tool suites contribute 229 cases.
+Scoped Spotless over 113 changed Java files, affected Checkstyle, and whitespace checks passed.
 
-These results record the completed related verification, rather than completion of every scenario in this test
-plan or the full Kafka test suite. The remote cleanup regression uses two real remote log managers and the real
-metadata cache with in-memory transport/storage substitutes; no external object store was used. The cold-share
-batching regression uses the real coordinator runtime with a bounded writer to exercise actual batch splitting.
-See the [remediation and verification report](docs/reviews/2026-11-25-delete-partition-test-remediation.md) for
-per-module results, failure reproductions, and exact commands.
+The rereview's heartbeat-lock, real mutation-quota, and missing-metric reproductions now pass. Additional
+coverage checks incomplete metadata application, controller leadership changes, metrics cleanup, and invalid
+Streams reset plans before any seek. The prior 2,812-case record is retained in the earlier remediation report.
+
+These results record completed related verification, rather than every scenario in this test plan or the full
+Kafka test suite. Remote cleanup tests use real remote log managers and the real metadata cache with in-memory
+transport/storage substitutes; no external object store was used. The heartbeat regression uses a latch and
+ThreadMXBean monitor ownership, and cold-share batching uses the real coordinator runtime with a bounded writer.
+See the [latest remediation and verification report](docs/reviews/2026-11-25-delete-partition-test-rereview-remediation.md)
+and the [tool impact inventory](docs/reviews/2026-11-25-delete-partition-tools-inventory.md) for scope,
+per-module results, failure reproductions, remaining tool-specific test recommendations, and exact commands.
 
 ## Rejected Alternatives
 
