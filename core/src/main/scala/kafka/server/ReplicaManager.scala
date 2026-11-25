@@ -89,6 +89,8 @@ import scala.jdk.OptionConverters.RichOptional
 object ReplicaManager {
   val HighWatermarkFilename = "replication-offset-checkpoint"
 
+  private case class AppliedDrainState(image: MetadataImage, partitions: immutable.Set[TopicPartition])
+
   private val LeaderCountMetricName = "LeaderCount"
   private val PartitionCountMetricName = "PartitionCount"
   private val OfflineReplicaCountMetricName = "OfflineReplicaCount"
@@ -213,8 +215,8 @@ class ReplicaManager(val config: KafkaConfig,
   protected val allPartitions = new ConcurrentHashMap[TopicPartition, HostedPartition[Partition]]
   private[server] val drainingPartitions: java.util.Set[TopicPartition] = ConcurrentHashMap.newKeySet[TopicPartition]()
   private val replicaStateChangeLock = new Object
-  // Accessed only under replicaStateChangeLock after the corresponding partition fences are installed.
-  private var appliedDrainImage = MetadataImage.EMPTY
+  // Publish the image and its local drain candidates together only after applyDelta has installed their fences.
+  @volatile private var appliedDrainState = ReplicaManager.AppliedDrainState(MetadataImage.EMPTY, immutable.Set.empty)
   val replicaFetcherManager = createReplicaFetcherManager(metrics, time, quotaManagers.follower)
   private[server] val replicaAlterLogDirsManager = createReplicaAlterLogDirsManager(quotaManagers.alterLogDirs, brokerTopicStats)
   private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
@@ -477,16 +479,19 @@ class ReplicaManager(val config: KafkaConfig,
 
   /**
    * Report only fences and registrations already installed by applyDelta, independently of loader progress.
-   * Lock order is replicaStateChangeLock, then the partition's leader/ISR lock.
+   * Sampling must not take replicaStateChangeLock, which may be held during remote storage cleanup.
+   * The partition's leader/ISR lock guards fresh readiness against the published registration and fence.
    */
-  def partitionDrainStatuses(): util.List[PartitionDrainStatus] = replicaStateChangeLock.synchronized {
+  def partitionDrainStatuses(): util.List[PartitionDrainStatus] = {
+    val appliedState = appliedDrainState
+    val appliedImage = appliedState.image
     val statuses = new util.ArrayList[PartitionDrainStatus]()
-    drainingPartitions.asScala.foreach { topicPartition =>
-      Option(appliedDrainImage.topics().getTopic(topicPartition.topic())).foreach { topic =>
+    appliedState.partitions.foreach { topicPartition =>
+      Option(appliedImage.topics().getTopic(topicPartition.topic())).foreach { topic =>
         Option(topic.partitions().get(topicPartition.partition())).foreach { registration =>
           if (topic.drainingPartitions().contains(topicPartition.partition()) && registration.leader == localBrokerId) {
             onlinePartition(topicPartition).flatMap(_.partitionDrainStatus(topic.id(), registration.leaderEpoch,
-              registration.partitionEpoch, appliedDrainImage.provenance().lastContainedOffset())).foreach(statuses.add)
+              registration.partitionEpoch, appliedImage.provenance().lastContainedOffset())).foreach(statuses.add)
           }
         }
       }
@@ -2467,7 +2472,7 @@ class ReplicaManager(val config: KafkaConfig,
         // We only want to update the directoryIds if DirectoryAssignment is supported!
         localChanges.directoryIds.forEach(maybeUpdateTopicAssignment)
       }
-      appliedDrainImage = newImage
+      appliedDrainState = ReplicaManager.AppliedDrainState(newImage, drainingPartitions.asScala.toSet)
     }
   }
 

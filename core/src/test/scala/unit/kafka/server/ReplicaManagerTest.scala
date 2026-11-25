@@ -6584,6 +6584,184 @@ class ReplicaManagerTest {
     }
   }
 
+  @Test
+  def testReviewDrainHeartbeatSamplingDoesNotWaitForRemoteDeletion(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time),
+      enableRemoteStorage = true)
+    val remoteDeletionEntered = new CountDownLatch(1)
+    val releaseRemoteDeletion = new CountDownLatch(1)
+    val cleanupThread = new AtomicReference[Thread]()
+    val samplingThread = new AtomicReference[Thread]()
+    var removal: CompletableFuture[Void] = null
+    var statuses: CompletableFuture[util.List[PartitionDrainStatus]] = null
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader = true)
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta,
+        imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      reset(mockRemoteLogManager)
+      doAnswer((_: InvocationOnMock) => {
+        remoteDeletionEntered.countDown()
+        assertTrue(releaseRemoteDeletion.await(10, TimeUnit.SECONDS))
+        null
+      }).when(mockRemoteLogManager).stopPartitions(any(), any())
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      removal = CompletableFuture.runAsync(() => {
+        cleanupThread.set(Thread.currentThread())
+        replicaManager.applyDelta(removalDelta,
+          imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+      })
+      assertTrue(remoteDeletionEntered.await(5, TimeUnit.SECONDS))
+      val samplingStarted = new CountDownLatch(1)
+      statuses = CompletableFuture.supplyAsync(() => {
+        samplingThread.set(Thread.currentThread())
+        samplingStarted.countDown()
+        replicaManager.partitionDrainStatuses()
+      })
+      assertTrue(samplingStarted.await(5, TimeUnit.SECONDS))
+
+      // BrokerLifecycleManager calls this supplier synchronously before every heartbeat.
+      // Remote deletion may exceed the broker session timeout and must not prevent heartbeats.
+      try {
+        assertTrue(statuses.get(250, TimeUnit.MILLISECONDS).isEmpty)
+      } catch {
+        case timeout: java.util.concurrent.TimeoutException =>
+          val threads = java.lang.management.ManagementFactory.getThreadMXBean
+          val samplingInfo = threads.getThreadInfo(samplingThread.get().getId, 64)
+          val cleanupInfo = threads.getThreadInfo(cleanupThread.get().getId, 64)
+          val samplingStack = Option(samplingInfo).map(_.getStackTrace.mkString("\n")).getOrElse("unavailable")
+          val cleanupStack = Option(cleanupInfo).map(_.getStackTrace.mkString("\n")).getOrElse("unavailable")
+          val diagnostic = s"Heartbeat sampling failed to complete while remote deletion was paused. " +
+            s"Sampling thread: $samplingInfo; cleanup thread: $cleanupInfo; timeout: $timeout; " +
+            s"sampling stack:\n$samplingStack\ncleanup stack:\n$cleanupStack"
+          assertNotNull(samplingInfo, diagnostic)
+          assertEquals(Thread.State.BLOCKED, samplingInfo.getThreadState, diagnostic)
+          assertEquals(cleanupThread.get().getId, samplingInfo.getLockOwnerId, diagnostic)
+          assertTrue(false, diagnostic)
+      }
+    } finally {
+      releaseRemoteDeletion.countDown()
+      if (removal != null) removal.get(5, TimeUnit.SECONDS)
+      if (statuses != null) statuses.get(5, TimeUnit.SECONDS)
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDrainHeartbeatUsesCompletedApplyDuringRemoteDeletion(alreadyDraining: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time),
+      enableRemoteStorage = true)
+    val remoteDeletionEntered = new CountDownLatch(1)
+    val releaseRemoteDeletion = new CountDownLatch(1)
+    var removal: CompletableFuture[Void] = null
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader = true)
+      if (alreadyDraining) {
+        initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      }
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta,
+        imageFromTopics(initialImage, 100L, MetadataVersion.IBP_4_4_IV2))
+      reset(mockRemoteLogManager)
+      doAnswer((_: InvocationOnMock) => {
+        remoteDeletionEntered.countDown()
+        assertTrue(releaseRemoteDeletion.await(10, TimeUnit.SECONDS))
+        null
+      }).when(mockRemoteLogManager).stopPartitions(any(), any())
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      removalDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(20000L))
+      removal = CompletableFuture.runAsync(() => replicaManager.applyDelta(removalDelta,
+        imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2)))
+      assertTrue(remoteDeletionEntered.await(5, TimeUnit.SECONDS))
+
+      val statuses = CompletableFuture.supplyAsync(() => replicaManager.partitionDrainStatuses())
+        .get(5, TimeUnit.SECONDS)
+      if (alreadyDraining) {
+        assertEquals(1, statuses.size())
+        assertEquals(100L, statuses.get(0).metadataOffset(), "An incomplete apply must not advance the reported offset")
+        assertTrue(statuses.get(0).ready())
+      } else {
+        assertTrue(statuses.isEmpty, "The pending drain has not installed its produce fence")
+      }
+
+      releaseRemoteDeletion.countDown()
+      removal.get(5, TimeUnit.SECONDS)
+      val appliedStatus = replicaManager.partitionDrainStatuses().get(0)
+      assertEquals(300L, appliedStatus.metadataOffset())
+      assertTrue(appliedStatus.ready())
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, appendRecords(replicaManager, topicPartition,
+        MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("fenced".getBytes))).assertFired.error)
+    } finally {
+      releaseRemoteDeletion.countDown()
+      if (removal != null) removal.get(5, TimeUnit.SECONDS)
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDrainHeartbeatChecksCurrentPartitionDuringIncompleteApply(resume: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time),
+      enableRemoteStorage = true)
+    val leadershipChangeEntered = new CountDownLatch(1)
+    val releaseLeadershipChange = new CountDownLatch(1)
+    var update: CompletableFuture[Void] = null
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader = true)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(10000L))
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta,
+        imageFromTopics(initialImage, 100L, MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.partitionDrainStatuses().get(0).ready())
+      reset(mockRemoteLogManager)
+      doAnswer((_: InvocationOnMock) => {
+        leadershipChangeEntered.countDown()
+        assertTrue(releaseLeadershipChange.await(10, TimeUnit.SECONDS))
+        null
+      }).when(mockRemoteLogManager).onLeadershipChange(any(), any(), any())
+
+      val updateDelta = new TopicsDelta(initialImage)
+      if (resume) {
+        updateDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(0).setDeadlineMs(-1L))
+        // Transition another partition so the apply pauses after this partition's fence was removed.
+        updateDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(1)
+          .setLeader(1).setIsr(util.List.of[Integer](1)))
+      } else {
+        updateDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0)
+          .setReplicas(util.List.of[Integer](0, 1)).setLeader(1).setIsr(util.List.of[Integer](1))
+          .setDirectories(util.Arrays.asList(DirectoryId.migratingArray(2): _*)))
+      }
+      update = CompletableFuture.runAsync(() => replicaManager.applyDelta(updateDelta,
+        imageFromTopics(updateDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2)))
+      assertTrue(leadershipChangeEntered.await(5, TimeUnit.SECONDS))
+
+      val statuses = CompletableFuture.supplyAsync(() => replicaManager.partitionDrainStatuses())
+        .get(5, TimeUnit.SECONDS)
+      if (resume) {
+        assertEquals(1, statuses.size())
+        assertEquals(100L, statuses.get(0).metadataOffset())
+        assertFalse(statuses.get(0).ready(), "The applied image must not reuse readiness after the fence is removed")
+        assertEquals(Errors.NONE, appendRecords(replicaManager, topicPartition,
+          MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("resumed".getBytes))).assertFired.error)
+      } else {
+        assertTrue(statuses.isEmpty, "The former leader must not report readiness from the older applied image")
+      }
+
+      releaseLeadershipChange.countDown()
+      update.get(5, TimeUnit.SECONDS)
+      assertTrue(replicaManager.partitionDrainStatuses().isEmpty)
+    } finally {
+      releaseLeadershipChange.countDown()
+      if (update != null) update.get(5, TimeUnit.SECONDS)
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = Array(true, false))
   def testDeletionReviewRemoteTailCleanupRunsOnLeaderOnly(localLeader: Boolean): Unit = {
