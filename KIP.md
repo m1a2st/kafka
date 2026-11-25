@@ -66,10 +66,10 @@ Our partition removal (5 → 3) works identically in reverse:
 | Key affinity            | Breaks          | Breaks                                          |
 | Data loss               | None            | Removed partition data is deleted after the drain |
 
-Both operations share the same key-affinity disruption that producers already handle today (via metadata refresh and
-re-routing). The only additional cost of removal is that historical data in the draining partitions will eventually
-be lost after removal; normal retention also continues during draining. This is an explicit, operator-controlled trade-off — not an ordering
-violation.
+Both operations change key affinity. Removal additionally requires drain-aware producer routing and
+shrink-aware consumer assignment, as described in the compatibility plan. Historical data in the draining
+partitions is deleted on removal, and normal retention also continues during draining. Operators must account
+for these client requirements and the data-loss boundary when choosing to shrink a topic.
 
 ### Use Cases
 
@@ -197,8 +197,14 @@ validates the reduced target `Count` and targeted reassignments, and applies mut
 performs validation without changing metadata. `Count` must leave at least one active partition.
 
 For a new drain, the controller writes one `PartitionDrainingRecord` per targeted tail partition with an absolute
-`DeadlineMs = now + partition.drain.timeout.ms` and the topic request's `Force` flag (default `false`). Success
-means the drain was accepted; it does not mean physical removal completed.
+deadline equal to `now + partition.drain.timeout.ms`, saturated at `Long.MAX_VALUE`, and the topic request's
+`Force` flag (default `false`). Positive timeout arithmetic must never wrap into the negative cancellation
+sentinel. Success means the drain was accepted; it does not mean physical removal completed.
+
+The controller stages a topic's drain records before appending them to the bounded request result. If that
+topic fails validation or its records exceed the remaining result capacity, none of its drain records are
+included. Records for topics already accepted in the same request remain intact; an error response for a topic
+must not leave it partially draining.
 
 A normal request cannot replace an existing drain. A force request for the same target may upgrade the existing
 drain by writing `Force=true` while preserving every original deadline. It neither restarts nor shortens the
@@ -244,6 +250,16 @@ per-partition override alongside the deadline. `TopicImage.forcedDrainingPartiti
 of the currently draining IDs; snapshot records include each partition's force setting. Unrelated deltas retain
 it. Cancellation (`DeadlineMs=-1`) and removal clear it; a subsequent normal drain starts with `Force=false`.
 
+Snapshot reconciliation compares the previous image with the completed snapshot by topic UUID and partition
+ID. If the same topic UUID remains but an old partition ID is omitted, previously hosted replicas receive local
+deletion work. Retained partitions use the snapshot's drain state and force settings, and the allocation high
+watermark continues to fence removed IDs. Subsequent ELR clearing in the same metadata delta must preserve a
+removal, without reintroducing the removed ID or generating leader, follower, or directory updates that recreate
+its replica.
+
+A snapshot that retains a partition but omits its former drain also clears the broker's produce fence, keeping
+the existing local log when the drain was canceled.
+
 Broker readiness confirmations are neither logged nor snapshotted. After controller failover, the new active
 controller restores deadlines and force overrides, clears all cached readiness, and requests fresh leader
 confirmations. An expired normal drain waits for them. An expired forced drain remains eligible for removal.
@@ -269,20 +285,32 @@ cached readiness; later removal checks skip the absent topic.
 
 #### On REMOVAL (RemovePartitionRecord received)
 
-When a broker receives `RemovePartitionRecord` via metadata update:
+When a broker applies an explicit removal, or reconciles a snapshot omission against its previous image:
 
-1. **Stop fetchers** (if follower): `ReplicaFetcherManager.removeFetcherForPartitions({partition})`
-2. **Complete delayed operations**: Any `DelayedProduce` → error; any `DelayedFetch` → empty response
-3. **Stop partition**: `Partition.delete()` — clear replica map, reset state, notify listeners, remove metrics
-4. **Remove from serving map**: `allPartitions.remove(topicPartition)`
-5. **Async log deletion**: `LogManager.asyncDelete()` — rename dir to `.delete` suffix, queue for background cleanup
-6. **Update checkpoint files**: recovery-point-offset, log-start-offset, replication-offset (HW) rewritten excluding this partition
-7. **Remote storage cleanup** (if `remote.log.storage.enable=true`): `RemoteLogManager.stopPartitions(deleteRemoteLog=true)` — async segment deletion
+1. **Stop fetchers**: Remove the partition from both replica and alter-log-directory fetchers.
+2. **Stop serving**: Remove the partition from `allPartitions`, delete its in-memory partition state, notify
+   listeners, remove metrics, and complete delayed operations through the existing not-leader path.
+3. **Queue local log deletion**: `LogManager.asyncDelete()` renames the log directory with a `.delete` suffix
+   and queues background file deletion. Log checkpoints are updated to exclude the removed log; replication
+   checkpoints follow the existing checkpoint lifecycle.
+4. **Stop remote tasks and request eligible remote deletion**: For remote-enabled logs, stop the local remote
+   log tasks and select `deleteRemoteLog` according to the permanent-removal ownership rules below.
+
+The partition remains absent from metadata and cannot resume serving if storage cleanup fails. Local log
+deletion is queued before the remote cleanup call; remote deletion may wait for storage and metadata operations
+and does not define when the Admin deletion request succeeds.
 
 #### Offline Broker Recovery
 
-- **Case 1** (RemovePartitionRecord still in log): Broker replays log → processes removal → standard cleanup
-- **Case 2** (compacted into snapshot): Partition absent from snapshot → stale dir detection → renamed to `.stray` suffix → background cleanup
+- **Running broker catching up from records**: An explicit removal stops a previously hosted replica and
+  enters the standard local/remote cleanup path.
+- **Running broker catching up from a snapshot**: A retained topic UUID with omitted old IDs is compared
+  against the broker's previous image. Missing replicas are stopped and their local logs are queued for deletion;
+  remote cleanup follows the snapshot fallback below.
+- **Cold startup without the previous image**: The final metadata image identifies unassigned local logs as
+  stray. Existing startup handling moves them aside with a `.stray` suffix, retaining them rather than enqueueing
+  normal `.delete` cleanup. This path does not reconstruct historical remote cleanup ownership. This proposal
+  adds no durable remote garbage-collection job or object-store scan for such a bootstrap.
 
 ### Producer Behavior
 
@@ -307,6 +335,16 @@ Batches already assigned to a draining partition keep their original partition d
 repartitioned and may fail after retries or `delivery.timeout.ms` are exhausted. Explicitly targeting a draining
 partition also fails. A metadata refresh only changes routing for records whose partition has not yet been selected.
 
+Filtering the writable routing view must not bypass leader-epoch validation or topic-UUID changes. The producer
+processes those metadata updates before excluding draining partitions. Responses with older leader epochs do
+not replace newer metadata just because a draining partition was excluded from routing. Partition metadata
+errors still trigger the normal refresh path. Full and partial updates follow the same rules.
+
+Adaptive unkeyed routing collects load statistics only after queues cover every partition in the current active
+set. Queues left over from removed or draining partitions do not count toward that coverage. Existing handling
+of missing leaders and broker-availability exclusions remains in effect, and already queued batches retain their
+original partitions.
+
 ### Consumer Behavior
 
 #### During DRAINING
@@ -321,6 +359,12 @@ partition also fails. A metadata refresh only changes routing for records whose 
 - Assignment updated to exclude removed partitions
 - **Manual-assign consumers** must detect the error and update their assignment at the application level
 
+The updated Uniform consumer and Simple share assignors reconcile prior ownership against the current
+partition set before retaining assignments or calculating quotas. Both homogeneous and heterogeneous
+subscriptions must cover the remaining partitions without assigning removed IDs. Consumer reconciliation
+still follows the revoke, acknowledgement, and stable-assignment sequence; an old ownership report during
+revocation does not make a removed ID eligible for a new target assignment.
+
 Legacy consumers keep discovery and reads throughout draining. Physical removal additionally requires an
 assignor that handles a reduced partition set. Older classic Sticky and CooperativeSticky client binaries
 retain removed ownership and must be upgraded before relying on their post-removal rebalances; keeping
@@ -328,7 +372,14 @@ legacy Metadata responses complete cannot repair those client-side assignment al
 
 ### Consumer Offset Cleanup
 
-When partitions are removed, the group coordinator writes tombstones for committed and pending transactional offsets. The durable partition ID high watermark identifies previously allocated IDs missing from the current metadata image. Shard loading and metadata updates reconcile these deleted IDs, and scheduled cleanup retries failed writes. Offsets remain until tombstones replay successfully. Retention alone is insufficient: offsets for actively subscribed groups may never expire.
+When partitions are removed, the group coordinator writes tombstones for committed and pending transactional
+offsets. The durable partition ID high watermark identifies previously allocated IDs missing from the current
+metadata image. Shard loading and metadata updates reconcile these deleted IDs, and scheduled cleanup retries
+failed writes. If a shard loads before usable metadata is available, reconciliation waits for the first usable
+image. An empty image or an unknown topic alone is not evidence of individual partition deletion; UUID checks
+respect the recorded topic UUID when one is present, preventing cleanup against a different topic incarnation.
+Offsets remain until tombstones replay successfully.
+Retention alone is insufficient: offsets for actively subscribed groups may never expire.
 
 ### Transaction Handling
 
@@ -345,7 +396,22 @@ When partitions are removed, the group coordinator writes tombstones for committ
 
 #### Share Groups (KIP-932)
 
-When a partition is removed, `ShareCoordinatorService` detects the removal via `TopicsDelta` and writes tombstone records for the partition's delivery state entries in `__share_group_state`. Unacknowledged deliveries are abandoned (data is being deleted anyway).
+Share groups reconcile both assignment/initialization metadata and persisted delivery state:
+
+- The group coordinator removes positively deleted partition IDs from its initializing and initialized sets
+  through durable records, retaining whole-topic deletion state. Late initialization callbacks are filtered
+  against the current topic UUID and valid IDs; they cannot restore removed IDs or continually trigger new
+  rebalance epochs after a shrink has settled.
+- `ShareCoordinatorService` schedules tombstones for removed delivery-state entries in `__share_group_state`.
+  Shard load and the first usable metadata image reconcile removals whose live notifications were missed.
+  Unknown topics, an empty image, and never-allocated IDs do not by themselves prove individual deletion.
+- Cleanup changes state and releases its log-pruning fence only when tombstones replay. Failed append and
+  rollback preserve retry eligibility. Cold-partition snapshotting also finds removed entries, writes tombstones
+  instead of fresh snapshots for them, and allows the coordinator runtime to split large cleanup results across
+  log batches, including when all entries were already cold.
+
+Unacknowledged deliveries for removed partitions are abandoned. Retained and draining partitions keep their
+delivery state; cleanup does not infer deletion merely from the producer's smaller active partition count.
 
 #### Kafka Streams
 
@@ -359,7 +425,28 @@ Both Streams protocols derive tasks from the remaining source partitions and rev
 
 #### Remote/Tiered Storage
 
-During DRAINING, remote log manager operates normally (no new uploads since no new data). On REMOVAL, `RemoteLogManager.stopPartitions(deleteRemoteLog=true)` schedules async deletion of remote segments. Remote cleanup failure does not block local cleanup.
+During DRAINING, remote log copying, retention, and reads continue under their existing rules; previously
+written local segments may still be eligible for upload. On permanent removal, remote cleanup is selected by
+topic UUID and partition ID:
+
+- For an explicit removal with a valid leader, the replica that was leader immediately before removal requests
+  remote deletion. The captured registration includes leadership changes in the same metadata delta; an older
+  image's leader is not sufficient to choose the owner. Other replicas stop their tasks without deleting the
+  shared remote data.
+- A snapshot omission has no captured removal leader. Similarly, explicit forced removal may occur with no
+  leader. For these positively identified removals, any previously hosted replica may request idempotent remote
+  segment deletion. A concurrent attempt may still report a late terminal-metadata error after the objects
+  have already been removed.
+- Losing a local replica through ordinary reassignment is not permanent partition removal and must not delete
+  the partition's remote data.
+
+`RemoteLogManager.stopPartitions(deleteRemoteLog=true)` cancels remote tasks, publishes segment-deletion
+transitions, deletes remote objects, and waits for metadata operations in the existing stop path. This is not a
+new independently scheduled cleanup service. Errors are logged after local deletion has been queued and do not
+restore the partition or reverse the controller's removal. Remote objects can remain after a failed attempt:
+there is no new durable retry queue or cold-bootstrap object-store sweep, and operators may need to reclaim
+those objects through existing storage management procedures. Replicas whose local log cleanup reports an
+error skip the remote stop call.
 
 #### Log Compaction
 
@@ -385,12 +472,15 @@ Log cleaner continues during DRAINING (keeps log small). On removal, `cleaner.ab
 | Layer | Failure | Client Impact | Recovery |
 |-------|---------|:---:|----------|
 | Controller RemovePartitionRecord write | Fenced mid-write | None | Automatic — new controller re-schedules |
-| Broker log rename (asyncDelete step 1) | Disk error | None — partition already gone from metadata | Retry on broker restart (stale dir detection) |
-| Broker log file deletion (step 2) | I/O error | None | Background thread retries every 60s; survives restarts |
-| Remote storage deletion | Network/throttling | None | Background cleanup or manual; segments inaccessible |
+| Broker log rename (asyncDelete step 1) | Disk error | Partition stays absent from metadata; storage cleanup is incomplete | Existing storage-failure handling; restart can quarantine stale logs as `.stray` rather than guarantee deletion |
+| Broker log file deletion (step 2) | I/O error | Partition stays absent; files may remain | Deletion uses the configured file-delete delay; errors are logged and remaining `.delete` directories are rediscovered on restart |
+| Remote storage deletion | Network/throttling | Partition stays absent; remote objects may remain | Error logging and existing storage management procedures; no new durable retry job |
 | Offset tombstone generation | Coordinator unavailable | Stale offsets await cleanup | Reconcile durable removed IDs on load/metadata update and retry tombstone writes |
+| Share initialization or delivery cleanup | Append failure, rollback, or missed metadata event | Removed state awaits durable cleanup | Replay-aware retries, load/usable-image reconciliation, and cold delivery-state cleanup with batch splitting |
 
-**Design principle:** Partition removal from metadata is the authoritative action. All local/remote cleanup is best-effort and eventually consistent. No cleanup failure can cause the partition to "come back."
+**Design principle:** Partition removal from metadata is authoritative. Physical storage cleanup is best-effort;
+it does not guarantee eventual reclamation after every failure. Cleanup failure cannot recreate the partition,
+clear its allocation-history fence, or permit reuse of its ID.
 
 ### Partition ID Reuse
 
@@ -894,6 +984,26 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 ### Unit Tests
 
 - All controller validation paths (invalid count, internal topic, unauthorized, reassignment conflict, duplicate drain)
+- Per-topic drain record atomicity when a topic alone exceeds the record limit, or fits alone but exceeds the
+  remaining capacity after another accepted topic
+- Normal and forced drain deadlines saturate at `Long.MAX_VALUE` without becoming cancellation records
+- Uniform consumer and Simple share assignment shrink with homogeneous and heterogeneous subscriptions,
+  including old ownership, retained partition coverage, and consumer revoke/acknowledgement reconciliation
+- Legacy Metadata v0/v9/v13 retains readable draining partitions; v14 preserves drain flags; updated classic
+  Sticky and CooperativeSticky assignors discard removed ownership
+- Full/partial producer metadata updates validate epochs and topic UUIDs before writable filtering, preserve
+  newer active metadata against older-epoch drain responses, and request refreshes for partition metadata errors
+- Adaptive routing warmup counts current active queues rather than stale queues, retaining missing-leader and
+  broker-availability behavior
+- Snapshot omissions generate deletion work for old leader and follower replicas under a retained topic UUID;
+  canceled drains resume their retained logs, and coalesced ELR clearing never recreates removed replica work
+  or permits a new write
+- Remote cleanup uses the pre-removal leader, falls back to prior hosts for snapshot or leaderless removals,
+  and leaves shared remote data intact on reassignment or valid-owner follower cleanup
+- Share initialization cleanup preserves replay/rollback semantics, fences late callbacks and UUID changes,
+  and does not keep rebalancing a settled shrink
+- Share delivery cleanup handles load, initially empty metadata, missed events, append rollback, and retained
+  IDs; real coordinator runtime writes split oversized tombstone results in quiet and mixed cold snapshots
 - State transitions with expired deadlines blocked by ongoing or unreplicated transaction completion
 - Fresh current-leader reports covering applied drain metadata; stale epochs, fencing, omitted/blocked reports and failover invalidate readiness
 - Force before/after deadline, same-target upgrade preserving deadlines, and snapshot/replay retention or clearing
@@ -921,7 +1031,8 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 ### Integration Tests
 
 - Full lifecycle: delete → drain period → removal → log cleanup verified
-- Producer convergence: produce to draining partition → error → metadata refresh → reroute succeeds
+- Producer convergence: refresh draining metadata → new sends route to active partitions; batches already
+  assigned to a draining partition remain on that partition and may fail delivery
 - Consumer draining: fetch from draining partition → data received → removal → rebalance
 - Transaction handling: open txn → draining → abort marker allowed → transaction resolved
 - Expansion during drain: partial/full reopen retains logs; expansion beyond retained count creates only new IDs
@@ -956,6 +1067,23 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 - Metadata snapshot taken during drain / after removal
 - Fetch session with draining partition removed
 - Remote storage deletion failure (does not block local cleanup)
+- Duplicate remote cleanup from two previously hosted replicas uses idempotent storage deletion and handles
+  terminal metadata transitions; cover leaderless force removal with coalesced and separately applied updates
+
+### Local Verification Record (2026-11-25)
+
+The local implementation was verified with **2,812 unique passing cases**, with no failures, errors, or skips,
+across the related client, controller/metadata, broker, group/share coordinator, storage, Streams, tools, and
+shared-runtime suites. This includes all 14 selected KRaft cluster cases: nine deletion-review cases and five
+existing lifecycle cases. The original 79 review cases remain covered; the maximum-timeout case was expanded
+to normal and forced parameterizations. Scoped Spotless, affected Checkstyle, and whitespace checks passed.
+
+These results record the completed related verification, rather than completion of every scenario in this test
+plan or the full Kafka test suite. The remote cleanup regression uses two real remote log managers and the real
+metadata cache with in-memory transport/storage substitutes; no external object store was used. The cold-share
+batching regression uses the real coordinator runtime with a bounded writer to exercise actual batch splitting.
+See the [remediation and verification report](docs/reviews/2026-11-25-delete-partition-test-remediation.md) for
+per-module results, failure reproductions, and exact commands.
 
 ## Rejected Alternatives
 
