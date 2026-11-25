@@ -25,7 +25,9 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.NotLeaderOrFollowerException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.ClusterInstance;
@@ -47,14 +49,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@Timeout(300)
 @ClusterTestDefaults(
     types = {Type.KRAFT},
     brokers = 1,
@@ -66,6 +68,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DeletePartitionsTest {
 
     @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
     public void testDeletePartitionsFullLifecycle(ClusterInstance cluster) throws Exception {
         String topic = "lifecycle-test";
 
@@ -81,23 +84,22 @@ public class DeletePartitionsTest {
             waitForPartitionCount(admin, topic, 3, 60000);
             verifyLogDirsGone(cluster, topic, Set.of(3, 4, 5));
 
-            admin.createPartitions(Map.of(topic, NewPartitions.increaseTo(5))).all().get();
-            waitForPartitionCount(admin, topic, 5, 30000);
-
-            produceToPartitions(cluster, topic, List.of(3, 4), 5, "new-");
-            verifyNewPartitionsEmpty(cluster, topic);
+            verifyPartitionIdReuseRejected(admin, topic, 5, 3);
+            // The rejection helper also accepted one write to surviving partition 0.
+            verifyConsumeCount(cluster, topic, 3, 31);
+            verifyLogDirsGone(cluster, topic, Set.of(3, 4, 5));
         }
     }
 
     @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
     public void testDrainTimeoutConfigRespected(ClusterInstance cluster) throws Exception {
         String topic = "drain-timeout-test";
 
         try (Admin admin = cluster.admin()) {
             createTopicWithDrainTimeout(admin, topic, 4, 3000);
-            admin.deletePartitions(Map.of(topic, 2), new DeletePartitionsOptions()).all().get();
-
             long start = System.currentTimeMillis();
+            admin.deletePartitions(Map.of(topic, 2), new DeletePartitionsOptions()).all().get();
             waitForPartitionCount(admin, topic, 2, 60000);
             long elapsed = System.currentTimeMillis() - start;
 
@@ -107,27 +109,27 @@ public class DeletePartitionsTest {
     }
 
     @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
     public void testRemovedPartitionDataIsGone(ClusterInstance cluster) throws Exception {
         String topic = "data-gone-test";
 
         try (Admin admin = cluster.admin()) {
             createTopicWithDrainTimeout(admin, topic, 4, 3000);
+            produceToPartitions(cluster, topic, List.of(0, 1), 5, "retained-");
             produceToPartitions(cluster, topic, List.of(3), 100, "old-");
 
             admin.deletePartitions(Map.of(topic, 2), new DeletePartitionsOptions()).all().get();
             waitForPartitionCount(admin, topic, 2, 60000);
             verifyLogDirsGone(cluster, topic, Set.of(2, 3));
 
-            admin.createPartitions(Map.of(topic, NewPartitions.increaseTo(4))).all().get();
-            waitForPartitionCount(admin, topic, 4, 30000);
-
-            Map<Integer, List<String>> consumed = consumeFromPartitions(cluster, topic, List.of(3));
-            assertTrue(consumed.getOrDefault(3, List.of()).isEmpty(),
-                "Re-created partition 3 should be empty, but found: " + consumed.get(3));
+            verifyPartitionIdReuseRejected(admin, topic, 4, 2);
+            verifyConsumeCount(cluster, topic, 2, 10);
+            verifyLogDirsGone(cluster, topic, Set.of(2, 3));
         }
     }
 
     @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2, brokers = 3)
+    @Timeout(180)
     public void testDeletePartitionsWithMultipleReplicas(ClusterInstance cluster) throws Exception {
         String topic = "multi-replica-test";
 
@@ -143,18 +145,15 @@ public class DeletePartitionsTest {
             waitForPartitionCount(admin, topic, 2, 60000);
             verifyLogDirsGoneAllBrokers(cluster, topic, Set.of(2, 3));
 
-            admin.createPartitions(Map.of(topic, NewPartitions.increaseTo(4))).all().get();
-            waitForPartitionCount(admin, topic, 4, 30000);
-
-            Map<Integer, List<String>> consumed = consumeFromPartitions(cluster, topic, List.of(2, 3));
-            assertTrue(consumed.getOrDefault(2, List.of()).isEmpty(),
-                "Re-created partition 2 should be empty after deletion");
-            assertTrue(consumed.getOrDefault(3, List.of()).isEmpty(),
-                "Re-created partition 3 should be empty after deletion");
+            verifyPartitionIdReuseRejected(admin, topic, 4, 2);
+            // The rejection helper also accepted one write to surviving partition 0.
+            verifyConsumeCount(cluster, topic, 2, 41);
+            verifyLogDirsGoneAllBrokers(cluster, topic, Set.of(2, 3));
         }
     }
 
     @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2, brokers = 3)
+    @Timeout(180)
     public void testDeletePartitionsReplicaIsrShrinkDuringDrain(ClusterInstance cluster) throws Exception {
         String topic = "isr-drain-test";
 
@@ -248,15 +247,19 @@ public class DeletePartitionsTest {
             ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName(),
             ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName(),
             ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, "5000",
+            ProducerConfig.MAX_BLOCK_MS_CONFIG, "1000",
+            ProducerConfig.METADATA_MAX_AGE_CONFIG, "100",
             ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, "2000",
             ProducerConfig.RETRIES_CONFIG, "1"
         ))) {
-            producer.send(new ProducerRecord<>(topic, 0, null, "k", "v")).get();
+            producer.send(new ProducerRecord<>(topic, 0, null, "k", "v")).get(10, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(() -> producer.partitionsFor(topic).size() == targetCount,
+                10000, "Producer metadata should exclude the draining tail before explicit rejection checks");
 
             for (int p = targetCount; p < originalCount; p++) {
                 int partition = p;
                 ExecutionException e = assertThrows(ExecutionException.class, () ->
-                    producer.send(new ProducerRecord<>(topic, partition, null, "k", "v")).get());
+                    producer.send(new ProducerRecord<>(topic, partition, null, "k", "v")).get(10, TimeUnit.SECONDS));
                 assertTrue(e.getCause() instanceof NotLeaderOrFollowerException ||
                         e.getCause() instanceof TimeoutException,
                     "Partition " + partition + ": got " + e.getCause().getClass().getName());
@@ -304,16 +307,14 @@ public class DeletePartitionsTest {
             60000, "Partition log directories should be deleted on ALL brokers");
     }
 
-    private void verifyNewPartitionsEmpty(ClusterInstance cluster, String topic) throws Exception {
-        Map<Integer, List<String>> consumed = consumeFromPartitions(cluster, topic, List.of(3, 4));
-        assertEquals(5, consumed.getOrDefault(3, List.of()).size(), "New partition 3 should have 5 records");
-        assertEquals(5, consumed.getOrDefault(4, List.of()).size(), "New partition 4 should have 5 records");
-        for (String v : consumed.get(3)) {
-            assertTrue(v.startsWith("new-"), "Partition 3 should only have new data, found: " + v);
-        }
-        for (String v : consumed.get(4)) {
-            assertTrue(v.startsWith("new-"), "Partition 4 should only have new data, found: " + v);
-        }
+    private void verifyPartitionIdReuseRejected(Admin admin, String topic, int requestedCount, int retainedCount)
+        throws Exception {
+        ExecutionException failure = assertThrows(ExecutionException.class,
+            () -> admin.createPartitions(Map.of(topic, NewPartitions.increaseTo(requestedCount)))
+                .all().get(10, TimeUnit.SECONDS));
+        assertInstanceOf(InvalidPartitionsException.class, failure.getCause());
+        assertEquals(retainedCount, admin.describeTopics(List.of(topic))
+            .topicNameValues().get(topic).get(10, TimeUnit.SECONDS).partitions().size());
     }
 
     private Map<Integer, List<String>> consumeFromPartitions(ClusterInstance cluster, String topic,
