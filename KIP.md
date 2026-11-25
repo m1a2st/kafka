@@ -94,7 +94,32 @@ Partition deletion is a two-phase process managed entirely by the KRaft controll
    transaction safety, partitions are removed from metadata and their physical storage is cleaned up. An explicit
    force override bypasses transaction safety after the same interval.
 
-### Partition State Machine
+### Architecture
+
+The active KRaft controller owns partition lifecycle decisions in `ReplicationControlManager` and commits
+them through the metadata log. Metadata images distribute the partition registrations, drain deadlines,
+force overrides, and partition ID allocation history to brokers and coordinators. Each broker's
+`ReplicaManager` installs the local write fence and manages replicas, while `BrokerLifecycleManager`
+returns current-leader readiness in broker heartbeats. Producers and consumers use different views of
+the same retained partition set: producers route new records to active partitions, and consumers keep
+reading draining partitions until removal.
+
+#### Controller
+
+The controller owns the state transitions below. It records durable lifecycle decisions in the metadata
+log; broker readiness confirmations remain soft state and must be renewed after relevant changes.
+
+##### Partition States
+
+Partition lifecycle state is derived from committed metadata. The names below are descriptive labels;
+this proposal does not add a numeric state enumeration or a wire `State` field. `REMOVED` describes a
+previously allocated partition that is no longer present, rather than a retained partition registration.
+
+| State | Metadata representation | Behavior |
+|-------|-------------------------|----------|
+| `ACTIVE` | Partition exists and has no current drain entry. An absent `PartitionDrainingRecord`, or a latest record with `DeadlineMs=-1`, leaves it active. | Accepts data writes and reads under the normal leader and ISR rules. |
+| `DRAINING` | Partition exists and its latest `PartitionDrainingRecord` has a non-negative deadline, with no subsequent cancellation or removal. | Rejects data writes, allows reads and transaction markers, and waits for removal eligibility. |
+| `REMOVED` | An individual `RemovePartitionRecord`, or a whole-topic `RemoveTopicRecord`, removes the partition from the metadata image. | Cannot serve data or be reopened under the same topic UUID; cleanup may still be pending. |
 
 ```
 ACTIVE ──[DeletePartitionsRequest]──→ DRAINING ──[deadline reached and safe, or forced]──→ REMOVED
@@ -102,118 +127,31 @@ ACTIVE ──[DeletePartitionsRequest]──→ DRAINING ──[deadline reached
   └──[DeleteTopics]──→ REMOVED           └──[DeleteTopics]──→ REMOVED
 ```
 
-CreatePartitions can also transition DRAINING back to ACTIVE before physical removal.
+CreatePartitions can also transition DRAINING back to ACTIVE before physical removal. Reopening retains
+the same log and offsets. Both normal and forced removal require the minimum drain interval to elapse.
+`Force` is a per-drain override, and heartbeat `Ready` is a revocable safety
+confirmation; neither creates another partition lifecycle state. Storage cleanup failures do not create
+a `FAILED` state or restore a removed partition.
 
-State is derived from metadata replay:
+##### State Transition Validation
 
-- No `PartitionDrainingRecord` for this partition → ACTIVE
-- Latest `PartitionDrainingRecord` has a non-negative deadline, no `RemovePartitionRecord` → DRAINING
-- Latest `PartitionDrainingRecord` has `DeadlineMs=-1` → ACTIVE again, retaining the same log and offsets
-- `RemovePartitionRecord` written → REMOVED (partition no longer exists in TopicImage)
+The controller validates lifecycle operations against the current committed partition set. The transitions
+below use the existing request fields and metadata records; they introduce no additional protocol fields.
 
-### Metadata Records
+| From | To | Trigger | Validation and committed effect |
+|------|----|---------|---------------------------------|
+| `ACTIVE` | `DRAINING` | `DeletePartitions` | Validate the reduced target and affected tail; append `PartitionDrainingRecord` with a non-negative deadline and the requested force flag. |
+| `DRAINING` | `DRAINING` | Explicit force upgrade | Validate the existing target and retained IDs; persist `Force=true` without changing their original deadlines. Additional newly targeted partitions receive their own minimum interval. |
+| `DRAINING` | `ACTIVE` | `CreatePartitions` | Reopen only retained draining IDs below the requested active target; append `PartitionDrainingRecord` with `DeadlineMs=-1`, clearing the force override. |
+| `DRAINING` | `REMOVED` | Periodic controller removal check | Require the minimum interval and eligible descending tail, plus fresh transaction-safety confirmation unless force is explicit; append `RemovePartitionRecord`. |
+| `ACTIVE` or `DRAINING` | `REMOVED` | `DeleteTopics` | Apply the existing whole-topic deletion path with `RemoveTopicRecord`; it supersedes any individual drain. |
+| `REMOVED` | — | Attempted ID reuse | No transition: reject `CreatePartitions` if it would reuse the removed ID under the same topic UUID. A new topic UUID is required to recreate it. |
 
-`TopicRecord` gains the tagged int32 field `PartitionIdHighWatermark` (default 0). Replay infers it from partition creation records; snapshots preserve it explicitly when the highest IDs have been removed. This fences reuse of removed IDs after failover.
+Request authorization, metadata-version checks, mutation quotas, and per-topic record atomicity apply
+before accepting a drain. The operation sequences appear in Command Workflows; the additional removal
+conditions and recovery rules follow here.
 
-#### PartitionDrainingRecord (Record ID 29)
-
-Written per partition when `DeletePartitionsRequest` is accepted. A non-negative `DeadlineMs` starts draining; `DeadlineMs=-1` cancels draining when `CreatePartitions` reopens a partition before removal. The cancellation is replayed and snapshotted as active state. The tagged `Force` flag defaults to `false`,
-survives replay and snapshots, and is cleared by cancellation or removal.
-
-```json
-{
-  "apiKey": 29,
-  "type": "metadata",
-  "name": "PartitionDrainingRecord",
-  "validVersions": "0",
-  "flexibleVersions": "0+",
-  "fields": [
-    {
-      "name": "TopicId",
-      "type": "uuid",
-      "versions": "0+",
-      "about": "The unique ID of the topic whose partitions are being drained."
-    },
-    {
-      "name": "PartitionId",
-      "type": "int32",
-      "versions": "0+",
-      "about": "The partition entering or leaving the draining state."
-    },
-    {
-      "name": "DeadlineMs",
-      "type": "int64",
-      "versions": "0+",
-      "about": "Earliest removal time in epoch milliseconds; -1 cancels draining."
-    },
-    {
-      "name": "Force",
-      "type": "bool",
-      "versions": "0+",
-      "taggedVersions": "0+",
-      "tag": 0,
-      "default": "false",
-      "about": "Whether removal may bypass transaction safety checks."
-    }
-  ]
-}
-```
-
-#### RemovePartitionRecord (Record ID 30)
-
-Written by the controller once the earliest removal time is reached and either transaction safety is confirmed
-or an explicit force override applies. Permanently removes the partition from all metadata images.
-
-```json
-{
-  "apiKey": 30,
-  "type": "metadata",
-  "name": "RemovePartitionRecord",
-  "validVersions": "0",
-  "flexibleVersions": "0+",
-  "fields": [
-    {
-      "name": "TopicId",
-      "type": "uuid",
-      "versions": "0+",
-      "about": "The unique ID of the topic."
-    },
-    {
-      "name": "PartitionId",
-      "type": "int32",
-      "versions": "0+",
-      "about": "The partition ID to permanently remove. After replay, this partition no longer exists in any metadata image."
-    }
-  ]
-}
-```
-
-### Controller Behavior
-
-#### Processing DeletePartitionsRequest
-
-The controller resolves and authorizes each topic, checks the metadata-version gate, rejects internal topics,
-validates the reduced target `Count` and targeted reassignments, and applies mutation quota. `ValidateOnly`
-performs validation without changing metadata. `Count` must leave at least one active partition.
-
-For a new drain, the controller writes one `PartitionDrainingRecord` per targeted tail partition with an absolute
-deadline equal to `now + partition.drain.timeout.ms`, saturated at `Long.MAX_VALUE`, and the topic request's
-`Force` flag (default `false`). Positive timeout arithmetic must never wrap into the negative cancellation
-sentinel. Success means the drain was accepted; it does not mean physical removal completed.
-
-The controller stages a topic's drain records before appending them to the bounded request result. If that
-topic fails validation or its records exceed the remaining result capacity, none of its drain records are
-included. Records for topics already accepted in the same request remain intact; an error response for a topic
-must not leave it partially draining.
-
-A normal request cannot replace an existing drain. A force request for the same target may upgrade the existing
-drain by writing `Force=true` while preserving every original deadline. It neither restarts nor shortens the
-minimum drain interval. A force request may include additional validated tail partitions; these receive a new
-minimum interval while existing drains retain their deadlines. After partial
-tail removal, force upgrades visit only the actual retained draining IDs for that target. They neither regenerate
-draining records for removed IDs nor infer retained IDs from the size of the partition map.
-
-#### Removal Eligibility and Transaction Safety
+##### Removal Eligibility and Transaction Safety
 
 The active controller checks draining partitions on its periodic event loop. The deadline is the earliest time
 removal may occur. A normal drain remains DRAINING beyond that time until its current leader confirms it is
@@ -243,7 +181,7 @@ With explicit `Force=true`, the controller may remove the partition once the ori
 without a ready leader report. Force can discard unresolved transactional data. It bypasses the removal safety
 gate only: transaction markers still use `acks=all` and normal `min.insync.replicas` enforcement.
 
-#### Metadata Replay and Snapshots
+##### Metadata Replay and Snapshots
 
 `PartitionDrainingRecord.Force` is a tagged boolean (tag 0, default `false`). Controller replay persists the
 per-partition override alongside the deadline. `TopicImage.forcedDrainingPartitions()` is an immutable subset
@@ -264,14 +202,21 @@ Broker readiness confirmations are neither logged nor snapshotted. After control
 controller restores deadlines and force overrides, clears all cached readiness, and requests fresh leader
 confirmations. An expired normal drain waits for them. An expired forced drain remains eligible for removal.
 
-#### Topic Deletion During Draining
+##### Partition ID Reuse
 
-`DeleteTopics` supersedes the drain. Replaying `RemoveTopicRecord` discards its deadlines, force overrides and
-cached readiness; later removal checks skip the absent topic.
+Removal proceeds from the highest retained ID downward and stops at a blocked partition, preserving a
+contiguous retained prefix. Physically removed IDs cannot be allocated again under the same topic UUID.
+`TopicRecord.PartitionIdHighWatermark` preserves allocation history across snapshots; `CreatePartitions` rejects
+an increase that would cross a removed ID with `INVALID_PARTITIONS`. Before removal, it may reopen retained
+draining IDs, keeping their original logs, producer state and offsets. New IDs can be created only when no
+removed ID would be reused; a new topic UUID is required to recreate an already removed partition.
 
-### Broker Behavior
+#### Broker
 
-#### During DRAINING
+Brokers enforce the committed drain state locally, report transaction safety, and stop replicas after
+metadata removal. Storage cleanup does not control the authoritative partition state.
+
+##### During DRAINING
 
 | Mechanism | Behavior | Rationale |
 |-----------|----------|-----------|
@@ -283,7 +228,18 @@ cached readiness; later removal checks skip the absent topic.
 | Leader election | Allowed | Consumers need available leader |
 | ListOffsets / OffsetFetch / OffsetCommit | Served normally | Consumers may still commit progress |
 
-#### On REMOVAL (RemovePartitionRecord received)
+##### Readiness Publication
+
+`ReplicaManager` publishes the fully applied metadata image and its local drain candidate set together,
+after metadata application has installed the corresponding fences and registrations. Heartbeat sampling
+uses that coherent published view rather than metadata-loader progress, and checks each partition's
+current fence, leadership epochs, and transaction safety before reporting readiness.
+
+Sampling does not acquire the global replica-state lock, which may be held during remote storage cleanup.
+It retains the partition's own safety locking and does not cache a previous `Ready=true` result. A partial
+metadata application cannot claim a newer applied offset merely because the loader has received it.
+
+##### On REMOVAL (RemovePartitionRecord received)
 
 When a broker applies an explicit removal, or reconciles a snapshot omission against its previous image:
 
@@ -300,7 +256,7 @@ The partition remains absent from metadata and cannot resume serving if storage 
 deletion is queued before the remote cleanup call; remote deletion may wait for storage and metadata operations
 and does not define when the Admin deletion request succeeds.
 
-#### Offline Broker Recovery
+##### Offline Broker Recovery
 
 - **Running broker catching up from records**: An explicit removal stops a previously hosted replica and
   enters the standard local/remote cleanup path.
@@ -312,7 +268,7 @@ and does not define when the Admin deletion request succeeds.
   normal `.delete` cleanup. This path does not reconstruct historical remote cleanup ownership. This proposal
   adds no durable remote garbage-collection job or object-store scan for such a bootstrap.
 
-### Producer Behavior
+#### Producer
 
 Automatic routing away from draining partitions requires an updated producer client that understands
 `MetadataResponse` v14 and excludes `IsDraining=true` partitions. Applications using such a client do not need
@@ -345,15 +301,15 @@ set. Queues left over from removed or draining partitions do not count toward th
 of missing leaders and broker-availability exclusions remains in effect, and already queued batches retain their
 original partitions.
 
-### Consumer Behavior
+#### Consumer
 
-#### During DRAINING
+##### During DRAINING
 
 - Consumer group assignment **still includes** draining partitions
 - Consumers fetch and commit offsets normally — draining the remaining data
 - No rebalance triggered by entering DRAINING (partition still exists)
 
-#### On REMOVAL
+##### On REMOVAL
 
 - Fetch returns `UNKNOWN_TOPIC_OR_PARTITION` → metadata refresh → consumer group rebalance
 - Assignment updated to exclude removed partitions
@@ -370,7 +326,9 @@ assignor that handles a reduced partition set. Older classic Sticky and Cooperat
 retain removed ownership and must be upgraded before relying on their post-removal rebalances; keeping
 legacy Metadata responses complete cannot repair those client-side assignment algorithms.
 
-### Consumer Offset Cleanup
+### Features Integration
+
+#### Consumer Offset Cleanup
 
 When partitions are removed, the group coordinator writes tombstones for committed and pending transactional
 offsets. The durable partition ID high watermark identifies previously allocated IDs missing from the current
@@ -381,14 +339,12 @@ respect the recorded topic UUID when one is present, preventing cleanup against 
 Offsets remain until tombstones replay successfully.
 Retention alone is insufficient: offsets for actively subscribed groups may never expire.
 
-### Transaction Handling
+#### Transaction Handling
 
 - In-flight transactions that include a draining partition: data produce is rejected, but COMMIT/ABORT markers bypass the draining write block. Markers retain `acks=all` and `min.insync.replicas`; an unavailable ISR blocks normal removal until transaction completion is safe. An explicit force request can
   override removal safety after the original deadline.
 - After a metadata refresh, newly selected producer routing excludes draining partitions. Stale or explicitly addressed transaction requests can still reference them; broker data writes remain rejected while draining.
 - `WriteTxnMarkers` to removed partitions: broker returns `UNKNOWN_TOPIC_OR_PARTITION`; transaction coordinator retries until metadata propagates, then drops the partition from the pending set. The metadata retry path converges; force can discard unresolved transactional data.
-
-### Features Integration
 
 #### Idempotent Producers
 
@@ -416,6 +372,10 @@ delivery state; cleanup does not infer deletion merely from the producer's small
 #### Kafka Streams
 
 Both Streams protocols derive tasks from the remaining source partitions and revoke removed tasks. A heartbeat may report ownership that was previously assigned to that member while revocation is pending. Existing changelog topics may retain extra partitions; they must still cover every active task. Repartition topics keep exact partition counts, and co-partitioned join inputs must still match. Operators must coordinate join input changes and must not shrink application-managed internal topics.
+
+The Streams application reset tool validates that CSV reset-plan keys exactly match the selected current
+input partitions before any offset query or seek. Stale or incomplete plans fail without partially moving
+consumer positions; a valid plan may still include retained draining input partitions.
 
 #### Kafka Connect / MirrorMaker 2
 
@@ -452,7 +412,7 @@ error skip the remote stop call.
 
 Log cleaner continues during DRAINING (keeps log small). On removal, `cleaner.abortCleaning(topicPartition)` stops any in-progress compaction before directory rename.
 
-### Interactions With Other Systems
+#### Interactions With Other Systems
 
 | System | Behavior |
 |--------|----------|
@@ -466,6 +426,85 @@ Log cleaner continues during DRAINING (keeps log small). On removal, `cleaner.ab
 | Retention policy | Continues running during draining (not paused) |
 | Fetch sessions | Incremental fetch returns `UNKNOWN_TOPIC_OR_PARTITION` on removal; client removes partition |
 | Static membership (KIP-345) | Partition removal triggers immediate rebalance (metadata change, not member failure) |
+
+### Command Workflows
+
+The workflows below separate request acceptance from asynchronous removal. Admin and command-line
+operations use the public interfaces defined later; the controller remains responsible for validating and
+committing lifecycle changes.
+
+#### Delete Partitions
+
+1. The caller supplies an absolute reduced active target through `Admin.deletePartitions`. The CLI may
+   derive that target from `--delete-partitions`; the wire request always carries the target `Count`.
+
+2. The controller resolves and authorizes each topic, checks the metadata-version gate, rejects internal topics,
+   validates the reduced target `Count` and targeted reassignments, and applies mutation quota. `ValidateOnly`
+   performs validation without changing metadata. `Count` must leave at least one active partition.
+
+3. For a new drain, the controller prepares one `PartitionDrainingRecord` per targeted tail partition with an absolute
+   deadline equal to `now + partition.drain.timeout.ms`, saturated at `Long.MAX_VALUE`, and the topic request's
+   `Force` flag (default `false`). Positive timeout arithmetic must never wrap into the negative cancellation
+   sentinel. Success means the drain was accepted; it does not mean physical removal completed.
+
+4. The controller stages a topic's drain records before appending them to the bounded request result. If that
+   topic fails validation or its records exceed the remaining result capacity, none of its drain records are
+   included. Records for topics already accepted in the same request remain intact; an error response for a topic
+   must not leave it partially draining.
+
+5. Brokers apply the committed drain state, reject new data writes, and keep serving reads and transaction
+   markers. After the minimum interval, the controller removes the eligible tail using the safety rules above.
+   Broker log deletion and coordinator state cleanup follow the committed removal.
+
+#### Validate Partition Deletion
+
+1. The caller sets `DeletePartitionsOptions.validateOnly(true)` or the request's `ValidateOnly` field.
+2. The controller validates the topic operation without persisting drain records. Successful validation does
+   not start a drain, reserve the target, or guarantee that a later mutation will pass against changed metadata.
+
+#### Force Partition Removal
+
+1. The caller sets `DeletePartitionsOptions.force(true)`. For an existing drain, the CLI requires the
+   absolute `--partitions <target> --force` form so that partial removal cannot change the intended target.
+
+2. A normal request cannot replace an existing drain. A force request for the same target may upgrade the existing
+   drain by writing `Force=true` while preserving every original deadline. It neither restarts nor shortens the
+   minimum drain interval. A force request may include additional validated tail partitions; these receive a new
+   minimum interval while existing drains retain their deadlines. After partial
+   tail removal, force upgrades visit only the actual retained draining IDs for that target. They neither regenerate
+   draining records for removed IDs nor infer retained IDs from the size of the partition map.
+
+3. At or after each applicable deadline, the controller may remove the eligible tail without a ready leader
+   report. Force does not bypass tail ordering, authorize data writes to draining partitions, or weaken
+   transaction-marker durability; unresolved transactional data may be discarded.
+
+#### Reopen Draining Partitions
+
+1. The caller uses `CreatePartitions` with an active target larger than the current active count. The CLI
+   selects this path for a corresponding `--partitions` increase, including targets within the retained count.
+2. The controller cancels drains for retained IDs below that target using `DeadlineMs=-1`. Their logs,
+   offsets, producer state, and replica assignments remain intact; higher IDs may continue draining.
+3. A target above the retained count creates only physically new partitions, with assignments supplied only
+   for those new IDs. The controller rejects a target that would cross an already removed ID under the same
+   topic UUID. Reopening cannot recover a partition whose removal has already committed.
+
+#### Describe Partition Deletion
+
+1. The caller uses `Admin.describeTopics` or `kafka-topics.sh --describe` to inspect retained partitions and
+   their draining state. `DescribeTopicPartitions` v1 also supplies the earliest removal timestamp; Metadata
+   fallback or topic-ID descriptions may have an unknown deadline.
+2. During draining, the physical retained count includes draining IDs while the active count excludes them.
+   Reaching the deadline does not prove readiness or completion; normal removal can remain blocked.
+3. Committed removal drops the IDs from the metadata image. Controller logs identify safety blockers, and
+   the drain gauges report committed pending cardinality. Neither acceptance nor metadata absence guarantees
+   that every local file or remote object has already been reclaimed.
+
+#### Delete Topic During Draining
+
+1. The caller issues the existing `DeleteTopics` operation for the topic.
+
+2. `DeleteTopics` supersedes the drain. Replaying `RemoveTopicRecord` discards its deadlines, force overrides and
+   cached readiness; later removal checks skip the absent topic.
 
 ### Failure Handling
 
@@ -482,265 +521,9 @@ Log cleaner continues during DRAINING (keeps log small). On removal, `cleaner.ab
 it does not guarantee eventual reclamation after every failure. Cleanup failure cannot recreate the partition,
 clear its allocation-history fence, or permit reuse of its ID.
 
-### Partition ID Reuse
-
-Removal proceeds from the highest retained ID downward and stops at a blocked partition, preserving a
-contiguous retained prefix. Physically removed IDs cannot be allocated again under the same topic UUID.
-`TopicRecord.PartitionIdHighWatermark` preserves allocation history across snapshots; `CreatePartitions` rejects
-an increase that would cross a removed ID with `INVALID_PARTITIONS`. Before removal, it may reopen retained
-draining IDs, keeping their original logs, producer state and offsets. New IDs can be created only when no
-removed ID would be reused; a new topic UUID is required to recreate an already removed partition.
-
 ## Public Interfaces
 
-### New API: DeletePartitions (API Key 94)
-
-A new RPC that removes partitions from the tail of a topic. The request is forwarded to the active controller.
-
-#### DeletePartitionsRequest (v0)
-
-```json
-{
-  "apiKey": 94,
-  "type": "request",
-  "listeners": ["broker", "controller"],
-  "name": "DeletePartitionsRequest",
-  "validVersions": "0",
-  "flexibleVersions": "0+",
-  "fields": [
-    {
-      "name": "Topics",
-      "type": "[]DeletePartitionsTopic",
-      "versions": "0+",
-      "about": "Each topic from which we want to delete partitions.",
-      "fields": [
-        {
-          "name": "Name",
-          "type": "string",
-          "versions": "0+",
-          "mapKey": true,
-          "entityType": "topicName",
-          "about": "The topic name."
-        },
-        {
-          "name": "Count",
-          "type": "int32",
-          "versions": "0+",
-          "about": "The new reduced partition count. For a topic with 10 partitions, Count=7 drains partitions 7, 8 and 9."
-        },
-        {
-          "name": "Force",
-          "type": "bool",
-          "versions": "0+",
-          "taggedVersions": "0+",
-          "tag": 0,
-          "default": "false",
-          "about": "Whether to bypass transaction safety checks after the drain deadline."
-        }
-      ]
-    },
-    {
-      "name": "TimeoutMs",
-      "type": "int32",
-      "versions": "0+",
-      "about": "The time in ms to wait for controller acceptance, separate from the configured minimum drain interval."
-    },
-    {
-      "name": "ValidateOnly",
-      "type": "bool",
-      "versions": "0+",
-      "default": "false",
-      "about": "Whether to validate without changing metadata."
-    }
-  ]
-}
-```
-
-#### DeletePartitionsResponse (v0)
-
-```json
-{
-  "apiKey": 94,
-  "type": "response",
-  "name": "DeletePartitionsResponse",
-  "validVersions": "0",
-  "flexibleVersions": "0+",
-  "fields": [
-    {
-      "name": "ThrottleTimeMs",
-      "type": "int32",
-      "versions": "0+",
-      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota."
-    },
-    {
-      "name": "Results",
-      "type": "[]DeletePartitionsTopicResult",
-      "versions": "0+",
-      "about": "The partition deletion results for each topic.",
-      "fields": [
-        {
-          "name": "Name",
-          "type": "string",
-          "versions": "0+",
-          "mapKey": true,
-          "entityType": "topicName",
-          "about": "The topic name."
-        },
-        {
-          "name": "ErrorCode",
-          "type": "int16",
-          "versions": "0+",
-          "about": "The result error, or zero if there was no error."
-        },
-        {
-          "name": "ErrorMessage",
-          "type": "string",
-          "versions": "0+",
-          "nullableVersions": "0+",
-          "default": "null",
-          "about": "The result message, or null if there was no error."
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Modified API: MetadataResponse (v13 → v14)
-
-New field under `MetadataResponsePartition`:
-
-```json
-{
-  "name": "IsDraining",
-  "type": "bool",
-  "versions": "14+",
-  "default": "false",
-  "ignorable": true,
-  "about": "True if this partition is draining and eligible for removal after its deadline and transaction safety checks. Draining partitions do not accept produce requests."
-}
-```
-
-Backward compatibility:
-
-| MetadataResponse version | Draining partition handling |
-|:---:|---|
-| v0–v13 | All retained partitions are included without drain flags, preserving legacy consumer discovery and reads. Producers need an updated client for automatic rerouting during draining. |
-| v14 | All retained partitions are included with `IsDraining=true` on draining IDs. Drain-aware producers exclude them from routing; consumers retain them for reads. |
-
-`MetadataRequest` validVersions bumped from `"0-13"` to `"0-14"`. No new request fields.
-
-### Modified API: DescribeTopicPartitionsResponse (v0 → v1)
-
-New fields under `DescribeTopicPartitionsResponsePartition`:
-
-```json
-{
-  "name": "IsDraining",
-  "type": "bool",
-  "versions": "1+",
-  "default": "false",
-  "ignorable": true,
-  "about": "True if this partition is in the draining state."
-},
-{
-  "name": "DrainDeadlineMs",
-  "type": "int64",
-  "versions": "1+",
-  "default": "-1",
-  "ignorable": true,
-  "about": "The earliest removal timestamp in ms, or -1 if not draining. Transaction safety may delay removal."
-}
-```
-
-`DescribeTopicPartitionsRequest` validVersions bumped from `"0"` to `"0-1"`. No new request fields.
-
-### Broker Heartbeat Readiness
-
-`BrokerHeartbeatRequest` adds `DrainingPartitions`, a flexible tagged array (tag 2, versions 0+, empty by default)
-of `PartitionDrainStatus`. The fields are `TopicId`, `PartitionId`, `LeaderEpoch`, `PartitionEpoch`,
-`MetadataOffset` (default -1), `Ready` (default false), and `BlockedReason` (default empty string). Each heartbeat
-reports the draining partitions currently led by that broker. Missing, stale or blocked reports cannot authorize
-normal removal. This adds no Describe response fields: `IsDraining` and `DrainDeadlineMs` remain the public
-partition-status fields, while controller logs expose blockers.
-
-### Admin Client
-
-The Admin API accepts reduced absolute target counts:
-
-```java
-default DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts);
-DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts,
-                                       DeletePartitionsOptions options);
-```
-
-`DeletePartitionsOptions` provides the following options in addition to the inherited operation timeout:
-
-| Setter | Getter | Default | Behavior |
-|--------|--------|---------|----------|
-| `validateOnly(boolean)` | `validateOnly()` | `false` | Validate without persisting drain records |
-| `force(boolean)` | `force()` | `false` | Set each requested topic's tagged `Force` field |
-| `retryOnQuotaViolation(boolean)` | `shouldRetryOnQuotaViolation()` | `true` | Retry throttled topics until the original operation deadline |
-
-For example, reducing a ten-partition topic to seven with the explicit transaction-safety override is:
-
-```java
-admin.deletePartitions(Map.of("orders", 7), new DeletePartitionsOptions().force(true)).all().get();
-```
-
-Null and empty topic names fail their individual futures with `InvalidTopicException` before serialization;
-valid topics in the same call are still submitted. Quota retries include only throttled topics, preserve the
-force and validation flags captured at invocation, and keep the original absolute operation deadline.
-Successful and permanently failed topics are not resubmitted. When quota retries are disabled, the future
-fails with `ThrottlingQuotaExceededException` carrying the server's throttle duration. If the deadline expires
-during quota retries, the exception retains the remaining throttle duration.
-
-The result's `values()` and `all()` futures complete when the controller accepts and persists the drain or force
-upgrade, or completes validation for `validateOnly(true)`. They do not wait for the deadline, transaction
-completion, removal, or storage cleanup. Without force, a drain can remain pending indefinitely when the
-controller cannot obtain a fresh safe report from its leader. With force, the configured minimum interval
-still applies, and unresolved transactional data may be discarded.
-
-#### Partition Descriptions
-
-`TopicPartitionInfo` adds the following constructor and accessors:
-
-```java
-public TopicPartitionInfo(int partition, Node leader,
-                          List<Node> replicas, List<Node> isr,
-                          List<Node> elr, List<Node> lastKnownElr,
-                          boolean isDraining, long drainDeadlineMs);
-public boolean isDraining();
-public OptionalLong drainDeadlineMs();
-```
-
-The existing four- and six-argument constructors remain available and default to `isDraining=false` with an
-unknown deadline. The four-argument constructor continues to represent unavailable ELR information as null.
-A constructor deadline of `-1` denotes unavailable information. Equality and hash codes include draining
-state and deadline, and string output includes them when present.
-
-`Admin.describeTopics()` preserves draining state and the earliest removal timestamp from
-DescribeTopicPartitions v1 responses, including across pages. Descriptions by topic ID and the Metadata API
-fallback preserve `IsDraining` when the negotiated Metadata version supplies it, but return
-`OptionalLong.empty()` for the deadline because Metadata has no deadline field. Protocol versions without
-these fields report the active/unknown defaults. An empty deadline does not imply that a draining partition
-is ready for removal; even a known deadline is only the earliest removal time.
-
-#### Reopening With CreatePartitions
-
-`NewPartitions.increaseTo(totalCount)` specifies the target number of active partitions. With five retained
-partitions and IDs 3 and 4 draining, a target of four reopens ID 3, and a target of five reopens both IDs.
-Reopened partitions retain their logs, offsets, producer state, and replica assignments. Partitions above the
-target continue draining. An increase above the retained count also creates physically new partitions, provided
-it would not reuse a removed partition ID.
-
-For `NewPartitions.increaseTo(totalCount, newAssignments)`, assignments apply only to physically new
-partitions. The required list length is `Math.max(0, totalCount - retainedCount)`, where the retained count
-includes draining partitions. A request that only reopens retained partitions can use the no-assignment
-overload or an empty assignment list. A target that does not increase the active count, or would reuse a
-removed ID, fails with `InvalidPartitionsException`.
-
-### Command-Line Interface
+### Command-Line
 
 `kafka-topics.sh` gains a `--delete-partitions` option under `--alter`:
 
@@ -839,32 +622,259 @@ Error: The requested delete partition count is invalid. Cannot delete all partit
 `--delete-partitions` specifies a number to subtract from the active count; `--partitions` specifies an
 absolute active target and may decrease, reopen, or expand the topic as described above.
 
-### Configuration
+### Protocol Changes
 
-#### Topic Configuration
+#### DeletePartitions (API Key 94)
 
-| Config | Type | Default | Valid Values | Description |
-|--------|------|---------|--------------|-------------|
-| `partition.drain.timeout.ms` | long | 3600000 (1 hour) | >= 0 | Minimum time after marking tail partitions as draining before removal is eligible. Consumers can read while producers cannot write. A value of 0 removes the minimum wait but still requires transaction safety unless force is explicit. Config is only read at the time `DeletePartitionsRequest` is processed; changing it after draining starts has no effect on the existing deadline. |
+A new RPC that removes partitions from the tail of a topic. The request is forwarded to the active controller.
 
-### MetadataVersion
+##### DeletePartitionsRequest (v0)
 
-```java
-// Add support for partition deletion (DeletePartitions API, PartitionDrainingRecord, RemovePartitionRecord).
-IBP_4_4_IV2(33, "4.4", "IV2", true);
-```
-
-Feature gate method:
-
-```java
-public boolean isDeletePartitionsSupported() {
-    return this.isAtLeast(IBP_4_4_IV2);
+```json
+{
+  "apiKey": 94,
+  "type": "request",
+  "listeners": ["broker", "controller"],
+  "name": "DeletePartitionsRequest",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "Topics",
+      "type": "[]DeletePartitionsTopic",
+      "versions": "0+",
+      "about": "Each topic from which we want to delete partitions.",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "string",
+          "versions": "0+",
+          "mapKey": true,
+          "entityType": "topicName",
+          "about": "The topic name."
+        },
+        {
+          "name": "Count",
+          "type": "int32",
+          "versions": "0+",
+          "about": "The new reduced partition count. For a topic with 10 partitions, Count=7 drains partitions 7, 8 and 9."
+        },
+        {
+          "name": "Force",
+          "type": "bool",
+          "versions": "0+",
+          "taggedVersions": "0+",
+          "tag": 0,
+          "default": "false",
+          "about": "Whether to bypass transaction safety checks after the drain deadline."
+        }
+      ]
+    },
+    {
+      "name": "TimeoutMs",
+      "type": "int32",
+      "versions": "0+",
+      "about": "The time in ms to wait for controller acceptance, separate from the configured minimum drain interval."
+    },
+    {
+      "name": "ValidateOnly",
+      "type": "bool",
+      "versions": "0+",
+      "default": "false",
+      "about": "Whether to validate without changing metadata."
+    }
+  ]
 }
 ```
 
-The `true` flag indicates metadata format changed (new record types).
+##### DeletePartitionsResponse (v0)
 
-### Error Codes
+```json
+{
+  "apiKey": 94,
+  "type": "response",
+  "name": "DeletePartitionsResponse",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "ThrottleTimeMs",
+      "type": "int32",
+      "versions": "0+",
+      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota."
+    },
+    {
+      "name": "Results",
+      "type": "[]DeletePartitionsTopicResult",
+      "versions": "0+",
+      "about": "The partition deletion results for each topic.",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "string",
+          "versions": "0+",
+          "mapKey": true,
+          "entityType": "topicName",
+          "about": "The topic name."
+        },
+        {
+          "name": "ErrorCode",
+          "type": "int16",
+          "versions": "0+",
+          "about": "The result error, or zero if there was no error."
+        },
+        {
+          "name": "ErrorMessage",
+          "type": "string",
+          "versions": "0+",
+          "nullableVersions": "0+",
+          "default": "null",
+          "about": "The result message, or null if there was no error."
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### MetadataResponse (v13 → v14)
+
+New field under `MetadataResponsePartition`:
+
+```json
+{
+  "name": "IsDraining",
+  "type": "bool",
+  "versions": "14+",
+  "default": "false",
+  "ignorable": true,
+  "about": "True if this partition is draining and eligible for removal after its deadline and transaction safety checks. Draining partitions do not accept produce requests."
+}
+```
+
+Backward compatibility:
+
+| MetadataResponse version | Draining partition handling |
+|:---:|---|
+| v0–v13 | All retained partitions are included without drain flags, preserving legacy consumer discovery and reads. Producers need an updated client for automatic rerouting during draining. |
+| v14 | All retained partitions are included with `IsDraining=true` on draining IDs. Drain-aware producers exclude them from routing; consumers retain them for reads. |
+
+`MetadataRequest` validVersions bumped from `"0-13"` to `"0-14"`. No new request fields.
+
+#### DescribeTopicPartitionsResponse (v0 → v1)
+
+New fields under `DescribeTopicPartitionsResponsePartition`:
+
+```json
+{
+  "name": "IsDraining",
+  "type": "bool",
+  "versions": "1+",
+  "default": "false",
+  "ignorable": true,
+  "about": "True if this partition is in the draining state."
+},
+{
+  "name": "DrainDeadlineMs",
+  "type": "int64",
+  "versions": "1+",
+  "default": "-1",
+  "ignorable": true,
+  "about": "The earliest removal timestamp in ms, or -1 if not draining. Transaction safety may delay removal."
+}
+```
+
+`DescribeTopicPartitionsRequest` validVersions bumped from `"0"` to `"0-1"`. No new request fields.
+
+#### Broker Heartbeat Readiness
+
+`BrokerHeartbeatRequest` adds `DrainingPartitions`, a flexible tagged array (tag 2, versions 0+, empty by default)
+of `PartitionDrainStatus`. The fields are `TopicId`, `PartitionId`, `LeaderEpoch`, `PartitionEpoch`,
+`MetadataOffset` (default -1), `Ready` (default false), and `BlockedReason` (default empty string). Each heartbeat
+reports the draining partitions currently led by that broker. Missing, stale or blocked reports cannot authorize
+normal removal. This adds no Describe response fields: `IsDraining` and `DrainDeadlineMs` remain the public
+partition-status fields, while controller logs expose blockers.
+
+#### Cluster Metadata Records
+
+##### TopicRecord
+
+`TopicRecord` gains the tagged int32 field `PartitionIdHighWatermark` (default 0). Replay infers it from partition creation records; snapshots preserve it explicitly when the highest IDs have been removed. This fences reuse of removed IDs after failover.
+
+##### PartitionDrainingRecord (Record ID 29)
+
+Written per partition when `DeletePartitionsRequest` is accepted. A non-negative `DeadlineMs` starts draining; `DeadlineMs=-1` cancels draining when `CreatePartitions` reopens a partition before removal. The cancellation is replayed and snapshotted as active state. The tagged `Force` flag defaults to `false`,
+survives replay and snapshots, and is cleared by cancellation or removal.
+
+```json
+{
+  "apiKey": 29,
+  "type": "metadata",
+  "name": "PartitionDrainingRecord",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "TopicId",
+      "type": "uuid",
+      "versions": "0+",
+      "about": "The unique ID of the topic whose partitions are being drained."
+    },
+    {
+      "name": "PartitionId",
+      "type": "int32",
+      "versions": "0+",
+      "about": "The partition entering or leaving the draining state."
+    },
+    {
+      "name": "DeadlineMs",
+      "type": "int64",
+      "versions": "0+",
+      "about": "Earliest removal time in epoch milliseconds; -1 cancels draining."
+    },
+    {
+      "name": "Force",
+      "type": "bool",
+      "versions": "0+",
+      "taggedVersions": "0+",
+      "tag": 0,
+      "default": "false",
+      "about": "Whether removal may bypass transaction safety checks."
+    }
+  ]
+}
+```
+
+##### RemovePartitionRecord (Record ID 30)
+
+Written by the controller once the earliest removal time is reached and either transaction safety is confirmed
+or an explicit force override applies. Permanently removes the partition from all metadata images.
+
+```json
+{
+  "apiKey": 30,
+  "type": "metadata",
+  "name": "RemovePartitionRecord",
+  "validVersions": "0",
+  "flexibleVersions": "0+",
+  "fields": [
+    {
+      "name": "TopicId",
+      "type": "uuid",
+      "versions": "0+",
+      "about": "The unique ID of the topic."
+    },
+    {
+      "name": "PartitionId",
+      "type": "int32",
+      "versions": "0+",
+      "about": "The partition ID to permanently remove. After replay, this partition no longer exists in any metadata image."
+    }
+  ]
+}
+```
+
+#### Error Codes
 
 | Code | Name | Retriable | Returned By | Condition |
 |:----:|------|:---------:|-------------|-----------|
@@ -895,6 +905,107 @@ public class InvalidDeletePartitionCountException extends ApiException {
     }
 }
 ```
+
+### Admin Client
+
+The Admin API accepts reduced absolute target counts:
+
+```java
+default DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts);
+DeletePartitionsResult deletePartitions(Map<String, Integer> partitionCounts,
+                                       DeletePartitionsOptions options);
+```
+
+`DeletePartitionsOptions` provides the following options in addition to the inherited operation timeout:
+
+| Setter | Getter | Default | Behavior |
+|--------|--------|---------|----------|
+| `validateOnly(boolean)` | `validateOnly()` | `false` | Validate without persisting drain records |
+| `force(boolean)` | `force()` | `false` | Set each requested topic's tagged `Force` field |
+| `retryOnQuotaViolation(boolean)` | `shouldRetryOnQuotaViolation()` | `true` | Retry throttled topics until the original operation deadline |
+
+For example, reducing a ten-partition topic to seven with the explicit transaction-safety override is:
+
+```java
+admin.deletePartitions(Map.of("orders", 7), new DeletePartitionsOptions().force(true)).all().get();
+```
+
+Null and empty topic names fail their individual futures with `InvalidTopicException` before serialization;
+valid topics in the same call are still submitted. Quota retries include only throttled topics, preserve the
+force and validation flags captured at invocation, and keep the original absolute operation deadline.
+Successful and permanently failed topics are not resubmitted. When quota retries are disabled, the future
+fails with `ThrottlingQuotaExceededException` carrying the server's throttle duration. If the deadline expires
+during quota retries, the exception retains the remaining throttle duration.
+
+The result's `values()` and `all()` futures complete when the controller accepts and persists the drain or force
+upgrade, or completes validation for `validateOnly(true)`. They do not wait for the deadline, transaction
+completion, removal, or storage cleanup. Without force, a drain can remain pending indefinitely when the
+controller cannot obtain a fresh safe report from its leader. With force, the configured minimum interval
+still applies, and unresolved transactional data may be discarded.
+
+#### Partition Descriptions
+
+`TopicPartitionInfo` adds the following constructor and accessors:
+
+```java
+public TopicPartitionInfo(int partition, Node leader,
+                          List<Node> replicas, List<Node> isr,
+                          List<Node> elr, List<Node> lastKnownElr,
+                          boolean isDraining, long drainDeadlineMs);
+public boolean isDraining();
+public OptionalLong drainDeadlineMs();
+```
+
+The existing four- and six-argument constructors remain available and default to `isDraining=false` with an
+unknown deadline. The four-argument constructor continues to represent unavailable ELR information as null.
+A constructor deadline of `-1` denotes unavailable information. Equality and hash codes include draining
+state and deadline, and string output includes them when present.
+
+`Admin.describeTopics()` preserves draining state and the earliest removal timestamp from
+DescribeTopicPartitions v1 responses, including across pages. Descriptions by topic ID and the Metadata API
+fallback preserve `IsDraining` when the negotiated Metadata version supplies it, but return
+`OptionalLong.empty()` for the deadline because Metadata has no deadline field. Protocol versions without
+these fields report the active/unknown defaults. An empty deadline does not imply that a draining partition
+is ready for removal; even a known deadline is only the earliest removal time.
+
+#### Reopening With CreatePartitions
+
+`NewPartitions.increaseTo(totalCount)` specifies the target number of active partitions. With five retained
+partitions and IDs 3 and 4 draining, a target of four reopens ID 3, and a target of five reopens both IDs.
+Reopened partitions retain their logs, offsets, producer state, and replica assignments. Partitions above the
+target continue draining. An increase above the retained count also creates physically new partitions, provided
+it would not reuse a removed partition ID.
+
+For `NewPartitions.increaseTo(totalCount, newAssignments)`, assignments apply only to physically new
+partitions. The required list length is `Math.max(0, totalCount - retainedCount)`, where the retained count
+includes draining partitions. A request that only reopens retained partitions can use the no-assignment
+overload or an empty assignment list. A target that does not increase the active count, or would reuse a
+removed ID, fails with `InvalidPartitionsException`.
+
+### Configuration
+
+#### Topic Configuration
+
+| Config | Type | Default | Valid Values | Description |
+|--------|------|---------|--------------|-------------|
+| `partition.drain.timeout.ms` | long | 3600000 (1 hour) | >= 0 | Minimum time after marking tail partitions as draining before removal is eligible. Consumers can read while producers cannot write. A value of 0 removes the minimum wait but still requires transaction safety unless force is explicit. Config is only read at the time `DeletePartitionsRequest` is processed; changing it after draining starts has no effect on the existing deadline. |
+
+#### MetadataVersion
+
+```java
+// Add support for partition deletion (DeletePartitions API, PartitionDrainingRecord, RemovePartitionRecord).
+IBP_4_4_IV2(33, "4.4", "IV2", true);
+```
+
+Feature gate method:
+
+```java
+public boolean isDeletePartitionsSupported() {
+    return this.isAtLeast(IBP_4_4_IV2);
+}
+```
+
+The `true` flag indicates metadata format changed (new record types).
 
 ### Metrics
 
@@ -934,6 +1045,13 @@ cluster-wide completion total.
 | `kafka.server:...ConsumerLag,topic=X,partition=N` | Continues reporting | Metric deregistered |
 
 ## Compatibility, Deprecation, and Migration Plan
+
+### Release Phases
+
+| Phase | MetadataVersion | Stability | Enablement |
+|-------|----------------|-----------|------------|
+| Early Access | IBP_4_4_IV2 (unstable) | `unstable.feature.versions.enable=true` required | Explicit opt-in. Not for production. |
+| General Availability | Future IBP (stable) | Stable, no flags needed | Enabled by default at target MetadataVersion. |
 
 ### Compatibility Matrix
 
@@ -985,13 +1103,6 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 - Partitions already REMOVED cannot be recovered (data is deleted)
 - Reopen retained draining partitions with CreatePartitions before removal. Downgrading across IBP_4_4_IV2 is rejected because metadata changed; older controllers must not discard draining state or partition ID allocation history.
 - **Recommendation:** Test with non-critical topics first.
-
-### Release Phases
-
-| Phase | MetadataVersion | Stability | Enablement |
-|-------|----------------|-----------|------------|
-| Early Access | IBP_4_4_IV2 (unstable) | `unstable.feature.versions.enable=true` required | Explicit opt-in. Not for production. |
-| General Availability | Future IBP (stable) | Stable, no flags needed | Enabled by default at target MetadataVersion. |
 
 ## Test Plan
 
@@ -1090,6 +1201,23 @@ The Admin descriptions and CLI use the draining protocol fields defined above an
 - Remote storage deletion failure (does not block local cleanup)
 - Duplicate remote cleanup from two previously hosted replicas uses idempotent storage deletion and handles
   terminal metadata transitions; cover leaderless force removal with coalesced and separately applied updates
+
+### System Tests
+
+The system test plan should cover long-running and mixed-version operation beyond the selected local
+KRaft cases recorded below:
+
+- Upgrade producers and classic consumer assignors around a shrink, checking legacy draining reads,
+  drain-aware routing, and assignment convergence after physical removal.
+- Restart brokers and controllers across metadata snapshots, distinguishing running-broker omission cleanup
+  from cold-start `.stray` quarantine and verifying permanent ID reuse fencing.
+- Inject remote object-store and metadata-service failures during removal, checking continued heartbeat
+  progress, authoritative metadata absence, and the documented limits on remote reclamation.
+- Exercise operator tools with cached topology, explicit partition IDs, and stale reset or reassignment plans;
+  include surviving-partition reads and writes, and detect removed IDs without partial tool side effects.
+
+These are planned system scenarios, not additional completed verification claims. The tool impact inventory
+linked below identifies further tool-specific regression recommendations.
 
 ### Local Verification Record (2026-11-25)
 
