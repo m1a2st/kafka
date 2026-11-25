@@ -2398,10 +2398,20 @@ class ReplicaManager(val config: KafkaConfig,
       if (!localChanges.deletes.isEmpty) {
         val deletes = localChanges.deletes.asScala
           .map { tp =>
-            val isCurrentLeader = Option(delta.image().getTopic(tp.topic()))
-              .map(image => image.partitions().get(tp.partition()))
+            val previousTopic = Option(delta.image().getTopic(tp.topic()))
+            val changedTopic = previousTopic
+              .flatMap(topic => Option(delta.changedTopic(topic.id())))
+            val removedPartition = changedTopic
+              .flatMap(topicDelta => Option(topicDelta.partitionBeforeRemoval(tp.partition())))
+            // Snapshot omissions and leaderless removals may be cleaned idempotently by any previously hosted replica.
+            val removedWithoutLeader = previousTopic.exists(_.partitions().containsKey(tp.partition())) &&
+              changedTopic.exists(topicDelta => topicDelta.removedPartitions().contains(tp.partition())) &&
+              removedPartition.forall(_.leader == NO_LEADER)
+            val deletedTopicPartition = previousTopic
+              .filter(_ => delta.topicWasDeleted(tp.topic()))
+              .flatMap(topic => Option(topic.partitions().get(tp.partition())))
+            val deleteRemoteLog = removedWithoutLeader || removedPartition.orElse(deletedTopicPartition)
               .exists(partition => partition.leader == config.nodeId)
-            val deleteRemoteLog = delta.topicWasDeleted(tp.topic()) && isCurrentLeader
             new StopPartition(tp, true, deleteRemoteLog, false)
           }
           .toSet

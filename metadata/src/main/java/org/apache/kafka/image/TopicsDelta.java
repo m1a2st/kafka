@@ -27,6 +27,7 @@ import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.RemovePartitionRecord;
 import org.apache.kafka.common.metadata.RemoveTopicRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.immutable.ImmutableMap;
@@ -166,8 +167,11 @@ public final class TopicsDelta {
 
     public void finishSnapshot() {
         for (Uuid topicId : image.topicsById().keySet()) {
-            if (!changedTopics.containsKey(topicId)) {
+            TopicDelta topicDelta = changedTopics.get(topicId);
+            if (topicDelta == null) {
                 deletedTopicIds.add(topicId);
+            } else {
+                topicDelta.finishSnapshot(image.getTopic(topicId));
             }
         }
     }
@@ -258,6 +262,15 @@ public final class TopicsDelta {
             LocalReplicaChanges changes = delta.localChanges(brokerId);
 
             deletes.addAll(changes.deletes());
+            TopicImage previousTopic = image.getTopic(delta.id());
+            if (previousTopic != null) {
+                for (int partitionId : delta.removedPartitions()) {
+                    PartitionRegistration previous = previousTopic.partitions().get(partitionId);
+                    if (previous != null && Replicas.contains(previous.replicas, brokerId)) {
+                        deletes.add(new TopicPartition(previousTopic.name(), partitionId));
+                    }
+                }
+            }
             electedLeaders.putAll(changes.electedLeaders());
             leaders.putAll(changes.leaders());
             followers.putAll(changes.followers());

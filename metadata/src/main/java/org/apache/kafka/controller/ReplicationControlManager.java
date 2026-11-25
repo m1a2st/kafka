@@ -1167,19 +1167,22 @@ public class ReplicationControlManager {
         } catch (Exception e) {
             drainTimeoutMs = TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_DEFAULT;
         }
-        long deadlineMs = System.currentTimeMillis() + drainTimeoutMs;
+        long nowMs = System.currentTimeMillis();
+        long deadlineMs = nowMs > Long.MAX_VALUE - drainTimeoutMs ? Long.MAX_VALUE : nowMs + drainTimeoutMs;
+        List<ApiMessageAndVersion> newRecords = new ArrayList<>();
         for (int i : partitionsToDelete) {
             TopicIdPartition tp = new TopicIdPartition(topicId, i);
             // Force may upgrade a blocked drain, without restarting its consumer grace period.
             if (forcedDrainingPartitions.contains(tp)) {
                 continue;
             }
-            records.add(new ApiMessageAndVersion(new PartitionDrainingRecord().
+            newRecords.add(new ApiMessageAndVersion(new PartitionDrainingRecord().
                 setTopicId(topicId).
                 setPartitionId(i).
                 setDeadlineMs(drainingPartitions.getOrDefault(tp, deadlineMs)).
                 setForce(topic.force()), (short) 0));
         }
+        records.addAll(newRecords);
     }
 
     public void replay(PartitionDrainingRecord record) {

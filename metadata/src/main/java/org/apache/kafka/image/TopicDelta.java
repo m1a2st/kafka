@@ -40,6 +40,7 @@ public final class TopicDelta {
     private final TopicImage image;
     private final Map<Integer, PartitionRegistration> partitionChanges = new HashMap<>();
     private final Set<Integer> removedPartitions = new HashSet<>();
+    private final Map<Integer, PartitionRegistration> removedPartitionRegistrations = new HashMap<>();
     private final Set<Integer> resumedPartitions = new HashSet<>();
     private int partitionIdHighWatermark;
     private final Map<Integer, Long> drainingPartitionDeadlines = new HashMap<>();
@@ -64,12 +65,36 @@ public final class TopicDelta {
         return removedPartitions;
     }
 
+    /**
+     * Returns the registration immediately before an explicit removal, or null for a snapshot omission.
+     */
+    public PartitionRegistration partitionBeforeRemoval(int partitionId) {
+        return removedPartitionRegistrations.get(partitionId);
+    }
+
     public void replayRemovePartition(int partitionId) {
+        PartitionRegistration previous = partitionChanges.getOrDefault(partitionId, image.partitions().get(partitionId));
+        if (previous != null) {
+            removedPartitionRegistrations.put(partitionId, previous);
+        }
+        removePartition(partitionId);
+    }
+
+    private void removePartition(int partitionId) {
         partitionChanges.remove(partitionId);
         removedPartitions.add(partitionId);
         drainingPartitionDeadlines.remove(partitionId);
         forcedDrainingPartitions.remove(partitionId);
         resumedPartitions.remove(partitionId);
+    }
+
+    void finishSnapshot(TopicImage previousImage) {
+        for (int partitionId : previousImage.partitions().keySet()) {
+            if (!partitionChanges.containsKey(partitionId)) {
+                // A snapshot cannot tell us who led this partition immediately before its removal.
+                removePartition(partitionId);
+            }
+        }
     }
 
     public void replayPartitionDraining(int partitionId, long deadlineMs) {
@@ -127,6 +152,7 @@ public final class TopicDelta {
         int partitionId = record.partitionId();
         partitionIdHighWatermark = Math.max(partitionIdHighWatermark, partitionId + 1);
         if (removedPartitions.remove(partitionId)) {
+            removedPartitionRegistrations.remove(partitionId);
             resumedPartitions.add(partitionId);
         }
         PartitionRegistration prevPartition = partitionChanges.get(partitionId);
@@ -174,6 +200,9 @@ public final class TopicDelta {
     }
 
     void maybeClearElr(int partitionId, PartitionRegistration partition) {
+        if (removedPartitions.contains(partitionId)) {
+            return;
+        }
         if (partition.elr.length != 0 || partition.lastKnownElr.length != 0) {
             partitionChanges.put(partitionId, partition.merge(
                 new PartitionChangeRecord().
@@ -251,6 +280,9 @@ public final class TopicDelta {
         }
 
         for (Entry<Integer, PartitionRegistration> entry : partitionChanges.entrySet()) {
+            if (removedPartitions.contains(entry.getKey())) {
+                continue;
+            }
             if (!Replicas.contains(entry.getValue().replicas, brokerId)) {
                 PartitionRegistration prevPartition = image.partitions().get(entry.getKey());
                 if (prevPartition != null && Replicas.contains(prevPartition.replicas, brokerId)) {

@@ -37,7 +37,7 @@ import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData, ShareFetchResponseData}
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData.PartitionDrainStatus
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
-import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionDrainingRecord, PartitionRecord, RemovePartitionRecord, RemoveTopicRecord, TopicRecord}
+import org.apache.kafka.common.metadata.{ClearElrRecord, PartitionChangeRecord, PartitionDrainingRecord, PartitionRecord, RemovePartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.metrics.Monitorable
 import org.apache.kafka.common.metrics.PluginMetrics
@@ -91,7 +91,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.{EnumSource, ValueSource}
+import org.junit.jupiter.params.provider.{CsvSource, EnumSource, ValueSource}
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
@@ -5544,10 +5544,12 @@ class ReplicaManagerTest {
     delta
   }
 
-  private def imageFromTopics(topicsImage: TopicsImage, metadataOffset: Long = 100L): MetadataImage = {
+  private def imageFromTopics(topicsImage: TopicsImage,
+                              metadataOffset: Long = 100L,
+                              metadataVersion: MetadataVersion = MetadataVersion.latestProduction()): MetadataImage = {
     val featuresImageLatest = new FeaturesImage(
       Collections.emptyMap(),
-      MetadataVersion.latestProduction())
+      metadataVersion)
     new MetadataImage(
       new MetadataProvenance(metadataOffset, 10, 1000L, true),
       featuresImageLatest,
@@ -6509,6 +6511,265 @@ class ReplicaManagerTest {
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewSnapshotRemovesMissingTailReplica(localLeader: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(1).setDeadlineMs(10000L))
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      val retainedLog = replicaManager.onlinePartition(topicPartition).get.log.get
+      assertTrue(replicaManager.onlinePartition(tail).isDefined)
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      val writer = new RecordListWriter()
+      removalDelta.apply().write(writer, new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build())
+
+      // A broker that missed the removal catches up from a full snapshot of the same topic UUID.
+      val snapshotDelta = new TopicsDelta(initialImage)
+      RecordTestUtils.replayAll(snapshotDelta, writer.records())
+      snapshotDelta.finishSnapshot()
+      assertFalse(snapshotDelta.apply().getTopic(topicId).partitions().containsKey(1))
+      replicaManager.applyDelta(snapshotDelta, imageFromTopics(snapshotDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty,
+        "A replica absent from the new snapshot must be stopped even when its topic still exists")
+      assertTrue(replicaManager.logManager.getLog(tail).isEmpty)
+      assertFalse(replicaManager.drainingPartitions.contains(tail))
+      assertSame(retainedLog, replicaManager.onlinePartition(topicPartition).get.log.get)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewClearElrDoesNotRecreateRemovedReplica(localLeader: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader, withElr = true)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(1)
+        .setDeadlineMs(1L).setForce(true))
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      val logProperties = new Properties()
+      logProperties.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
+      replicaManager.onlinePartition(tail).get.log.get.updateConfig(new LogConfig(logProperties))
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      // Force permits deletion below min ISR. A later config change can clear ELR in the same loader batch.
+      removalDelta.replay(new ClearElrRecord().setTopicName(topic))
+      assertFalse(removalDelta.apply().getTopic(topicId).partitions().containsKey(1))
+      replicaManager.applyDelta(removalDelta, imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      if (localLeader) {
+        val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("after-removal".getBytes))
+        assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION,
+          appendRecords(replicaManager, tail, records, requiredAcks = 1).assertFired.error,
+          "A removed leader must not accept new records after ELR reconciliation")
+      }
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty,
+        "Clearing ELR must not recreate a replica that RemovePartitionRecord already deleted")
+      assertTrue(replicaManager.logManager.getLog(tail).isEmpty)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewRemoteTailCleanupRunsOnLeaderOnly(localLeader: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time),
+      enableRemoteStorage = true)
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader)
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.logManager.getLog(tail).get.remoteLogEnabled())
+      reset(mockRemoteLogManager)
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      replicaManager.applyDelta(removalDelta, imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty)
+      assertNotNull(removalDelta.apply().getTopic(topicId), "The topic itself is still retained")
+      verify(mockRemoteLogManager).stopPartitions(ArgumentMatchers.eq(
+        Collections.singleton(new StopPartition(tail, true, localLeader, false))), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource(Array("true,true", "true,false", "false,true", "false,false"))
+  def testDeletionReviewLeaderlessForcedRemovalCleansRemoteData(localLeader: Boolean, coalesced: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), enableRemoteStorage = true)
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(1)
+        .setDeadlineMs(1L).setForce(true))
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.logManager.getLog(tail).get.remoteLogEnabled())
+
+      val leaderlessDelta = new TopicsDelta(initialImage)
+      leaderlessDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(1).setLeader(NO_LEADER))
+      val removalDelta = if (coalesced) {
+        leaderlessDelta
+      } else {
+        val leaderlessImage = leaderlessDelta.apply()
+        replicaManager.applyDelta(leaderlessDelta, imageFromTopics(leaderlessImage, 200L, MetadataVersion.IBP_4_4_IV2))
+        assertFalse(replicaManager.onlinePartition(tail).get.isLeader)
+        assertTrue(replicaManager.logManager.getLog(tail).isPresent)
+        new TopicsDelta(leaderlessImage)
+      }
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      assertEquals(NO_LEADER, removalDelta.changedTopic(topicId).partitionBeforeRemoval(1).leader)
+      reset(mockRemoteLogManager)
+      replicaManager.applyDelta(removalDelta, imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty)
+      assertTrue(replicaManager.logManager.getLog(tail).isEmpty)
+      verify(mockRemoteLogManager).stopPartitions(ArgumentMatchers.eq(
+        Collections.singleton(new StopPartition(tail, true, true, false))), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewRemoteCleanupUsesLeaderImmediatelyBeforeRemoval(localLeader: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), enableRemoteStorage = true)
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader)
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.logManager.getLog(tail).get.remoteLogEnabled())
+      reset(mockRemoteLogManager)
+
+      val removalDelta = new TopicsDelta(initialImage)
+      val newLeader = if (localLeader) 1 else 0
+      removalDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(1)
+        .setLeader(newLeader).setIsr(util.List.of[Integer](newLeader)))
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      replicaManager.applyDelta(removalDelta, imageFromTopics(removalDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty)
+      verify(mockRemoteLogManager).stopPartitions(ArgumentMatchers.eq(
+        Collections.singleton(new StopPartition(tail, true, !localLeader, false))), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewRemoteCleanupSkipsFormerReplica(permanentlyRemoved: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), enableRemoteStorage = true)
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader = true)
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.logManager.getLog(tail).get.remoteLogEnabled())
+      reset(mockRemoteLogManager)
+
+      val reassignmentDelta = new TopicsDelta(initialImage)
+      reassignmentDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(1)
+        .setLeader(1).setReplicas(util.List.of[Integer](1)).setIsr(util.List.of[Integer](1))
+        .setDirectories(util.List.of(DirectoryId.MIGRATING)))
+      if (permanentlyRemoved) {
+        reassignmentDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      }
+      val newImage = reassignmentDelta.apply()
+      replicaManager.applyDelta(reassignmentDelta, imageFromTopics(newImage, 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty)
+      assertEquals(!permanentlyRemoved, newImage.getTopic(topicId).partitions().containsKey(1))
+      verify(mockRemoteLogManager).stopPartitions(ArgumentMatchers.eq(
+        Collections.singleton(new StopPartition(tail, true, false, false))), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDeletionReviewSnapshotOmissionCleansRemoteDataFromAnyReplica(localLeader: Boolean): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), enableRemoteStorage = true)
+    val tail = new TopicPartition(topic, 1)
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader)
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertTrue(replicaManager.logManager.getLog(tail).get.remoteLogEnabled())
+      reset(mockRemoteLogManager)
+
+      val removalDelta = new TopicsDelta(initialImage)
+      removalDelta.replay(new RemovePartitionRecord().setTopicId(topicId).setPartitionId(1))
+      val writer = new RecordListWriter()
+      removalDelta.apply().write(writer, new ImageWriterOptions.Builder(MetadataVersion.IBP_4_4_IV2).build())
+      val snapshotDelta = new TopicsDelta(initialImage)
+      RecordTestUtils.replayAll(snapshotDelta, writer.records())
+      snapshotDelta.finishSnapshot()
+      replicaManager.applyDelta(snapshotDelta, imageFromTopics(snapshotDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.onlinePartition(tail).isEmpty)
+      assertTrue(replicaManager.logManager.getLog(tail).isEmpty)
+      verify(mockRemoteLogManager).stopPartitions(ArgumentMatchers.eq(
+        Collections.singleton(new StopPartition(tail, true, true, false))), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDeletionReviewFormerLeaderStopsReportingReadiness(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      val initialDelta = deletionReviewInitialDelta(localLeader = true)
+      initialDelta.replay(new PartitionDrainingRecord().setTopicId(topicId).setPartitionId(1).setDeadlineMs(10000L))
+      val initialImage = initialDelta.apply()
+      replicaManager.applyDelta(initialDelta, imageFromTopics(initialImage, metadataVersion = MetadataVersion.IBP_4_4_IV2))
+      assertEquals(1, replicaManager.partitionDrainStatuses().size())
+
+      val followerDelta = new TopicsDelta(initialImage)
+      followerDelta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(1)
+        .setLeader(1).setIsr(util.List.of[Integer](1)))
+      replicaManager.applyDelta(followerDelta, imageFromTopics(followerDelta.apply(), 300L, MetadataVersion.IBP_4_4_IV2))
+
+      assertTrue(replicaManager.partitionDrainStatuses().isEmpty,
+        "A follower must not continue confirming its former leadership's drain readiness")
+      assertTrue(replicaManager.drainingPartitions.contains(new TopicPartition(topic, 1)))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def deletionReviewInitialDelta(localLeader: Boolean, withElr: Boolean = false): TopicsDelta = {
+    val delta = createLeaderDelta(topicId, topicPartition, leaderId = 0)
+    val leader = if (localLeader) 0 else 1
+    val tail = new PartitionRecord().setTopicId(topicId).setPartitionId(1)
+      .setReplicas(util.List.of[Integer](0, 1)).setIsr(util.List.of[Integer](leader))
+      .setLeader(leader).setLeaderEpoch(0).setPartitionEpoch(0)
+    if (withElr) {
+      tail.setEligibleLeaderReplicas(util.List.of[Integer](1 - leader))
+    }
+    delta.replay(tail)
+    delta
   }
 
   @Test
