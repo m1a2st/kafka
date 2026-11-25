@@ -1146,6 +1146,15 @@ public class ShareCoordinatorService implements ShareCoordinator {
             handleTopicsDeletion(delta.topicsDelta().deletedTopicIds());
         }
 
+        if (delta.topicsDelta() != null && delta.topicsDelta().changedTopics().values().stream()
+            .anyMatch(topic -> !topic.removedPartitions().isEmpty())) {
+            FutureUtils.mapExceptionally(runtime.scheduleWriteAllOperation(
+                "on-partitions-deleted", ShareCoordinatorShard::cleanupDeletedPartitions), exception -> {
+                    log.error("Unable to clean share state for removed partitions.", exception);
+                    return null;
+                });
+        }
+
         boolean enabled = isShareGroupsEnabled(newImage);
         // Only act when the enabled state actually changes. Each change bumps the
         // generation, which fences any jobs from the previous generation so they

@@ -1883,6 +1883,7 @@ project(':share-coordinator') {
 
     testFixturesImplementation project(':clients')
 
+    testImplementation project(':storage')
     testImplementation testFixtures(project(':clients'))
     testImplementation testFixtures(project(':server-common'))
     testImplementation testFixtures(project(':coordinator-common'))

@@ -71,8 +71,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord> {
+    static final String DELETED_PARTITIONS_CLEANUP_KEY = "cleanup-deleted-share-partitions";
+
     private final Logger log;
     private final ShareCoordinatorConfig config;
     private final CoordinatorMetrics coordinatorMetrics;
@@ -86,6 +89,8 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     private CoordinatorMetadataImage metadataImage;
     private final ShareCoordinatorOffsetsManager offsetsManager;
     private final Time time;
+    private final CoordinatorTimer<CoordinatorRecord> timer;
+    private boolean awaitingMetadataForDeletedPartitionsCleanup;
 
     public static final Exception NULL_TOPIC_ID = new Exception("The topic id cannot be null.");
     public static final Exception NEGATIVE_PARTITION_ID = new Exception("The partition id cannot be a negative number.");
@@ -101,6 +106,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         private CoordinatorMetrics coordinatorMetrics;
         private TopicPartition topicPartition;
         private Time time;
+        private CoordinatorTimer<CoordinatorRecord> timer;
 
         public Builder(ShareCoordinatorConfig config) {
             this.config = config;
@@ -126,7 +132,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
 
         @Override
         public CoordinatorShardBuilder<ShareCoordinatorShard, CoordinatorRecord> withTimer(CoordinatorTimer<CoordinatorRecord> timer) {
-            // method is required due to interface
+            this.timer = timer;
             return this;
         }
 
@@ -160,6 +166,8 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
                 throw new IllegalArgumentException("CoordinatorMetrics must be set and be of type ShareCoordinatorMetrics.");
             if (topicPartition == null)
                 throw new IllegalArgumentException("TopicPartition must be set.");
+            if (timer == null)
+                throw new IllegalArgumentException("Timer must be set.");
 
             ShareCoordinatorMetricsShard metricsShard = ((ShareCoordinatorMetrics) coordinatorMetrics)
                 .newMetricsShard(snapshotRegistry, topicPartition);
@@ -170,7 +178,8 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
                 coordinatorMetrics,
                 metricsShard,
                 snapshotRegistry,
-                time
+                time,
+                timer
             );
         }
     }
@@ -181,9 +190,10 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         CoordinatorMetrics coordinatorMetrics,
         CoordinatorMetricsShard metricsShard,
         SnapshotRegistry snapshotRegistry,
-        Time time
+        Time time,
+        CoordinatorTimer<CoordinatorRecord> timer
     ) {
-        this(logContext, config, coordinatorMetrics, metricsShard, snapshotRegistry, new ShareCoordinatorOffsetsManager(snapshotRegistry), time);
+        this(logContext, config, coordinatorMetrics, metricsShard, snapshotRegistry, new ShareCoordinatorOffsetsManager(snapshotRegistry), time, timer);
     }
 
     ShareCoordinatorShard(
@@ -193,7 +203,8 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         CoordinatorMetricsShard metricsShard,
         SnapshotRegistry snapshotRegistry,
         ShareCoordinatorOffsetsManager offsetsManager,
-        Time time
+        Time time,
+        CoordinatorTimer<CoordinatorRecord> timer
     ) {
         this.log = logContext.logger(ShareCoordinatorShard.class);
         this.config = config;
@@ -205,22 +216,53 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         this.stateEpochMap = new TimelineHashMap<>(snapshotRegistry, 0);
         this.offsetsManager = offsetsManager;
         this.time = time;
+        this.timer = timer;
     }
 
     @Override
     public void onLoaded(CoordinatorMetadataImage newImage) {
         this.metadataImage = newImage;
         coordinatorMetrics.activateMetricsShard(metricsShard);
+        awaitingMetadataForDeletedPartitionsCleanup = newImage.isEmpty();
+        if (!newImage.isEmpty()) {
+            scheduleDeletedPartitionsCleanup();
+        }
     }
 
     @Override
     public void onMetadataUpdate(CoordinatorMetadataDelta delta, CoordinatorMetadataImage newImage) {
         this.metadataImage = newImage;
+        if (awaitingMetadataForDeletedPartitionsCleanup && !newImage.isEmpty()) {
+            awaitingMetadataForDeletedPartitionsCleanup = false;
+            scheduleDeletedPartitionsCleanup();
+        }
     }
 
     @Override
     public void onUnloaded() {
+        timer.cancel(DELETED_PARTITIONS_CLEANUP_KEY);
+        awaitingMetadataForDeletedPartitionsCleanup = false;
         coordinatorMetrics.deactivateMetricsShard(metricsShard);
+    }
+
+    private void scheduleDeletedPartitionsCleanup() {
+        timer.schedule(DELETED_PARTITIONS_CLEANUP_KEY, 0, TimeUnit.MILLISECONDS, true, this::cleanupDeletedPartitions);
+    }
+
+    /** Generate durable tombstones only for allocated IDs positively identified as permanently removed. */
+    public CoordinatorResult<Void, CoordinatorRecord> cleanupDeletedPartitions() {
+        List<CoordinatorRecord> records = new ArrayList<>();
+        shareStateMap.forEach((key, __) -> {
+            if (isPartitionDeleted(key)) {
+                records.add(generateTombstoneRecord(key));
+            }
+        });
+        return new CoordinatorResult<>(records, false);
+    }
+
+    private boolean isPartitionDeleted(SharePartitionKey key) {
+        return metadataImage != null && metadataImage.topicMetadata(key.topicId())
+            .map(topic -> topic.isPartitionDeleted(key.partition())).orElse(false);
     }
 
     @Override
@@ -579,6 +621,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
      * @return A result containing snapshot records, if any, and a void response.
      */
     public CoordinatorResult<Void, CoordinatorRecord> snapshotColdPartitions() {
+        List<CoordinatorRecord> records = new ArrayList<>(cleanupDeletedPartitions().records());
         long coldSnapshottedPartitionsCount = shareStateMap.values().stream()
             .filter(shareGroupOffset -> shareGroupOffset.createTimestamp() - shareGroupOffset.writeTimestamp() != 0)
             .count();
@@ -587,13 +630,14 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         // system is quiet and cold snapshotting will not help much.
         if (coldSnapshottedPartitionsCount == shareStateMap.size()) {
             log.debug("All share snapshot records already cold snapshotted, skipping.");
-            return new CoordinatorResult<>(List.of(), null);
+            return new CoordinatorResult<>(records, false);
         }
 
         // Some active partitions are there.
-        List<CoordinatorRecord> records = new ArrayList<>();
-
         shareStateMap.forEach((sharePartitionKey, shareGroupOffset) -> {
+            if (isPartitionDeleted(sharePartitionKey)) {
+                return;
+            }
             long timeSinceLastSnapshot = time.milliseconds() - shareGroupOffset.writeTimestamp();
             if (timeSinceLastSnapshot >= config.shareCoordinatorColdPartitionSnapshotIntervalMs()) {
                 // We need to force create a snapshot here
@@ -609,7 +653,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
                 ));
             }
         });
-        return new CoordinatorResult<>(records, null);
+        return new CoordinatorResult<>(records, false);
     }
 
     /**

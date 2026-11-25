@@ -44,6 +44,8 @@ import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorResult;
 import org.apache.kafka.coordinator.common.runtime.KRaftCoordinatorMetadataImage;
+import org.apache.kafka.coordinator.common.runtime.MetadataImageBuilder;
+import org.apache.kafka.coordinator.common.runtime.MockCoordinatorTimer;
 import org.apache.kafka.coordinator.share.generated.ShareSnapshotKey;
 import org.apache.kafka.coordinator.share.generated.ShareSnapshotValue;
 import org.apache.kafka.coordinator.share.generated.ShareUpdateKey;
@@ -117,7 +119,8 @@ class ShareCoordinatorShardTest {
                 metricsShard,
                 snapshotRegistry,
                 offsetsManager,
-                time == null ? TIME : time
+                time == null ? TIME : time,
+                new MockCoordinatorTimer<>(time == null ? TIME : time)
             );
 
             var topicMetadata = mock(CoordinatorMetadataImage.TopicMetadata.class);
@@ -1499,8 +1502,9 @@ class ShareCoordinatorShardTest {
 
     @Test
     public void testSnapshotColdPartitionsNoEligiblePartitions() {
-        MetadataImage image = mock(MetadataImage.class);
-        shard.onMetadataUpdate(null, new KRaftCoordinatorMetadataImage(image));
+        CoordinatorMetadataImage image = new MetadataImageBuilder().addTopic(TOPIC_ID, "source", 2)
+            .buildCoordinatorMetadataImage();
+        shard.onMetadataUpdate(image.emptyDelta(), image);
         int offset = 0;
         int producerId = 0;
         short producerEpoch = 0;
@@ -1569,8 +1573,9 @@ class ShareCoordinatorShardTest {
 
     @Test
     public void testSnapshotColdPartitionsSnapshotUpdateNotConsidered() {
-        MetadataImage image = mock(MetadataImage.class);
-        shard.onMetadataUpdate(null, new KRaftCoordinatorMetadataImage(image));
+        CoordinatorMetadataImage image = new MetadataImageBuilder().addTopic(TOPIC_ID, "source", 1)
+            .buildCoordinatorMetadataImage();
+        shard.onMetadataUpdate(image.emptyDelta(), image);
         int offset = 0;
         int producerId = 0;
         short producerEpoch = 0;
@@ -1672,8 +1677,9 @@ class ShareCoordinatorShardTest {
 
     @Test
     public void testSnapshotColdPartitionsDoesNotPerpetuallySnapshot() {
-        MetadataImage image = mock(MetadataImage.class);
-        shard.onMetadataUpdate(null, new KRaftCoordinatorMetadataImage(image));
+        CoordinatorMetadataImage image = new MetadataImageBuilder().addTopic(TOPIC_ID, "source", 1)
+            .buildCoordinatorMetadataImage();
+        shard.onMetadataUpdate(image.emptyDelta(), image);
         int offset = 0;
         int producerId = 0;
         short producerEpoch = 0;
@@ -1750,8 +1756,9 @@ class ShareCoordinatorShardTest {
 
     @Test
     public void testSnapshotColdPartitionsPartialEligiblePartitions() {
-        MetadataImage image = mock(MetadataImage.class);
-        shard.onMetadataUpdate(null, new KRaftCoordinatorMetadataImage(image));
+        CoordinatorMetadataImage image = new MetadataImageBuilder().addTopic(TOPIC_ID, "source", 2)
+            .buildCoordinatorMetadataImage();
+        shard.onMetadataUpdate(image.emptyDelta(), image);
         int offset = 0;
         int producerId = 0;
         short producerEpoch = 0;
