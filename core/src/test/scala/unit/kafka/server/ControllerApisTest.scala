@@ -1069,6 +1069,55 @@ class ControllerApisTest {
   }
 
   @Test
+  def testReviewDeletePartitionsEnforcesExhaustedRealMutationQuota(): Unit = {
+    val quotaMetrics = new org.apache.kafka.common.metrics.Metrics(time)
+    val actualQuotaManager = new ControllerMutationQuotaManager(
+      new org.apache.kafka.server.config.ClientQuotaManagerConfig(10, 1),
+      quotaMetrics, time, "deletion-review-", Optional.empty())
+    try {
+      actualQuotaManager.updateQuota(
+        Optional.of(new ClientQuotaManager.UserEntity(KafkaPrincipal.ANONYMOUS.getName)),
+        Optional.of(new ClientQuotaManager.ClientIdEntity(clientID)),
+        Optional.of(org.apache.kafka.common.metrics.Quota.upperBound(1)))
+      when(neverThrottlingClientControllerQuotaManager.newQuotaFor(
+        any(classOf[Session]), any(classOf[RequestHeader]), any(classOf[Short])))
+        .thenAnswer { invocation =>
+          actualQuotaManager.newQuotaFor(invocation.getArgument[Session](0),
+            invocation.getArgument[RequestHeader](1),
+            invocation.getArgument[java.lang.Short](2).shortValue())
+        }
+
+      val controller = mock(classOf[Controller])
+      when(controller.deletePartitions(any(), any(), anyBoolean())).thenAnswer { invocation =>
+        val context = invocation.getArgument[ControllerRequestContext](0)
+        val result = new DeletePartitionsTopicResult().setName("foo")
+        try {
+          context.applyPartitionChangeQuota(1)
+        } catch {
+          case error: ThrottlingQuotaExceededException =>
+            result.setErrorCode(Errors.THROTTLING_QUOTA_EXCEEDED.code()).setErrorMessage(error.getMessage)
+        }
+        CompletableFuture.completedFuture(Collections.singletonList(result))
+      }
+      controllerApis = createControllerApis(None, controller)
+      val requestData = new DeletePartitionsRequestData()
+      requestData.topics().add(new DeletePartitionsTopic().setName("foo").setCount(1))
+      val request = new DeletePartitionsRequest.Builder(requestData).build(0.toShort)
+      val channelRequest = buildRequest(request)
+      val quota = actualQuotaManager.newStrictQuotaFor(channelRequest.session, channelRequest.header)
+      quota.record(1000)
+      assertThrows(classOf[ThrottlingQuotaExceededException], () => quota.record(1))
+
+      val response = handleRequest[DeletePartitionsResponse](request, controllerApis)
+      assertEquals(Errors.THROTTLING_QUOTA_EXCEEDED.code(), response.data.results().get(0).errorCode())
+      assertTrue(response.throttleTimeMs() > 0)
+    } finally {
+      actualQuotaManager.shutdown()
+      quotaMetrics.close()
+    }
+  }
+
+  @Test
   def testElectLeadersAuthorization(): Unit = {
     val authorizer = mock(classOf[Authorizer])
     val authorizerPlugin = Plugin.wrapInstance(authorizer, null, "authorizer.class.name")
@@ -1308,7 +1357,6 @@ class ControllerApisTest {
     assertTrue(exception.getMessage.contains("needs ALTER permission"))
   }
 
-  @AfterEach
   @Test
   def testDeletePartitionsRequest(): Unit = {
     val controller = mock(classOf[Controller])
@@ -1345,6 +1393,7 @@ class ControllerApisTest {
         _ => util.Set.of("foo", "bar")).get().asScala.toSet)
   }
 
+  @AfterEach
   def tearDown(): Unit = {
     quotasNeverThrottleControllerMutations.shutdown()
     quotasAlwaysThrottleControllerMutations.shutdown()

@@ -828,7 +828,7 @@ class ControllerApis(
       authHelper.filterByAuthorized(request.context, ALTER, TOPIC, topics, (n: String) => n)
     }
     val deletePartitionsRequest = request.body(classOf[DeletePartitionsRequest])
-    val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(request.session, request.header, 3)
+    val controllerMutationQuota = quotas.controllerMutation.newQuotaFor(request.session, request.header, 0)
     val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
       requestTimeoutMsToDeadlineNs(time, deletePartitionsRequest.data.timeoutMs),
       controllerMutationQuotaRecorderFor(controllerMutationQuota))
