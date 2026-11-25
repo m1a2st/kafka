@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Timeout;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
@@ -244,6 +245,72 @@ public class PartitionDeletionReviewTest {
                     .get(20, TimeUnit.SECONDS).offset());
             }
             assertEquals(List.of("before-restart", "after-restart"), consumePartition(cluster, topic, 1, 2));
+        }
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
+    public void classicGroupOffsetsAreDeletedAfterPhysicalRemoval(ClusterInstance cluster) throws Exception {
+        verifyOffsetsAfterPhysicalRemoval(cluster, "classic");
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
+    public void consumerProtocolGroupOffsetsAreDeletedAfterPhysicalRemoval(ClusterInstance cluster) throws Exception {
+        verifyOffsetsAfterPhysicalRemoval(cluster, "consumer");
+    }
+
+    private static void verifyOffsetsAfterPhysicalRemoval(ClusterInstance cluster, String protocol) throws Exception {
+        String topic = "review-offset-removal-" + protocol;
+        String groupId = "review-offset-removal-group-" + protocol;
+        Set<TopicPartition> retained = Set.of(new TopicPartition(topic, 0), new TopicPartition(topic, 1));
+        try (Admin admin = cluster.admin();
+             Producer<String, String> producer = stringProducer(cluster, Map.of());
+             Consumer<String, String> consumer = stringConsumer(cluster, Map.of(
+                 ConsumerConfig.GROUP_ID_CONFIG, groupId, ConsumerConfig.GROUP_PROTOCOL_CONFIG, protocol))) {
+            createTopic(admin, topic, 4, 0);
+            for (int partition = 0; partition < 4; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, "key", "before-" + partition))
+                    .get(20, TimeUnit.SECONDS);
+            }
+            consumer.subscribe(List.of(topic));
+            Set<String> beforeValues = new HashSet<>();
+            TestUtils.waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(100)).forEach(record -> beforeValues.add(record.value()));
+                return beforeValues.equals(Set.of("before-0", "before-1", "before-2", "before-3"));
+            }, 30000, "The active group must consume and own all four original partitions");
+            consumer.commitSync();
+            var beforeOffsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                .get(20, TimeUnit.SECONDS);
+            assertEquals(4, beforeOffsets.size());
+            beforeOffsets.values().forEach(offset -> assertEquals(1L, offset.offset()));
+
+            admin.deletePartitions(Map.of(topic, 2)).all().get(20, TimeUnit.SECONDS);
+            waitForCount(admin, topic, 2);
+            TestUtils.waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(100));
+                var offsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                    .get(20, TimeUnit.SECONDS);
+                return consumer.assignment().equals(retained) && offsets.keySet().equals(retained);
+            }, 30000, "Removal must tombstone tail offsets while the group remains active");
+            var retainedOffsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                .get(20, TimeUnit.SECONDS);
+            retained.forEach(partition -> assertEquals(1L, retainedOffsets.get(partition).offset()));
+
+            for (int partition = 0; partition < 2; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, "key", "after-" + partition))
+                    .get(20, TimeUnit.SECONDS);
+            }
+            Set<String> afterValues = new HashSet<>();
+            TestUtils.waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(100)).forEach(record -> afterValues.add(record.value()));
+                return afterValues.equals(Set.of("after-0", "after-1"));
+            }, 30000, "The same group must continue reading both retained partitions after cleanup");
+            consumer.commitSync();
+            var afterOffsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                .get(20, TimeUnit.SECONDS);
+            assertEquals(retained, afterOffsets.keySet());
+            retained.forEach(partition -> assertEquals(2L, afterOffsets.get(partition).offset()));
         }
     }
 

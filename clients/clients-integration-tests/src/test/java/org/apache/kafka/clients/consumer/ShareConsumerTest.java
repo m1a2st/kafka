@@ -21,7 +21,9 @@ import kafka.server.KafkaBroker;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.DeletePartitionsOptions;
 import org.apache.kafka.clients.admin.NewPartitions;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RecordsToDelete;
+import org.apache.kafka.clients.admin.ShareGroupDescription;
 import org.apache.kafka.clients.admin.SharePartitionOffsetInfo;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -31,6 +33,7 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.GroupMaxSizeReachedException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.InvalidTopicException;
@@ -2269,6 +2272,97 @@ public class ShareConsumerTest extends ShareConsumerTestBase {
 
             assertTrue(newRecordCount.get() >= 5,
                 "Expected at least 5 new records, got " + newRecordCount.get());
+        }
+    }
+
+    @ClusterTest(metadataVersion = MetadataVersion.IBP_4_4_IV2)
+    @Timeout(180)
+    public void testShareConsumerReconcilesPhysicalPartitionRemovalWithoutEpochChurn() throws Exception {
+        String topic = "share-physical-removal-review";
+        String groupId = "share-physical-removal-review-group";
+        Set<TopicPartition> retained = Set.of(new TopicPartition(topic, 0), new TopicPartition(topic, 1));
+        alterShareAutoOffsetReset(groupId, "earliest");
+        try (Admin admin = createAdminClient();
+             Producer<byte[], byte[]> producer = createProducer();
+             Producer<byte[], byte[]> transactionalProducer = createProducer("share-physical-removal-review-txn");
+             ShareConsumer<byte[], byte[]> consumer = createShareConsumer(groupId)) {
+            admin.createTopics(List.of(new NewTopic(topic, 4, (short) 1)
+                .configs(Map.of(TopicConfig.PARTITION_DRAIN_TIMEOUT_MS_CONFIG, "0"))))
+                .all().get(20, TimeUnit.SECONDS);
+            for (int partition = 0; partition < 4; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, null, new byte[] {(byte) partition}))
+                    .get(20, TimeUnit.SECONDS);
+            }
+            // The unresolved transaction holds the highest tail ID and therefore both removed IDs.
+            transactionalProducer.initTransactions();
+            transactionalProducer.beginTransaction();
+            transactionalProducer.send(new ProducerRecord<>(topic, 3, null, new byte[] {99}))
+                .get(20, TimeUnit.SECONDS);
+            admin.deletePartitions(Map.of(topic, 2)).all().get(20, TimeUnit.SECONDS);
+            waitForCondition(() -> {
+                var description = admin.describeTopics(List.of(topic)).allTopicNames()
+                    .get(20, TimeUnit.SECONDS).get(topic);
+                return description.partitions().size() == 4
+                    && description.partitions().get(2).isDraining() && description.partitions().get(3).isDraining();
+            }, 30000, "The tail must remain readable while the transaction holds normal removal");
+
+            consumer.subscribe(Set.of(topic));
+            Set<Integer> consumedDuringDrain = new HashSet<>();
+            waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(200)).forEach(record -> {
+                    if (record.offset() == 0L) {
+                        consumedDuringDrain.add(record.partition());
+                    }
+                });
+                return consumedDuringDrain.equals(Set.of(0, 1, 2, 3));
+            }, 30000, "The share consumer must fetch records from both draining tail IDs");
+            assertEquals(4, admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(20, TimeUnit.SECONDS).get(topic).partitions().size());
+            assertTrue(consumer.commitSync().values().stream().allMatch(Optional::isEmpty));
+
+            transactionalProducer.abortTransaction();
+            waitForCondition(() -> admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(20, TimeUnit.SECONDS).get(topic).partitions().size() == 2,
+                65000, "The test must observe physical removal in full topic metadata");
+            waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(200));
+                ShareGroupDescription group = admin.describeShareGroups(List.of(groupId)).all()
+                    .get(20, TimeUnit.SECONDS).get(groupId);
+                return group.members().size() == 1 && group.targetAssignmentEpoch() == group.groupEpoch()
+                    && group.members().stream().allMatch(member -> member.memberEpoch() == group.groupEpoch()
+                        && member.assignment().topicPartitions().equals(retained));
+            }, 30000, "The same share group must reconcile its assignment to the surviving IDs");
+            int settledEpoch = admin.describeShareGroups(List.of(groupId)).all()
+                .get(20, TimeUnit.SECONDS).get(groupId).groupEpoch();
+
+            Map<Integer, Long> expectedOffsets = new HashMap<>();
+            for (int partition = 0; partition < 2; partition++) {
+                expectedOffsets.put(partition, producer.send(new ProducerRecord<>(topic, partition, null, new byte[] {42}))
+                    .get(20, TimeUnit.SECONDS).offset());
+            }
+            Set<Integer> consumedAfterRemoval = new HashSet<>();
+            waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(200)).forEach(record -> {
+                    assertTrue(record.partition() < 2, "Removed IDs must no longer deliver records");
+                    if (Long.valueOf(record.offset()).equals(expectedOffsets.get(record.partition()))) {
+                        consumedAfterRemoval.add(record.partition());
+                    }
+                });
+                return consumedAfterRemoval.equals(Set.of(0, 1));
+            }, 30000, "The existing consumer must receive fresh records from both surviving partitions");
+            assertTrue(consumer.commitSync().values().stream().allMatch(Optional::isEmpty));
+
+            // Observe more than two default heartbeat intervals, so stale initialized IDs cannot hide epoch churn.
+            long verifyUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(12);
+            while (System.nanoTime() < verifyUntil) {
+                consumer.poll(Duration.ofMillis(250));
+                ShareGroupDescription group = admin.describeShareGroups(List.of(groupId)).all()
+                    .get(20, TimeUnit.SECONDS).get(groupId);
+                assertEquals(settledEpoch, group.groupEpoch(), "Removed initialization state must not trigger new rebalances");
+                assertEquals(settledEpoch, group.targetAssignmentEpoch());
+                assertEquals(1, group.members().size());
+                assertEquals(retained, group.members().iterator().next().assignment().topicPartitions());
+            }
         }
     }
 }
