@@ -261,7 +261,9 @@ public class ControllerMetricsChangesTest {
         TopicImage base = TOPIC_DELTA1.apply();
         TopicImage draining = new TopicImage(base.name(), base.id(), base.partitions(), Map.of(4, 1000L));
         try (ControllerMetadataMetrics metrics = new ControllerMetadataMetrics(Optional.empty())) {
+            metrics.setActiveController(true);
             metrics.setDrainingPartitionCount(1);
+            assertEquals(1, metrics.drainingPartitionCount());
             TopicDelta delta = new TopicDelta(draining);
             delta.replayPartitionDraining(4, -1L);
             ControllerMetricsChanges changes = new ControllerMetricsChanges();

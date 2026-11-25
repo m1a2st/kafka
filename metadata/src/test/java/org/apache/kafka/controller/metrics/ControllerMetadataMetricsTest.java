@@ -62,13 +62,15 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=MetadataErrorCount",
                         "kafka.controller:type=KafkaController,name=OfflinePartitionsCount",
                         "kafka.controller:type=KafkaController,name=DrainingPartitionCount",
+                        "kafka.controller:type=KafkaController,name=PendingDrainRemovals",
+                        "kafka.controller:type=KafkaController,name=DrainCompletedTotal",
                         "kafka.controller:type=KafkaController,name=PreferredReplicaImbalanceCount",
                         "kafka.controller:type=KafkaController,name=IgnoredStaticVoters",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     ));
             }
-            ControllerMetricsTestUtils.assertMetricsForTypeEqual(registry, "KafkaController",
+            ControllerMetricsTestUtils.assertMetricsForTypeEqual(registry, "kafka.controller:",
                     Set.of());
         } finally {
             registry.shutdown();

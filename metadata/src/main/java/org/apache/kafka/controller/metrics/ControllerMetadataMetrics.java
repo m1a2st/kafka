@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,6 +67,10 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "KafkaController", "MetadataErrorCount");
     private static final MetricName DRAINING_PARTITION_COUNT = getMetricName(
         "KafkaController", "DrainingPartitionCount");
+    private static final MetricName PENDING_DRAIN_REMOVALS = getMetricName(
+        "KafkaController", "PendingDrainRemovals");
+    private static final MetricName DRAIN_COMPLETED_TOTAL = getMetricName(
+        "KafkaController", "DrainCompletedTotal");
     private static final MetricName UNCLEAN_LEADER_ELECTIONS_PER_SEC = getMetricName(
         "ControllerStats", "UncleanLeaderElectionsPerSec");
     private static final MetricName ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC = getMetricName(
@@ -78,12 +83,16 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private final AtomicInteger activeBrokerCount = new AtomicInteger(0);
     private final AtomicInteger controllerShutdownBrokerCount = new AtomicInteger(0);
     private final Map<Integer, Integer> brokerRegistrationStates = new ConcurrentHashMap<>();
+    private final Set<Integer> registeredBrokerMetricIds = ConcurrentHashMap.newKeySet();
     private final AtomicInteger globalTopicCount = new AtomicInteger(0);
     private final AtomicInteger globalPartitionCount = new AtomicInteger(0);
     private final AtomicInteger offlinePartitionCount = new AtomicInteger(0);
     private final AtomicInteger preferredReplicaImbalanceCount = new AtomicInteger(0);
     private final AtomicInteger metadataErrorCount = new AtomicInteger(0);
+    // Keep the committed count current on standby controllers for the next leadership change.
     private final AtomicInteger drainingPartitionCount = new AtomicInteger(0);
+    private final AtomicBoolean activeController = new AtomicBoolean(false);
+    private Optional<Meter> drainCompletedMeter = Optional.empty();
     private Optional<Meter> uncleanLeaderElectionMeter = Optional.empty();
     private Optional<Meter> electionFromEligibleLeaderReplicasMeter = Optional.empty();
     private final AtomicBoolean ignoredStaticVoters = new AtomicBoolean(false);
@@ -149,6 +158,14 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
                 return drainingPartitionCount();
             }
         }));
+        registry.ifPresent(r -> r.newGauge(PENDING_DRAIN_REMOVALS, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return drainingPartitionCount();
+            }
+        }));
+        registry.ifPresent(r -> drainCompletedMeter =
+                Optional.of(r.newMeter(DRAIN_COMPLETED_TOTAL, "partitions", TimeUnit.SECONDS)));
         registry.ifPresent(r -> uncleanLeaderElectionMeter =
                 Optional.of(registry.get().newMeter(UNCLEAN_LEADER_ELECTIONS_PER_SEC, "elections", TimeUnit.SECONDS)));
         registry.ifPresent(r -> electionFromEligibleLeaderReplicasMeter =
@@ -163,19 +180,22 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     }
 
     public void addBrokerRegistrationStateMetric(int brokerId) {
-        registry.ifPresent(r -> r.newGauge(
-            getBrokerIdTagMetricName(
-                "KafkaController",
-                BROKER_REGISTRATION_STATE_METRIC_NAME,
-                brokerId
-            ),
-            new Gauge<Integer>() {
-                @Override
-                public Integer value() {
-                    return brokerRegistrationState(brokerId);
+        registry.ifPresent(r -> {
+            r.newGauge(
+                getBrokerIdTagMetricName(
+                    "KafkaController",
+                    BROKER_REGISTRATION_STATE_METRIC_NAME,
+                    brokerId
+                ),
+                new Gauge<Integer>() {
+                    @Override
+                    public Integer value() {
+                        return brokerRegistrationState(brokerId);
+                    }
                 }
-            }
-        ));
+            );
+            registeredBrokerMetricIds.add(brokerId);
+        });
     }
 
     public void removeBrokerRegistrationStateMetric(int brokerId) {
@@ -186,6 +206,7 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
                 brokerId
             )
         ));
+        registeredBrokerMetricIds.remove(brokerId);
     }
 
     public Optional<MetricsRegistry> registry() {
@@ -311,7 +332,18 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     }
 
     public int drainingPartitionCount() {
-        return this.drainingPartitionCount.get();
+        return activeController.get() ? drainingPartitionCount.get() : 0;
+    }
+
+    public void setActiveController(boolean active) {
+        activeController.set(active);
+    }
+
+    public void updateDrainCompleted(long count) {
+        // Unlike the gauges, this meter is cumulative over this process's active periods.
+        if (count > 0 && activeController.get()) {
+            drainCompletedMeter.ifPresent(m -> m.mark(count));
+        }
     }
     
     public void updateUncleanLeaderElection(int count) {
@@ -342,11 +374,13 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             PREFERRED_REPLICA_IMBALANCE_COUNT,
             METADATA_ERROR_COUNT,
             DRAINING_PARTITION_COUNT,
+            PENDING_DRAIN_REMOVALS,
+            DRAIN_COMPLETED_TOTAL,
             UNCLEAN_LEADER_ELECTIONS_PER_SEC,
             ELECTION_FROM_ELIGIBLE_LEADER_REPLICAS_PER_SEC,
             IGNORED_STATIC_VOTERS
         ).forEach(r::removeMetric));
-        for (int brokerId : brokerRegistrationStates.keySet()) {
+        for (int brokerId : registeredBrokerMetricIds) {
             removeBrokerRegistrationStateMetric(brokerId);
         }
     }

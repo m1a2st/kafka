@@ -26,6 +26,7 @@ import org.apache.kafka.image.loader.LoaderManifest;
 import org.apache.kafka.image.publisher.MetadataPublisher;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.PartitionRegistration;
+import org.apache.kafka.raft.LeaderAndEpoch;
 import org.apache.kafka.server.fault.FaultHandler;
 
 import java.util.Map.Entry;
@@ -41,14 +42,17 @@ import java.util.Optional;
  *
  */
 public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
+    private final int nodeId;
     private final ControllerMetadataMetrics metrics;
     private final FaultHandler faultHandler;
     private MetadataImage prevImage = MetadataImage.EMPTY;
 
     public ControllerMetadataMetricsPublisher(
+        int nodeId,
         ControllerMetadataMetrics metrics,
         FaultHandler faultHandler
     ) {
+        this.nodeId = nodeId;
         this.metrics = metrics;
         this.faultHandler = faultHandler;
     }
@@ -56,6 +60,11 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
     @Override
     public String name() {
         return "ControllerMetadataMetricsPublisher";
+    }
+
+    @Override
+    public void onControllerChange(LeaderAndEpoch newLeaderAndEpoch) {
+        metrics.setActiveController(newLeaderAndEpoch.isLeader(nodeId));
     }
 
     @Override
@@ -114,6 +123,9 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
             }
         }
         changes.apply(metrics);
+        if (delta.topicsDelta() != null) {
+            metrics.updateDrainCompleted(delta.topicsDelta().numPartitionRemovals());
+        }
     }
 
     private void publishSnapshot(MetadataImage newImage) {

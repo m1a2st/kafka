@@ -383,6 +383,7 @@ class ControllerServer(
 
       // Set up the metrics publisher.
       metadataPublishers.add(new ControllerMetadataMetricsPublisher(
+        config.nodeId,
         sharedServer.controllerServerMetrics,
         sharedServer.metadataPublishingFaultHandler
       ))

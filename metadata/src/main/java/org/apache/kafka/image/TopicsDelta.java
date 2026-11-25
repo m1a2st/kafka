@@ -60,6 +60,8 @@ public final class TopicsDelta {
 
     private final Map<String, Uuid> createdTopics = new HashMap<>();
 
+    private long numPartitionRemovals = 0;
+
     public TopicsDelta(TopicsImage image) {
         this.image = image;
     }
@@ -70,6 +72,14 @@ public final class TopicsDelta {
 
     public Map<Uuid, TopicDelta> changedTopics() {
         return changedTopics;
+    }
+
+    /**
+     * The number of explicit removals of present partitions replayed in this delta. Unlike
+     * changedTopics, this also retains removals followed by deletion of the whole topic.
+     */
+    public long numPartitionRemovals() {
+        return numPartitionRemovals;
     }
 
     public void replay(TopicRecord record) {
@@ -105,7 +115,13 @@ public final class TopicsDelta {
 
     public void replay(RemovePartitionRecord record) {
         TopicDelta topicDelta = getOrCreateTopicDelta(record.topicId());
+        boolean wasPresent = !topicDelta.removedPartitions().contains(record.partitionId()) &&
+                (topicDelta.partitionChanges().containsKey(record.partitionId()) ||
+                        topicDelta.image().partitions().containsKey(record.partitionId()));
         topicDelta.replayRemovePartition(record.partitionId());
+        if (wasPresent) {
+            numPartitionRemovals++;
+        }
     }
 
     private void maybeReplayClearElrRecord(Uuid topicId) {
