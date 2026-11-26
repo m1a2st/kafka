@@ -82,6 +82,12 @@ public class ClientRequestQuotaManager extends ClientQuotaManager {
         }
     }
 
+    public void maybeRecordRequestTime(Request request, long timeNanos) {
+        if (quotasEnabled()) {
+            recordNoThrottle(request.session(), request.header().clientId(), nanosToPercentage(timeNanos));
+        }
+    }
+
     public void maybeRecordExempt(Request request) {
         if (quotasEnabled()) {
             request.setRecordNetworkThreadTimeCallback(timeNanos ->

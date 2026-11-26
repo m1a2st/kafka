@@ -171,6 +171,74 @@ public class ClientQuotaManagerTest extends BaseClientQuotaManagerTest {
     }
 
     @Test
+    public void testOversizedFetchDebitsSharedQuotaAcrossWindows() {
+        withQuotaManager(QuotaType.FETCH, manager -> {
+            var principal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "userA");
+            var session = new Session(principal, null);
+            var otherConnection = new Session(principal, null);
+            manager.updateQuota(Optional.of(new ClientQuotaManager.UserEntity("userA")),
+                Optional.empty(), Optional.of(Quota.upperBound(100)));
+
+            var first = manager.maybeRecordFetchResponse(session, "first-client", 0, 0, () -> 3000, size -> size);
+            assertEquals(Optional.of(3000), first.response());
+            assertEquals(20_000, first.bandwidthThrottleTimeMs());
+
+            time.sleep(15_000);
+            var blocked = manager.maybeRecordFetchResponse(otherConnection, "second-client", 0, 0, () -> {
+                throw new AssertionError("A fetch in debt must not acquire records");
+            }, size -> 1);
+            assertTrue(blocked.response().isEmpty());
+            assertEquals(5_000, blocked.bandwidthThrottleTimeMs());
+
+            time.sleep(5_000);
+            for (int i = 0; i < 3; i++) {
+                var next = manager.maybeRecordFetchResponse(otherConnection, "second-client", 0, 0, () -> 3000, size -> size);
+                assertEquals(Optional.of(3000), next.response());
+                assertEquals(30_000, next.bandwidthThrottleTimeMs());
+                time.sleep(30_000);
+            }
+        });
+    }
+
+    @Test
+    public void testRequestThrottledFetchDoesNotConsumeBandwidth() {
+        withQuotaManager(QuotaType.FETCH, manager -> {
+            var session = new Session(new KafkaPrincipal(KafkaPrincipal.USER_TYPE, "userA"), null);
+            manager.updateQuota(Optional.of(new ClientQuotaManager.UserEntity("userA")),
+                Optional.empty(), Optional.of(Quota.upperBound(100)));
+
+            var blocked = manager.maybeRecordFetchResponse(session, "client", 100, 3000, () -> {
+                throw new AssertionError("A request-throttled fetch must not acquire records");
+            }, size -> 3000);
+            assertTrue(blocked.response().isEmpty());
+            assertEquals(20_000, blocked.bandwidthThrottleTimeMs());
+
+            var admitted = manager.maybeRecordFetchResponse(session, "client", 0, 0, () -> 3000, size -> size);
+            assertEquals(Optional.of(3000), admitted.response());
+            assertEquals(20_000, admitted.bandwidthThrottleTimeMs());
+        });
+    }
+
+    @Test
+    public void testFetchDebtSurvivesSensorRemovalAndQuotaUpdate() {
+        withQuotaManager(QuotaType.FETCH, manager -> {
+            var session = buildSession("userA");
+            var user = Optional.<ClientQuotaEntity.ConfigEntity>of(new ClientQuotaManager.UserEntity("userA"));
+            manager.updateQuota(user, Optional.empty(), Optional.of(Quota.upperBound(1)));
+
+            var first = manager.maybeRecordFetchResponse(session, "client", 0, 0, () -> 5010, size -> size);
+            assertEquals(5_000_000, first.bandwidthThrottleTimeMs());
+            time.sleep(4_000_000);
+            metrics.removeSensor(manager.getOrCreateQuotaSensors(session, "client").quotaSensor().name());
+            manager.updateQuota(user, Optional.empty(), Optional.of(Quota.upperBound(2)));
+
+            var retry = manager.maybeRecordFetchResponse(session, "client", 0, 0, () -> 5010, size -> size);
+            assertTrue(retry.response().isEmpty());
+            assertEquals(500_000, retry.bandwidthThrottleTimeMs());
+        });
+    }
+
+    @Test
     public void testSetAndRemoveDefaultUserQuota() {
         // quotaTypesEnabled will be QuotaTypes.NoQuotas initially
         withQuotaManager(QuotaType.PRODUCE, clientQuotaManager -> {

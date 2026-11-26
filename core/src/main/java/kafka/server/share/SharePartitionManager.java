@@ -75,6 +75,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -322,11 +323,29 @@ public class SharePartitionManager implements AutoCloseable {
         int batchSize,
         List<TopicIdPartition> topicIdPartitions
     ) {
+        return fetchMessages(groupId, memberId, fetchParams, shareAcquireMode, maxFetchRecords, batchSize,
+            topicIdPartitions, Supplier::get);
+    }
+
+    /**
+     * Fetch messages with a callback that decides whether to acquire the fetched records at completion.
+     */
+    public CompletableFuture<Map<TopicIdPartition, PartitionData>> fetchMessages(
+        String groupId,
+        String memberId,
+        FetchParams fetchParams,
+        byte shareAcquireMode,
+        int maxFetchRecords,
+        int batchSize,
+        List<TopicIdPartition> topicIdPartitions,
+        Function<Supplier<Map<TopicIdPartition, PartitionData>>, Map<TopicIdPartition, PartitionData>> completeFetch
+    ) {
         log.trace("Fetch request for topicIdPartitions: {} with groupId: {} fetch params: {}",
             topicIdPartitions, groupId, fetchParams);
 
         CompletableFuture<Map<TopicIdPartition, PartitionData>> future = new CompletableFuture<>();
-        processShareFetch(new ShareFetch(fetchParams, groupId, memberId, future, topicIdPartitions, shareAcquireMode, batchSize, maxFetchRecords, brokerTopicStats));
+        processShareFetch(new ShareFetch(fetchParams, groupId, memberId, future, topicIdPartitions, shareAcquireMode,
+            batchSize, maxFetchRecords, brokerTopicStats, completeFetch));
 
         return future;
     }

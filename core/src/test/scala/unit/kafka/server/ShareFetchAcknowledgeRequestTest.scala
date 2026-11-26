@@ -22,17 +22,25 @@ import org.apache.kafka.clients.consumer.internals.ShareAcquireMode
 import org.apache.kafka.common.test.api.{ClusterConfigProperty, ClusterFeature, ClusterTest, ClusterTestDefaults, ClusterTests, Type}
 import org.apache.kafka.common.message.ShareFetchResponseData.AcquiredRecords
 import org.apache.kafka.common.message.{FindCoordinatorRequestData, ShareAcknowledgeRequestData, ShareAcknowledgeResponseData, ShareFetchRequestData, ShareFetchResponseData, ShareGroupHeartbeatRequestData}
-import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.metrics.Quota
+import org.apache.kafka.common.protocol.{ApiKeys, Errors}
+import org.apache.kafka.common.quota.{ClientQuotaAlteration, ClientQuotaEntity}
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.common.requests.{FindCoordinatorRequest, FindCoordinatorResponse, ShareAcknowledgeRequest, ShareAcknowledgeResponse, ShareFetchRequest, ShareFetchResponse, ShareGroupHeartbeatRequest, ShareGroupHeartbeatResponse, ShareRequestMetadata}
+import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, FindCoordinatorRequest, FindCoordinatorResponse, ShareAcknowledgeRequest, ShareAcknowledgeResponse, ShareFetchRequest, ShareFetchResponse, ShareGroupHeartbeatRequest, ShareGroupHeartbeatResponse, ShareRequestMetadata}
+import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.test.ClusterInstance
+import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.server.common.Feature
+import org.apache.kafka.server.config.QuotaConfig
 import org.apache.kafka.server.IntegrationTestUtils
-import org.junit.jupiter.api.Assertions.{assertEquals, assertTrue}
+import org.junit.jupiter.api.Assertions.{assertEquals, assertNotNull, assertTrue}
 import org.junit.jupiter.api.AfterEach
 
 import java.net.Socket
 import java.util
+import java.util.Optional
+import scala.jdk.CollectionConverters._
+import scala.util.Using
 
 @ClusterTestDefaults(types = Array(Type.KRAFT), brokers = 1, serverProperties = Array(
   new ClusterConfigProperty(key = "group.share.persister.class.name", value = "")
@@ -204,6 +212,84 @@ class ShareFetchAcknowledgeRequestTest(cluster: ClusterInstance) extends GroupCo
 
     val partitionData = shareFetchResponseData.responses().stream().findFirst().get().partitions().get(0)
     compareFetchResponsePartitions(expectedPartitionData, partitionData)
+  }
+
+  @ClusterTest(serverProperties = Array(
+    new ClusterConfigProperty(key = "offsets.topic.num.partitions", value = "1"),
+    new ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "1")
+  ))
+  def testShareFetchDeliversOversizedBatchAfterFetchQuotaDebt(): Unit = {
+    val topicId = createTopic(TOPIC, numPartitions = 1)
+    val topicPartition = new TopicPartition(TOPIC, PARTITION)
+    val topicIdPartition = new TopicIdPartition(topicId, topicPartition)
+    val topicNames = util.Map.of(topicId, TOPIC)
+    val send = util.List.of(topicIdPartition)
+    val shareSocket = connectAny()
+    shareSocket.setSoTimeout(15000)
+    val fetchSocket = connectAny()
+    fetchSocket.setSoTimeout(15000)
+
+    createOffsetsTopic()
+    shareHeartbeat(MEMBER_ID, GROUP_ID, util.Map.of[String, Int](TOPIC, 1))
+    sendFirstShareFetchRequest(MEMBER_ID, GROUP_ID, send, shareSocket)
+
+    // Both requests use the client ID from IntegrationTestUtils.
+    val clientId = "client-id"
+    val bytesPerSecond = 2000
+    val entity = new ClientQuotaEntity(util.Map.of(ClientQuotaEntity.CLIENT_ID, clientId))
+    val alteration = new ClientQuotaAlteration(entity, util.List.of(
+      new ClientQuotaAlteration.Op(QuotaConfig.CONSUMER_BYTE_RATE_OVERRIDE_CONFIG, bytesPerSecond.toDouble)))
+    Using.resource(cluster.admin()) { admin =>
+      admin.alterClientQuotas(util.List.of(alteration)).all().get()
+    }
+    val fetchQuota = getBrokers.head.dataPlaneRequestProcessor.quotas.fetch
+    TestUtils.retry(10000) {
+      assertEquals(Quota.upperBound(bytesPerSecond), fetchQuota.quota(KafkaPrincipal.ANONYMOUS.getName, clientId))
+    }
+
+    // The batch exceeds the 20,000-byte burst and leaves several seconds of quota debt.
+    val payload = "x" * (30 * 1024)
+    initProducer()
+    produceData(topicIdPartition, "key", payload)
+
+    def shareFetch(epoch: Int): ShareFetchResponse = {
+      val metadata = new ShareRequestMetadata(MEMBER_ID, epoch)
+      val request = createShareFetchRequest(GROUP_ID, metadata, send, util.List.of, util.Map.of, maxWaitMs = 0)
+      IntegrationTestUtils.sendAndReceive[ShareFetchResponse](request, shareSocket)
+    }
+
+    val fetchPartition = new FetchRequest.PartitionData(topicId, 0L, 0L, Int.MaxValue, Optional.empty())
+    val fetchRequest = FetchRequest.Builder.forConsumer(ApiKeys.FETCH.latestVersion(false), 0, 0,
+      util.Map.of(topicPartition, fetchPartition)).build()
+    val fetchResponse = IntegrationTestUtils.sendAndReceive[FetchResponse](fetchRequest, fetchSocket)
+    val partitionData = fetchResponse.responseData(topicNames, fetchRequest.version()).get(topicPartition)
+    assertNotNull(partitionData)
+    assertTrue(FetchResponse.recordsSize(partitionData) > payload.length)
+    assertTrue(fetchResponse.throttleTimeMs() > 0)
+
+    val nextEpoch = ShareRequestMetadata.nextEpoch(ShareRequestMetadata.INITIAL_EPOCH)
+    val throttled = shareFetch(nextEpoch)
+    assertEquals(Errors.NONE.code, throttled.data.errorCode)
+    assertTrue(throttled.data.responses.isEmpty, "ShareFetch should return an empty response while the fetch quota is in debt")
+    assertTrue(throttled.throttleTimeMs() > 0)
+
+    var epoch = nextEpoch
+    var delivered: ShareFetchResponse = null
+    TestUtils.waitUntilTrue(() => {
+      epoch = ShareRequestMetadata.nextEpoch(epoch)
+      delivered = shareFetch(epoch)
+      assertEquals(Errors.NONE.code, delivered.data.errorCode)
+      !delivered.data.responses.isEmpty
+    }, "ShareFetch should return records after the fetch quota recovers", waitTimeMs = 15000)
+    assertEquals(Errors.NONE.code, delivered.data.errorCode)
+    assertTrue(delivered.throttleTimeMs() > 0)
+    val deliveredPartition = delivered.responseData(topicNames).get(topicIdPartition)
+    assertNotNull(deliveredPartition, "ShareFetch should acquire the batch after the fetch quota recovers")
+    assertEquals(Errors.NONE.code, deliveredPartition.errorCode)
+    assertEquals(expectedAcquiredRecords(util.List.of(0), util.List.of(0), util.List.of(1)), deliveredPartition.acquiredRecords)
+    val records = ShareFetchResponse.recordsOrFail(deliveredPartition).records().asScala.toList
+    assertEquals(List(0L), records.map(_.offset()))
+    assertEquals(payload, Utils.utf8(Utils.toArray(records.head.value())))
   }
 
   @ClusterTests(

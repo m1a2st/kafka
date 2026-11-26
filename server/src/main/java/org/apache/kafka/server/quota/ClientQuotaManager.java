@@ -26,6 +26,7 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.CumulativeSum;
 import org.apache.kafka.common.metrics.stats.Rate;
+import org.apache.kafka.common.metrics.stats.TokenBucket;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.internals.Sanitizer;
@@ -37,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,8 @@ import java.util.concurrent.DelayQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
 
 public class ClientQuotaManager {
 
@@ -60,7 +64,67 @@ public class ClientQuotaManager {
 
     // Purge sensors after 1 hour of inactivity
     private static final int INACTIVE_SENSOR_EXPIRATION_TIME_SECONDS = 3600;
+    private static final long INACTIVE_SENSOR_EXPIRATION_TIME_MS = TimeUnit.SECONDS.toMillis(INACTIVE_SENSOR_EXPIRATION_TIME_SECONDS);
     private static final String DEFAULT_NAME = "<default>";
+
+    // Keep admission state independent of the metric sensor, whose expiry can precede repayment of a large fetch.
+    private final ConcurrentHashMap<Map<String, String>, FetchQuotaBucket> fetchQuotaBuckets = new ConcurrentHashMap<>();
+
+    public record FetchQuotaResult<T>(Optional<T> response, int bandwidthThrottleTimeMs) { }
+
+    private final class FetchQuotaBucket {
+        private final TokenBucket bucket = new TokenBucket();
+        private final long createdMs;
+        private MetricConfig metricConfig;
+        private long lastUsedMs;
+        private boolean expired;
+        private boolean responseReserved;
+
+        private FetchQuotaBucket(double rate, long nowMs) {
+            createdMs = nowMs;
+            metricConfig = fetchBucketConfig(rate);
+            record(-capacity(), nowMs);
+            lastUsedMs = nowMs;
+        }
+
+        private double capacity() {
+            return metricConfig.samples() * (metricConfig.timeWindowMs() / 1000.0) * metricConfig.quota().bound();
+        }
+
+        private void updateRate(double rate, long nowMs) {
+            rate = Math.min(rate, Long.MAX_VALUE);
+            if (rate != metricConfig.quota().bound()) {
+                balance(nowMs);
+                metricConfig = fetchBucketConfig(rate);
+                balance(nowMs);
+            }
+        }
+
+        private double balance(long nowMs) {
+            return bucket.measure(metricConfig, nowMs - createdMs);
+        }
+
+        private void record(double bytes, long nowMs) {
+            bucket.record(metricConfig, bytes, nowMs - createdMs);
+        }
+
+        // Return -1 for an admitted response, or the bandwidth delay for a rejected response.
+        private int tryReserve(double rate, long nowMs, int requestThrottleTimeMs, int rejectedResponseSize) {
+            updateRate(rate, nowMs);
+            lastUsedMs = nowMs;
+            double balance = balance(nowMs);
+            if (rate <= 0) {
+                return Integer.MAX_VALUE;
+            }
+            if (requestThrottleTimeMs == 0 && balance >= 0 && !responseReserved) {
+                responseReserved = true;
+                return -1;
+            }
+            double remaining = requestThrottleTimeMs > 0 ? balance - rejectedResponseSize : balance;
+            int delay = fetchThrottleTimeMs(remaining, rate);
+            return responseReserved ? Math.max(1, delay) : delay;
+        }
+    }
 
     public record UserEntity(String sanitizedUser) implements ClientQuotaEntity.ConfigEntity {
 
@@ -275,6 +339,7 @@ public class ClientQuotaManager {
      */
     public class ThrottledChannelReaper extends ShutdownableThread {
         private final DelayQueue<ThrottledChannel> delayQueue;
+        private long lastFetchQuotaCleanupMs = time.hiResClockMs();
 
         public ThrottledChannelReaper(DelayQueue<ThrottledChannel> delayQueue, String prefix) {
             super(prefix + "ThrottledChannelReaper-" + quotaType, false);
@@ -291,6 +356,13 @@ public class ClientQuotaManager {
                     delayQueueSensor.record(-1);
                     // Notify the socket server that throttling is done for this channel
                     throttledChannel.notifyThrottlingDone();
+                }
+                if (quotaType == QuotaType.FETCH) {
+                    long nowMs = time.hiResClockMs();
+                    if (nowMs - lastFetchQuotaCleanupMs >= INACTIVE_SENSOR_EXPIRATION_TIME_MS) {
+                        expireFetchQuotaBuckets();
+                        lastFetchQuotaCleanupMs = nowMs;
+                    }
                 }
             } catch (InterruptedException e) {
                 // Ignore and continue
@@ -317,6 +389,98 @@ public class ClientQuotaManager {
         } else {
             return 0;
         }
+    }
+
+    /**
+     * Reserves a fetch response if neither quota requires throttling. While a response is being prepared,
+     * no other response can draw from the same bucket. The supplier can acquire share records and runs
+     * outside the bucket lock to avoid holding it while updating share partition state.
+     */
+    public <T> FetchQuotaResult<T> maybeRecordFetchResponse(Session session, String clientId,
+                                                           int requestThrottleTimeMs, int responseSizeIfRequestThrottled,
+                                                           Supplier<T> response, ToIntFunction<T> responseSize) {
+        if (!quotasEnabled()) {
+            return new FetchQuotaResult<>(requestThrottleTimeMs > 0 ? Optional.empty() : Optional.of(response.get()), 0);
+        }
+
+        var sensors = getOrCreateQuotaSensors(session, clientId);
+        var metricTags = sensors.metricTags();
+        // Unbounded entities still have a byte-rate metric when quotas are enabled for other entities.
+        double rate = quotaLimit(metricTags);
+        if (rate >= Long.MAX_VALUE) {
+            if (requestThrottleTimeMs > 0) {
+                return new FetchQuotaResult<>(Optional.empty(), 0);
+            }
+            T data = response.get();
+            sensors.quotaSensor().record(responseSize.applyAsInt(data), time.milliseconds(), false);
+            return new FetchQuotaResult<>(Optional.of(data), 0);
+        }
+
+        while (true) {
+            var quota = fetchQuotaBuckets.get(metricTags);
+            if (quota == null) {
+                var key = Collections.unmodifiableMap(new LinkedHashMap<>(metricTags));
+                quota = fetchQuotaBuckets.computeIfAbsent(key, tags -> new FetchQuotaBucket(rate, time.hiResClockMs()));
+            }
+            synchronized (quota) {
+                if (quota.expired) {
+                    continue;
+                }
+                int delay = quota.tryReserve(quotaLimit(metricTags), time.hiResClockMs(), requestThrottleTimeMs,
+                        responseSizeIfRequestThrottled);
+                if (delay >= 0) {
+                    return new FetchQuotaResult<>(Optional.empty(), delay);
+                }
+            }
+
+            return completeReservedFetch(quota, sensors.quotaSensor(), response, responseSize);
+        }
+    }
+
+    private <T> FetchQuotaResult<T> completeReservedFetch(FetchQuotaBucket quota, Sensor sensor, Supplier<T> response,
+                                                          ToIntFunction<T> responseSize) {
+        try {
+            T data = response.get();
+            int bytes = responseSize.applyAsInt(data);
+            int throttleTimeMs;
+            synchronized (quota) {
+                long nowMs = time.hiResClockMs();
+                quota.lastUsedMs = nowMs;
+                quota.record(bytes, nowMs);
+                throttleTimeMs = fetchThrottleTimeMs(quota.balance(nowMs), quota.metricConfig.quota().bound());
+            }
+            sensor.record(bytes, time.milliseconds(), false);
+            return new FetchQuotaResult<>(Optional.of(data), throttleTimeMs);
+        } finally {
+            synchronized (quota) {
+                quota.responseReserved = false;
+            }
+        }
+    }
+
+    private MetricConfig fetchBucketConfig(double rate) {
+        // Use the same burst capacity as maxValueInQuotaWindow, including a zero burst for a single sample.
+        return new MetricConfig()
+                .samples(Math.max(1, config.numQuotaSamples() - 1))
+                .timeWindow(config.numQuotaSamples() == 1 ? 0 : config.quotaWindowSizeSeconds(), TimeUnit.SECONDS)
+                .quota(Quota.upperBound(rate));
+    }
+
+    private static int fetchThrottleTimeMs(double balance, double rate) {
+        return (int) Math.max(0, Math.ceil(-balance / rate * 1000));
+    }
+
+    private void expireFetchQuotaBuckets() {
+        fetchQuotaBuckets.forEach((tags, quota) -> {
+            synchronized (quota) {
+                long nowMs = time.hiResClockMs();
+                if (!quota.responseReserved && nowMs - quota.lastUsedMs > INACTIVE_SENSOR_EXPIRATION_TIME_MS &&
+                        quota.balance(nowMs) >= quota.capacity()) {
+                    quota.expired = true;
+                    fetchQuotaBuckets.remove(tags, quota);
+                }
+            }
+        });
     }
 
     /**
@@ -353,20 +517,6 @@ public class ClientQuotaManager {
     public void recordNoThrottle(Session session, String clientId, double value) {
         var clientSensors = getOrCreateQuotaSensors(session, clientId);
         clientSensors.quotaSensor().record(value, time.milliseconds(), false);
-    }
-
-    /**
-     * "Unrecord" the given value that has already been recorded for the given user/client by recording a negative value
-     * of the same quantity.
-     * For a throttled fetch, the broker should return an empty response and thus should not record the value. Ideally,
-     * we would like to compute the throttle time before actually recording the value, but the current Sensor code
-     * couples value recording and quota checking very tightly. As a workaround, we will unrecord the value for the fetch
-     * in case of throttling. Rate keeps the sum of values that fall in each time window, so this should bring the
-     * overall sum back to the previous value.
-     */
-    public void unrecordQuotaSensor(Session session, String clientId, double value, long timeMs) {
-        var clientSensors = getOrCreateQuotaSensors(session, clientId);
-        clientSensors.quotaSensor().record(value * -1, timeMs, false);
     }
 
     /**
@@ -631,6 +781,11 @@ public class ClientQuotaManager {
     }
 
     public void updateQuotaMetricConfigs(Optional<KafkaQuotaEntity> updatedQuotaEntity) {
+        fetchQuotaBuckets.forEach((tags, quota) -> {
+            synchronized (quota) {
+                quota.updateRate(quotaLimit(tags), time.hiResClockMs());
+            }
+        });
         var allMetrics = metrics.metrics();
 
         // If using custom quota callbacks or if multiple-levels of quotas are defined or

@@ -24,7 +24,6 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.KafkaStorageException;
 import org.apache.kafka.common.errors.NotLeaderOrFollowerException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.apache.kafka.common.message.ShareFetchResponseData;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.record.internal.Records;
@@ -361,7 +360,7 @@ public class DelayedShareFetch extends DelayedOperation {
             // Complete the share fetch request and release the locks as completion handler will complete
             // the request.
             processFetchResultAndComplete(result, topicPartitionData, shareFetchPartitionDataList ->
-                shareFetch.maybeComplete(ShareFetchUtils.processFetchResponse(
+                shareFetch.maybeComplete(() -> ShareFetchUtils.processFetchResponse(
                     shareFetch,
                     shareFetchPartitionDataList,
                     sharePartitions,
@@ -1240,10 +1239,9 @@ public class DelayedShareFetch extends DelayedOperation {
             if (acquiredRatio > 0)
                 shareGroupMetrics.recordTopicPartitionsFetchRatio(shareFetch.groupId(), (int) (acquiredRatio * 100));
 
-            Map<TopicIdPartition, ShareFetchResponseData.PartitionData> remoteFetchResponse = ShareFetchUtils.processFetchResponse(
-                shareFetch, shareFetchPartitionDataList, sharePartitions, metadataProvider, exceptionHandler);
-            shareFetch.maybeComplete(remoteFetchResponse);
-            log.trace("Remote share fetch request completed successfully, response: {}", remoteFetchResponse);
+            shareFetch.maybeComplete(() -> ShareFetchUtils.processFetchResponse(
+                shareFetch, shareFetchPartitionDataList, sharePartitions, metadataProvider, exceptionHandler));
+            log.trace("Remote share fetch request completed for group {}, member {}", shareFetch.groupId(), shareFetch.memberId());
         } catch (Exception e) {
             log.error("Unexpected error in processing delayed share fetch request", e);
             handleExceptionInCompletingRemoteStorageShareFetchRequest(acquiredNonRemoteFetchTopicPartitionData.keySet(), e);

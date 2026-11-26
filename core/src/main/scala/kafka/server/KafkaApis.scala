@@ -80,6 +80,7 @@ import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import java.util
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap}
+import java.util.function.{Function, Supplier}
 import java.util.stream.Collectors
 import java.util.{Collections, Optional}
 import scala.annotation.nowarn
@@ -699,34 +700,17 @@ class KafkaApis(val requestChannel: RequestChannel,
         recordBytesOutMetric(fetchResponse)
         requestHelper.sendResponseExemptThrottle(request, fetchResponse)
       } else {
-        // Record both bandwidth and request quota-specific values and throttle by muting the channel if any of the
-        // quotas have been violated. If both quotas have been violated, use the max throttle time between the two
-        // quotas. When throttled, we unrecord the recorded bandwidth quota value.
         val responseSize = fetchContext.getResponseSize(partitions, versionId)
-        val timeMs = time.milliseconds()
-        val requestThrottleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request, timeMs)
-        val bandwidthThrottleTimeMs = quotas.fetch.maybeRecordAndGetThrottleTimeMs(request.session, request.header.clientId(), responseSize, timeMs)
-
-        val maxThrottleTimeMs = math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
-        val fetchResponse = if (maxThrottleTimeMs > 0) {
-          request.apiThrottleTimeMs(maxThrottleTimeMs)
-          // Even if we need to throttle for request quota violation, we should "unrecord" the already recorded value
-          // from the fetch quota because we are going to return an empty response.
-          quotas.fetch.unrecordQuotaSensor(request.session, request.header.clientId(), responseSize, timeMs)
-          if (bandwidthThrottleTimeMs > requestThrottleTimeMs) {
-            requestHelper.throttle(quotas.fetch, request, bandwidthThrottleTimeMs)
-          } else {
-            requestHelper.throttle(quotas.request, request, requestThrottleTimeMs)
-          }
-          // If throttling is required, return an empty response.
-          fetchContext.getThrottledResponse(maxThrottleTimeMs, nodeEndpoints.values.toSeq.asJava)
-        } else {
-          // Get the actual response. This will update the fetch context.
+        val (admitted, throttleTimeMs) = applyFetchQuota(request, responseSize, () => partitions)(_ => responseSize)
+        val fetchResponse = if (admitted.isDefined) {
           val fetchResponse = fetchContext.updateAndGenerateResponseData(partitions, nodeEndpoints.values.toSeq.asJava)
+          fetchResponse.data.setThrottleTimeMs(throttleTimeMs)
           val responsePartitionsSize = fetchResponse.data().responses().stream().mapToInt(_.partitions().size()).sum()
           trace(s"Sending Fetch response with partitions.size=$responsePartitionsSize, " +
             s"metadata=${fetchResponse.sessionId}")
           fetchResponse
+        } else {
+          fetchContext.getThrottledResponse(throttleTimeMs, nodeEndpoints.values.toSeq.asJava)
         }
 
         recordBytesOutMetric(fetchResponse)
@@ -738,9 +722,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (interesting.isEmpty) {
       processResponseCallback(Seq.empty)
     } else {
-      // for fetch from consumer, cap fetchMaxBytes to the maximum bytes that could be fetched without being throttled given
-      // no bytes were recorded in the recent quota window
-      // trying to fetch more bytes would result in a guaranteed throttling potentially blocking consumer progress
+      // Limit normal consumer reads to the quota burst. The log reader can still return one larger batch.
       val maxQuotaWindowBytes = if (fetchRequest.isFromFollower)
         Int.MaxValue
       else
@@ -779,6 +761,27 @@ class KafkaApis(val requestChannel: RequestChannel,
         responseCallback = processResponseCallback,
       )
     }
+  }
+
+  private def applyFetchQuota[T](request: Request,
+                                 rejectedResponseSize: Int,
+                                 response: Supplier[T],
+                                 maxBandwidthThrottleTimeMs: Int = Int.MaxValue)(
+                                 responseSize: T => Int): (Option[T], Int) = {
+    val requestThrottleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request, time.milliseconds())
+    val decision = quotas.fetch.maybeRecordFetchResponse(request.session, request.header.clientId(),
+      requestThrottleTimeMs, rejectedResponseSize, response, data => responseSize(data))
+    val bandwidthThrottleTimeMs = decision.bandwidthThrottleTimeMs()
+    val cappedBandwidthThrottleTimeMs = math.min(bandwidthThrottleTimeMs, maxBandwidthThrottleTimeMs)
+    val throttleTimeMs = math.max(cappedBandwidthThrottleTimeMs, requestThrottleTimeMs)
+    if (throttleTimeMs > 0) {
+      request.apiThrottleTimeMs(throttleTimeMs)
+      if (cappedBandwidthThrottleTimeMs >= requestThrottleTimeMs && bandwidthThrottleTimeMs > requestThrottleTimeMs)
+        requestHelper.throttle(quotas.fetch, request, throttleTimeMs)
+      else
+        requestHelper.throttle(quotas.request, request, throttleTimeMs)
+    }
+    (decision.response().toScala, throttleTimeMs)
   }
 
   def replicationQuota(fetchRequest: FetchRequest): ReplicaQuota =
@@ -3420,8 +3423,24 @@ class KafkaApis(val requestChannel: RequestChannel,
       )
     }
 
-    // Handling the Fetch from the ShareFetchRequest.
-    // Variable to store the topic partition wise result of fetching.
+    // Apply quotas immediately before acquiring records so a denied response does not consume deliveries.
+    var appliedFetchQuota: Option[(Boolean, Int)] = None
+    val versionId = shareFetchRequest.version()
+    val emptyResponseSize = ShareFetchResponse.sizeOf(versionId, Collections.emptyIterator())
+    val completeFetch: Function[Supplier[ShareFetchPartitions], ShareFetchPartitions] = acquire => {
+      // A synchronous quota check captures the request thread time before these records are acquired.
+      val acquireRecords: Supplier[ShareFetchPartitions] = if (request.apiLocalCompleteTimeNanos() < 0 && quotas.request.quotasEnabled()) {
+        () => {
+          val startNanos = time.nanoseconds()
+          try acquire.get()
+          finally quotas.request.maybeRecordRequestTime(request, time.nanoseconds() - startNanos)
+        }
+      } else acquire
+      val (partitions, throttleTimeMs) = applyFetchQuota(request, emptyResponseSize, acquireRecords, maxShareFetchThrottleTimeMs(groupId))(
+        data => shareFetchContext.responseSize(new util.LinkedHashMap(data), versionId))
+      appliedFetchQuota = Some((partitions.isDefined, throttleTimeMs))
+      partitions.getOrElse(util.Map.of())
+    }
 
     // Here we are populating fetchResult conditionally because per the design of
     // KIP-1222, if a ShareFetch request contains a RENEW ack type piggybacked then
@@ -3432,7 +3451,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (shareFetchRequest.version() >= 2 && shareFetchRequest.data.isRenewAck)
         CompletableFuture.completedFuture(mutable.Map.empty[TopicIdPartition, ShareFetchResponseData.PartitionData])
       else
-        handleFetchFromShareFetchRequest(request, erroneousAndValidPartitionData, sharePartitionManager, authorizedTopics)
+        handleFetchFromShareFetchRequest(request, erroneousAndValidPartitionData, sharePartitionManager, authorizedTopics, completeFetch)
 
     def combineShareFetchAndShareAcknowledgeResponses(fetchResult: CompletableFuture[Map[TopicIdPartition, ShareFetchResponseData.PartitionData]],
                                                       acknowledgeResult: CompletableFuture[Map[TopicIdPartition, ShareAcknowledgeResponseData.PartitionData]],
@@ -3441,7 +3460,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       fetchResult.thenCombine(acknowledgeResult,
         (fetchMap: Map[TopicIdPartition, ShareFetchResponseData.PartitionData],
           acknowledgeMap: Map[TopicIdPartition, ShareAcknowledgeResponseData.PartitionData]) => {
-          val shareFetchResponse = processShareFetchResponse(fetchMap, request, topicIdNames, shareFetchContext)
+          val shareFetchResponse = processShareFetchResponse(fetchMap, request, topicIdNames, shareFetchContext, appliedFetchQuota)
           // The outer map has topicId as the key and the inner map has partitionIndex as the key.
           val topicPartitionAcknowledgements: mutable.Map[Uuid, mutable.Map[Int, ShareAcknowledgeResponseData.PartitionData]] = mutable.Map()
           if (acknowledgeMap != null && acknowledgeMap.nonEmpty) {
@@ -3526,11 +3545,21 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  private type ShareFetchPartitions = util.Map[TopicIdPartition, ShareFetchResponseData.PartitionData]
+
+  // A bandwidth throttle also delays acknowledgements on this connection. Recheck outstanding debt on later fetches.
+  private def maxShareFetchThrottleTimeMs(groupId: String): Int = {
+    val lockDurationMs = shareGroupConfigProvider.recordLockDurationMsOrDefault(groupId,
+      config.shareGroupConfig.shareGroupRecordLockDurationMs)
+    math.max(1, math.min(1000, lockDurationMs / 2))
+  }
+
   // Visible for Testing
   def handleFetchFromShareFetchRequest(request: Request,
                                        erroneousAndValidPartitionData: ErroneousAndValidPartitionData,
                                        sharePartitionManagerInstance: SharePartitionManager,
-                                       authorizedTopics: Set[String]
+                                       authorizedTopics: Set[String],
+                                       completeFetch: Function[Supplier[ShareFetchPartitions], ShareFetchPartitions] = _.get()
                                       ): CompletableFuture[Map[TopicIdPartition, ShareFetchResponseData.PartitionData]] = {
 
     val erroneous = mutable.Map.empty[TopicIdPartition, ShareFetchResponseData.PartitionData]
@@ -3555,10 +3584,8 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (interestedTopicPartitions.isEmpty) {
       CompletableFuture.completedFuture(erroneous)
     } else {
-      // for share fetch from consumer, cap fetchMaxBytes to the maximum bytes that could be fetched without being
-      // throttled given no bytes were recorded in the recent quota window. Trying to fetch more bytes would result
-      // in a guaranteed throttling potentially blocking consumer progress.
-      val maxQuotaWindowBytes = quotas.fetch.maxValueInQuotaWindow(request.session, clientId).toInt
+      // Keep the log read enabled with a single quota sample, whose burst capacity is zero.
+      val maxQuotaWindowBytes = math.max(1, quotas.fetch.maxValueInQuotaWindow(request.session, clientId).toInt)
 
       val fetchMaxBytes = Math.min(Math.min(shareFetchRequest.maxBytes, config.fetchMaxBytes), maxQuotaWindowBytes)
       val fetchMinBytes = Math.min(shareFetchRequest.minBytes, fetchMaxBytes)
@@ -3583,6 +3610,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       )
 
       // call the share partition manager to fetch messages from the local replica.
+      val completeWithErrors: Function[Supplier[ShareFetchPartitions], ShareFetchPartitions] = acquire => completeFetch(() => {
+        val partitions = acquire.get()
+        if (erroneous.isEmpty) partitions
+        else {
+          val combined = new util.LinkedHashMap(partitions)
+          combined.putAll(erroneous.asJava)
+          combined
+        }
+      })
       sharePartitionManagerInstance.fetchMessages(
         groupId,
         shareFetchRequest.data.memberId,
@@ -3590,7 +3626,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         shareFetchRequest.data.shareAcquireMode,
         shareFetchRequest.data.maxRecords,
         shareFetchRequest.data.batchSize,
-        interestedTopicPartitions
+        interestedTopicPartitions,
+        completeWithErrors
       ).thenApply{ result =>
         // Preserve the fetch order of the partitions, the share session uses it to re-order the partitions
         // for the subsequent fetch.
@@ -4251,7 +4288,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   private def processShareFetchResponse(responsePartitionData: Map[TopicIdPartition, ShareFetchResponseData.PartitionData],
                                         request: Request,
                                         topicIdNames: util.Map[Uuid, String],
-                                        shareFetchContext: ShareFetchContext): ShareFetchResponse = {
+                                        shareFetchContext: ShareFetchContext,
+                                        appliedFetchQuota: Option[(Boolean, Int)]): ShareFetchResponse = {
     val clientId = request.header.clientId
     val shareFetchRequest = request.body(classOf[ShareFetchRequest])
     val versionId = shareFetchRequest.version
@@ -4310,37 +4348,21 @@ class KafkaApis(val requestChannel: RequestChannel,
       response
     }
 
-    // Share Fetch size used to determine throttle time is calculated here.
-    // This may be slightly different from the actual response size.
-    //
-    // Record both bandwidth and request quota-specific values and throttle by muting the channel if any of the
-    // quotas have been violated. If both quotas have been violated, use the max throttle time between the two
-    // quotas. When throttled, we unrecord the recorded bandwidth quota value.
-    val responseSize = shareFetchContext.responseSize(partitions, versionId)
-    val timeMs = time.milliseconds()
-    val requestThrottleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request, timeMs)
-    val bandwidthThrottleTimeMs = quotas.fetch.maybeRecordAndGetThrottleTimeMs(request.session, request.header.clientId(), responseSize, timeMs)
-
-    val maxThrottleTimeMs = math.max(bandwidthThrottleTimeMs, requestThrottleTimeMs)
-    if (maxThrottleTimeMs > 0) {
-      request.apiThrottleTimeMs(maxThrottleTimeMs)
-      // Even if we need to throttle for request quota violation, we should "unrecord" the already recorded value
-      // from the fetch quota because we are going to return an empty response.
-      quotas.fetch.unrecordQuotaSensor(request.session, request.header.clientId(), responseSize, timeMs)
-      if (bandwidthThrottleTimeMs > requestThrottleTimeMs) {
-        requestHelper.throttle(quotas.fetch, request, bandwidthThrottleTimeMs)
-      } else {
-        requestHelper.throttle(quotas.request, request, requestThrottleTimeMs)
-      }
-      // If throttling is required, return an empty response.
-      shareFetchResponse = shareFetchContext.throttleResponse(maxThrottleTimeMs)
-    } else {
+    val (admitted, throttleTimeMs) = appliedFetchQuota.getOrElse {
+      // Requests without a log read, such as acknowledgement renewals, complete here.
+      val responseSize = shareFetchContext.responseSize(partitions, versionId)
+      val (response, throttleTimeMs) = applyFetchQuota(request, responseSize, () => partitions, maxShareFetchThrottleTimeMs(groupId))(_ => responseSize)
+      (response.isDefined, throttleTimeMs)
+    }
+    if (admitted) {
       // Get the actual response. This will update the fetch context.
       shareFetchResponse = shareFetchContext.updateAndGenerateResponseData(groupId, memberId, partitions)
       val responsePartitionsSize = shareFetchResponse.data.responses.stream().mapToInt(_.partitions.size()).sum()
       trace(s"Sending Share Fetch response with partitions size=$responsePartitionsSize")
+    } else {
+      shareFetchResponse = shareFetchContext.throttleResponse(throttleTimeMs)
     }
-    createResponse(maxThrottleTimeMs)
+    createResponse(throttleTimeMs)
   }
 
   private def getResponsePartitionData(tp: TopicIdPartition,

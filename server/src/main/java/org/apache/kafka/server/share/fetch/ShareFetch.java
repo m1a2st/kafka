@@ -34,6 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * The ShareFetch class is used to store the fetch parameters for a share fetch request.
@@ -77,6 +79,7 @@ public class ShareFetch {
      * The handler to update the failed share fetch metrics.
      */
     private final BrokerTopicStats brokerTopicStats;
+    private final Function<Supplier<Map<TopicIdPartition, PartitionData>>, Map<TopicIdPartition, PartitionData>> completeFetch;
 
     /**
      * The partitions that had an error during the fetch.
@@ -94,6 +97,22 @@ public class ShareFetch {
         int maxFetchRecords,
         BrokerTopicStats brokerTopicStats
     ) {
+        this(fetchParams, groupId, memberId, future, topicIdPartitions, shareAcquireMode, batchSize, maxFetchRecords,
+            brokerTopicStats, Supplier::get);
+    }
+
+    public ShareFetch(
+        FetchParams fetchParams,
+        String groupId,
+        String memberId,
+        CompletableFuture<Map<TopicIdPartition, PartitionData>> future,
+        List<TopicIdPartition> topicIdPartitions,
+        byte shareAcquireMode,
+        int batchSize,
+        int maxFetchRecords,
+        BrokerTopicStats brokerTopicStats,
+        Function<Supplier<Map<TopicIdPartition, PartitionData>>, Map<TopicIdPartition, PartitionData>> completeFetch
+    ) {
         this.fetchParams = fetchParams;
         this.groupId = groupId;
         this.memberId = memberId;
@@ -103,6 +122,7 @@ public class ShareFetch {
         this.batchSize = batchSize;
         this.maxFetchRecords = maxFetchRecords;
         this.brokerTopicStats = brokerTopicStats;
+        this.completeFetch = completeFetch;
     }
 
     public String groupId() {
@@ -174,14 +194,24 @@ public class ShareFetch {
      * @param partitionData The partition data to complete the fetch with.
      */
     public void maybeComplete(Map<TopicIdPartition, PartitionData> partitionData) {
+        maybeComplete(() -> partitionData);
+    }
+
+    /**
+     * Complete the fetch using a supplier that acquires the fetched records only after the request is admitted.
+     * The completion callback must invoke the supplier synchronously if it admits the request.
+     */
+    public void maybeComplete(Supplier<Map<TopicIdPartition, PartitionData>> acquireRecords) {
         if (isCompleted()) {
             return;
         }
 
-        Map<TopicIdPartition, PartitionData> response = new LinkedHashMap<>(partitionData);
-        // Add any erroneous partitions to the response.
-        addErroneousToResponse(response);
-        future.complete(response);
+        Map<TopicIdPartition, PartitionData> partitionData = completeFetch.apply(() -> {
+            Map<TopicIdPartition, PartitionData> response = new LinkedHashMap<>(acquireRecords.get());
+            addErroneousToResponse(response);
+            return response;
+        });
+        future.complete(partitionData);
     }
 
     /**

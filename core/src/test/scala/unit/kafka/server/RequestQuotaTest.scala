@@ -15,6 +15,7 @@
 package kafka.server
 
 import kafka.utils.TestUtils
+import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common._
 import org.apache.kafka.common.acl._
 import org.apache.kafka.common.compress.Compression
@@ -29,12 +30,13 @@ import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartit
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic, OffsetForLeaderTopicCollection}
 import org.apache.kafka.common.message._
 import org.apache.kafka.common.metrics.{KafkaMetric, Quota, Sensor}
-import org.apache.kafka.common.protocol.ApiKeys
+import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.quota.ClientQuotaFilter
 import org.apache.kafka.common.record.internal._
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.resource.{PatternType, ResourceType => AdminResourceType}
 import org.apache.kafka.common.security.auth._
+import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.utils.internals.SecurityUtils
 import org.apache.kafka.common.utils.internals.Sanitizer
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig
@@ -52,6 +54,7 @@ import java.util.concurrent.{Executors, Future, TimeUnit}
 import java.util.{Optional, Properties}
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters._
+import scala.util.Using
 
 class RequestQuotaTest extends BaseRequestTest {
 
@@ -150,6 +153,46 @@ class RequestQuotaTest extends BaseRequestTest {
   def testResponseThrottleTimeWhenBothFetchAndRequestQuotasViolated(): Unit = {
     submitTest(ApiKeys.FETCH, () => checkSmallQuotaConsumerRequestThrottleTime())
     waitAndCheckResults()
+  }
+
+  @Test
+  def testFetchDeliversBatchLargerThanQuotaBurst(): Unit = {
+    // With the default quota windows, the 2,000-byte/s fetch quota permits a 20,000-byte burst.
+    val payload = new Array[Byte](24 * 1024)
+    Using.resource(TestUtils.createProducer[Array[Byte], Array[Byte]](bootstrapServers())) { producer =>
+      producer.send(new ProducerRecord(topic, tp.partition, null, payload)).get()
+      producer.send(new ProducerRecord(topic, tp.partition, null, Array[Byte](1))).get()
+    }
+
+    val version = ApiKeys.FETCH.latestVersion()
+    val topicId = getTopicIds()(topic)
+    val topicNames = getTopicNames().asJava
+    Using.resource(connect()) { socket =>
+      socket.setSoTimeout(10000)
+
+      def fetch(offset: Long): FetchResponse = {
+        val partitionData = new FetchRequest.PartitionData(topicId, offset, 0, Int.MaxValue, Optional.empty())
+        val request = FetchRequest.Builder.forConsumer(version, 0, 0, util.Map.of(tp, partitionData)).build(version)
+        sendAndReceive[FetchResponse](request, socket, unthrottledClientId)
+      }
+
+      def fetchedRecords(response: FetchResponse): List[Record] = {
+        val partitionData = response.responseData(topicNames, version).get(tp)
+        assertNotNull(partitionData, "Fetch response should contain the requested partition")
+        assertEquals(Errors.NONE.code, partitionData.errorCode)
+        FetchResponse.recordsOrFail(partitionData).records().asScala.toList
+      }
+
+      val response = fetch(0)
+      val records = fetchedRecords(response)
+      assertEquals(List(0L), records.map(_.offset()))
+      assertArrayEquals(payload, Utils.toArray(records.head.value()))
+      assertTrue(response.throttleTimeMs() > 0, "Delivering a batch above the quota burst should throttle the connection")
+
+      TestUtils.retry(10000) {
+        assertEquals(List(1L), fetchedRecords(fetch(1)).map(_.offset()))
+      }
+    }
   }
 
   @Test
